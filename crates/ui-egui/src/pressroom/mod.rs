@@ -8,6 +8,7 @@ mod art;
 mod backstage;
 mod keys;
 mod nav;
+pub mod pubimport;
 mod ribbon;
 mod templates;
 
@@ -432,6 +433,7 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     }
     ctx.data_mut(|d| d.insert_temp(state_id(), s.clone()));
     finish_link(app, &ctx);
+    pubimport::poll(app, &ctx);
     title_bar(app, ui, &s);
     if s.backstage.is_none() {
         tabs_and_ribbon(app, ui, &s);
@@ -443,6 +445,15 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
 pub fn body(app: &mut DesignApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let s = state(&ctx);
+    // A Publisher file on its way in: say so over the window.
+    if let Some(name) = pubimport::busy() {
+        let r = ui.max_rect();
+        let card = Rect::from_center_size(r.center(), vec2(420.0, 90.0));
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("pr_pubimport")));
+        painter.rect(card, 4.0, Color32::WHITE, Stroke::new(1.0, PR::RIBBON_EDGE), egui::StrokeKind::Inside);
+        painter.text(card.center() - vec2(0.0, 14.0), egui::Align2::CENTER_CENTER, format!("Bringing in \u{201c}{name}\u{201d}"), FontId::proportional(15.0), PR::TEXT);
+        painter.text(card.center() + vec2(0.0, 14.0), egui::Align2::CENTER_CENTER, "Publisher is reading the file. This can take a minute.", FontId::proportional(12.0), PR::GROUP_LABEL);
+    }
     if let Some(page) = s.backstage {
         backstage::show(app, ui, page);
         return;

@@ -46,6 +46,11 @@ impl DesignApp {
                     }
                 }
                 Some(path) if purpose == "place" => self.place_file(json!({"path": path})),
+                // A Publisher file: converted in the background, then opened.
+                Some(path) if crate::pressroom::pubimport::is_pub(&path) => {
+                    crate::pressroom::pubimport::start(self, &path);
+                    Ok(Value::Null)
+                }
                 Some(path) => self.open_file("file.open", json!({"path": path})),
                 None => Ok(Value::Null),
             };
@@ -238,6 +243,10 @@ impl DesignApp {
 
     pub(crate) fn open_os_documents(&mut self) {
         for path in std::mem::take(&mut self.os_documents) {
+            if crate::pressroom::pubimport::is_pub(&path) {
+                crate::pressroom::pubimport::start(self, &path);
+                continue;
+            }
             if let Err(e) = self.open_file("file.open", json!({"path": path})) {
                 log::warn!("{path}: {e}");
             }

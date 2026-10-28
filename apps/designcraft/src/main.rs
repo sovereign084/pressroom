@@ -278,7 +278,8 @@ fn open_filters(purpose: &str) -> &'static [OpenFilter] {
             OpenFilter { name: "Video and sound", extensions: &["mp4", "m4v", "mov", "webm", "mp3", "m4a", "wav", "ogg"] },
         ],
         _ => &[
-            OpenFilter { name: "PressRoom publications", extensions: &["pressroom", "designcraft", "idml", "indd", "indt"] },
+            OpenFilter { name: "PressRoom and Publisher files", extensions: &["pressroom", "pub", "designcraft", "idml", "indd", "indt"] },
+            OpenFilter { name: "Publisher files (.pub)", extensions: &["pub"] },
             OpenFilter { name: "PressRoom publication", extensions: &["pressroom"] },
             OpenFilter { name: "InDesign Markup (IDML)", extensions: &["idml"] },
             OpenFilter { name: "InDesign document or template (INDD, INDT)", extensions: &["indd", "indt"] },
@@ -581,11 +582,9 @@ fn main() -> std::process::ExitCode {
                 if sample {
                     let _ = app.run("file.newSample", serde_json::json!({}));
                 }
-                for f in files {
-                    if let Err(e) = app.open_file("file.open", serde_json::json!({"path": f})) {
-                        log::warn!("{f}: {e}");
-                    }
-                }
+                // Files from the command line or Explorer open on the first ready frame, as macOS
+                // Finder documents do: a Publisher file goes to the converter there.
+                app.open_documents_later(files);
                 // The first frame is due from now (`gpu::watch_first_frame`).
                 created.ready();
                 Ok(Box::new(App {
