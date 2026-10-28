@@ -176,11 +176,24 @@ fn context(app: &DesignApp) -> Context {
 fn selected_text_frame(app: &DesignApp) -> Option<designcraft_doc::ItemId> {
     let st = app.session.active()?;
     if let Some(t) = &st.selection.text {
+        if let Some(f) = t.frame {
+            return Some(f);
+        }
         let story = st.doc.story(t.story)?;
-        return story.frames.first().copied();
+        return story.frames.last().copied();
     }
     let id = *st.selection.items.first()?;
     matches!(st.doc.item(id)?.content, Content::Text(_)).then_some(id)
+}
+
+/// The selected text boxes as command `ids`: the box being typed in counts, so Text Box Tools
+/// work with the text cursor in the box as well as with the box selected.
+fn text_frame_ids(app: &DesignApp) -> serde_json::Value {
+    let Some(st) = app.session.active() else { return json!([]) };
+    if st.selection.text.is_some() {
+        return json!(selected_text_frame(app).map(|id| vec![id.0]).unwrap_or_default());
+    }
+    json!(st.selection.items.iter().map(|i| i.0).collect::<Vec<_>>())
 }
 
 // ───────────────────────────── actions shared by the ribbon ─────────────────────────────
@@ -345,11 +358,22 @@ fn finish_link(app: &mut DesignApp, ctx: &egui::Context) {
         app.status("");
         return;
     }
-    let Some(to) = app.session.active().and_then(|d| (d.selection.items.len() == 1).then(|| d.selection.items[0])) else { return };
+    // The box clicked: selected, or the one the click put the text cursor in.
+    let Some(to) = selected_text_frame(app).or_else(|| app.session.active().and_then(|d| d.selection.items.first().copied())) else { return };
     if to.0 == from {
         return;
     }
+    // The clicked box takes the text from the start: no stray cursor left in it.
+    let _ = app.run("selection.set", json!({"ids": [to.0]}));
     update(ctx, |s| s.link_from = None);
+    // As in Publisher, text only flows into an empty text box.
+    let has_text = app.session.active().is_some_and(|st| {
+        st.doc.item(to).and_then(|it| it.text_frame()).and_then(|tf| st.doc.story(tf.story)).is_some_and(|s| !s.text.trim().is_empty())
+    });
+    if has_text {
+        app.status("The text box you link to must be empty. Delete its text, or draw a new text box, then click Create Link again.");
+        return;
+    }
     match app.run("text.thread", json!({"from": from, "to": to.0})) {
         Ok(_) => app.status("Text boxes linked: the text continues in this box."),
         Err(e) => app.status(format!("Couldn't link the text boxes: {e}")),

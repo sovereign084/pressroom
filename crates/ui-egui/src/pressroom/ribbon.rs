@@ -405,14 +405,15 @@ fn paragraph_group(app: &mut DesignApp, ui: &mut Ui) {
     if group(ui, "Paragraph", true, |ui| {
         column(ui, |ui| {
             row(ui, |ui| {
-                let resp = tool(ui, "bullets", "Bullets", en, para["bullets"].is_object());
+                let resp = tool(ui, "bullets", "Bullets", en, para["listType"].as_str() == Some("bullets"));
                 egui::Popup::menu(&resp).show(|ui| {
                     if item(ui, "None") {
-                        let _ = app.run("type.para", json!({"attrs": {"bullets": null}}));
+                        let _ = app.run("list.bullets", json!({"on": false}));
                     }
                     for b in ["•", "◦", "■", "◆", "✓", "➢"] {
                         if item(ui, &format!("{b}   Bullet")) {
-                            let _ = app.run("type.para", json!({"attrs": {"bullets": {"kind": "bullet", "char": b}}}));
+                            let _ = app.run("list.bullets", json!({"on": true}));
+                            let _ = app.run("type.para", json!({"attrs": {"bulletChar": b}}));
                         }
                     }
                     ui.separator();
@@ -420,14 +421,15 @@ fn paragraph_group(app: &mut DesignApp, ui: &mut Ui) {
                         act(app, "app.bulletsNumberingDialog");
                     }
                 });
-                let resp = tool(ui, "numbering", "Numbering", en, false);
+                let resp = tool(ui, "numbering", "Numbering", en, para["listType"].as_str() == Some("numbers"));
                 egui::Popup::menu(&resp).show(|ui| {
                     if item(ui, "None") {
-                        let _ = app.run("type.para", json!({"attrs": {"bullets": null}}));
+                        let _ = app.run("list.numbers", json!({"on": false}));
                     }
-                    for (label, f) in [("1. 2. 3.", "1, 2, 3, 4..."), ("a. b. c.", "a, b, c, d..."), ("A. B. C.", "A, B, C, D..."), ("i. ii. iii.", "i, ii, iii, iv...")] {
+                    for (label, style) in [("1. 2. 3.", "arabic"), ("a. b. c.", "lowerLetters"), ("A. B. C.", "upperLetters"), ("i. ii. iii.", "lowerRoman")] {
                         if item(ui, label) {
-                            let _ = app.run("type.para", json!({"attrs": {"bullets": {"kind": "numbered", "format": f}}}));
+                            let _ = app.run("list.numbers", json!({"on": true}));
+                            let _ = app.run("type.para", json!({"attrs": {"numberStyle": style, "numberExpression": "^#.^t"}}));
                         }
                     }
                     ui.separator();
@@ -452,8 +454,8 @@ fn paragraph_group(app: &mut DesignApp, ui: &mut Ui) {
                     ("align-left", "Align Text Left (Ctrl+L)", "type.alignLeft", "left"),
                     ("align-center", "Center (Ctrl+E)", "type.alignCenter", "center"),
                     ("align-right", "Align Text Right (Ctrl+R)", "type.alignRight", "right"),
-                    ("justify", "Justify (Ctrl+J)", "type.justify", "justifyLeft"),
-                    ("distribute", "Distribute (Ctrl+Shift+D)", "", "justifyAll"),
+                    ("justify", "Justify (Ctrl+J)", "type.justify", "leftJustified"),
+                    ("distribute", "Distribute (Ctrl+Shift+D)", "", "fullyJustified"),
                 ] {
                     if tool(ui, icon, tip, en, align == key).clicked() {
                         if cmd.is_empty() {
@@ -1020,10 +1022,12 @@ fn text_box_format(app: &mut DesignApp, ui: &mut Ui) {
     group(ui, "Text", false, |ui| {
         big_menu(ui, "text-fit", "Text\nFit", frame, |ui| {
             if item(ui, "Grow Text Box to Fit") {
-                act(app, "fit.frameToContent");
+                let ids = super::text_frame_ids(app);
+                act_with(app, "object.fit", json!({"mode": "fitFrameToContent", "ids": ids}));
             }
             if item(ui, "Do Not Autofit") {
-                act_with(app, "object.textFrameOptions", json!({"autoSize": "off"}));
+                let ids = super::text_frame_ids(app);
+                act_with(app, "object.textFrameOptions", json!({"autoSize": "off", "ids": ids}));
             }
         });
         column(ui, |ui| {
@@ -1058,7 +1062,8 @@ fn text_box_format(app: &mut DesignApp, ui: &mut Ui) {
                     for (h, icon) in [("left", "align-left"), ("center", "align-center"), ("right", "align-right")] {
                         let tip = format!("Align {} {}", if v == "center" { "Middle" } else { v }, h);
                         if tool(ui, icon, &tip, frame, false).clicked() {
-                            let _ = app.run("object.textFrameOptions", json!({"verticalJustification": v}));
+                            let ids = super::text_frame_ids(app);
+                            let _ = app.run("object.textFrameOptions", json!({"verticalJustification": v, "ids": ids}));
                             let cmd = match h {
                                 "left" => "type.alignLeft",
                                 "center" => "type.alignCenter",

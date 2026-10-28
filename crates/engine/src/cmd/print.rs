@@ -15,7 +15,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Print…",
             ["File"],
             Some("Cmd+P"),
-            "{printer?, copies?: 1, pages?: \"1-3,5\", dryRun?: bool (export and preview submission without printing), …the PDF settings of file.exportPdf (the PDF it writes is what prints)} → {printer, copies, pages, command, bytes, warnings}",
+            "{printer?, copies?: 1, pages?: \"1-3,5\", sides?: default|one|longEdge|shortEdge, grayscale?: bool, layout?: pages|booklet (booklet: two pages a sheet in folding order), dryRun?: bool (export and preview submission without printing), …the PDF settings of file.exportPdf (the PDF it writes is what prints)} → {printer, copies, pages, command, bytes, warnings}",
             has_doc,
             print
         ),
@@ -48,22 +48,41 @@ fn print_with(
     let d = &s.doc()?.doc;
     let opts = super::export::options(p, d.page_count())?;
     let copies = p.get("copies").and_then(Value::as_u64).unwrap_or(1).clamp(1, 999) as u32;
+    // PressRoom: sides (one-sided, or both sides flipped on the long or short edge) and grey.
+    let duplex = match str_param(p, "sides") {
+        None | Some("default") => None,
+        Some("one") => Some(craft_print::Duplex::Off),
+        Some("longEdge") => Some(craft_print::Duplex::LongEdge),
+        Some("shortEdge") => Some(craft_print::Duplex::ShortEdge),
+        Some(o) => return Err(bad("file.print", format!("unknown sides `{o}` (one, longEdge, shortEdge)"))),
+    };
     let job = craft_print::Job {
         printer: str_param(p, "printer").map(str::to_string),
         copies,
+        duplex,
+        grayscale: p.get("grayscale").and_then(Value::as_bool).unwrap_or(false),
         scaling: craft_print::Scaling::ShrinkToFit,
         title: d.title.clone(),
         ..craft_print::Job::default()
     };
     let dry = p.get("dryRun").and_then(Value::as_bool).unwrap_or(false);
-    let pages = opts.pages.as_ref().map_or(d.page_count(), |v| v.len());
-    // The PDF that Export PDF writes with these settings.
-    let pdf = super::export::pdf_export(s, p)?;
+    // A booklet prints the pages two to a sheet in folding order (Publisher's "Booklet, side-fold").
+    let booklet = str_param(p, "layout") == Some("booklet");
+    let (bytes, pages, warnings) = if booklet {
+        let bo = designcraft_pdf::BookletOptions { kind: designcraft_pdf::BookletKind::SaddleStitch, space_between: 0.0, title: None };
+        let r = designcraft_pdf::export_booklet(&crate::cmd::interchange::with_pdf_boxes(d), &s.cache, &bo)
+            .map_err(|e| bad("file.print", e.to_string()))?;
+        (r.bytes, r.pages, serde_json::to_value(r.warnings).unwrap_or_default())
+    } else {
+        let pages = opts.pages.as_ref().map_or(d.page_count(), |v| v.len());
+        // The PDF that Export PDF writes with these settings.
+        let pdf = super::export::pdf_export(s, p)?;
+        (pdf.bytes, pages, serde_json::to_value(pdf.warnings).unwrap_or_default())
+    };
     let command = craft_print::command_preview(&job).map_err(|e| bad("file.print", e.to_string()))?;
-    let out =
-        json!({"printer": job.printer, "copies": copies, "pages": pages, "command": command, "bytes": pdf.bytes.len(), "warnings": pdf.warnings});
+    let out = json!({"printer": job.printer, "copies": copies, "pages": pages, "command": command, "bytes": bytes.len(), "warnings": warnings});
     if !dry {
-        submit(&pdf.bytes, &job).map_err(|e| bad("file.print", e.to_string()))?;
+        submit(&bytes, &job).map_err(|e| bad("file.print", e.to_string()))?;
     }
     Ok(out)
 }

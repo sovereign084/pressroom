@@ -33,7 +33,7 @@ const TABLE: &[(Modifiers, Key, Do)] = &[
     (CTRL_SHIFT, Key::Equals, Do::Position("superscript")),
     (CTRL_SHIFT, Key::Plus, Do::Position("superscript")),
     (CTRL_SHIFT, Key::K, Do::Cmd("type.allCaps")),
-    (CTRL_SHIFT, Key::D, Do::Para("justifyAll")),
+    (CTRL_SHIFT, Key::D, Do::Para("fullyJustified")),
     (CTRL_SHIFT, Key::G, Do::GroupToggle),
     (CTRL_SHIFT, Key::N, Do::InsertPage),
     (CTRL_SHIFT, Key::Y, Do::Cmd("view.hiddenCharacters")),

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// A file with this name next to the executable makes the install portable: settings, logs and
 /// recovery data are kept in [`PORTABLE_DATA_DIR`] beside it. The Windows portable zip ships one.
 const PORTABLE_MARKER: &str = "portable.txt";
-const PORTABLE_DATA_DIR: &str = "DesignCraftData";
+const PORTABLE_DATA_DIR: &str = "PressRoomData";
 
 pub fn config_dir() -> Option<PathBuf> {
     config_dir_with(std::env::consts::OS, |key| std::env::var_os(key), executable_dir().as_deref())
@@ -18,10 +18,10 @@ fn config_dir_with(os: &str, env: impl Fn(&str) -> Option<OsString>, exe_dir: Op
         return (!root.is_empty()).then(|| PathBuf::from(root));
     }
     match os {
-        "macos" => env("HOME").map(|p| PathBuf::from(p).join("Library/Application Support/DesignCraft")),
-        "windows" => env("APPDATA").map(|p| PathBuf::from(p).join("DesignCraft")),
+        "macos" => env("HOME").map(|p| PathBuf::from(p).join("Library/Application Support/PressRoom")),
+        "windows" => env("APPDATA").map(|p| PathBuf::from(p).join("PressRoom")),
         _ => {
-            env("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| env("HOME").map(|p| PathBuf::from(p).join(".config"))).map(|p| p.join("designcraft"))
+            env("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| env("HOME").map(|p| PathBuf::from(p).join(".config"))).map(|p| p.join("pressroom"))
         }
     }
 }
@@ -29,7 +29,7 @@ fn config_dir_with(os: &str, env: impl Fn(&str) -> Option<OsString>, exe_dir: Op
 /// The folder that holds settings and recovery data instead of the user's profile:
 /// `DESIGNCRAFT_CONFIG_DIR` (empty: none at all), else a portable install's data folder.
 fn root_with(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -> Option<OsString> {
-    env("DESIGNCRAFT_CONFIG_DIR").or_else(|| exe_dir.and_then(portable_dir).map(PathBuf::into_os_string))
+    env("PRESSROOM_CONFIG_DIR").or_else(|| exe_dir.and_then(portable_dir).map(PathBuf::into_os_string))
 }
 
 /// `<dir>/DesignCraftData` when `dir` holds [`PORTABLE_MARKER`], where `dir` is the folder the
@@ -74,7 +74,7 @@ fn app_bundle_parent(exe_dir: &Path) -> Option<&Path> {
 }
 
 fn unwritable_portable_dir_with(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -> Option<PathBuf> {
-    if env("DESIGNCRAFT_CONFIG_DIR").is_some() {
+    if env("PRESSROOM_CONFIG_DIR").is_some() {
         return None;
     }
     exe_dir.and_then(marked_data_dir).filter(|data| !writable(data))
@@ -85,7 +85,9 @@ fn executable_dir() -> Option<PathBuf> {
 }
 
 pub fn recovery_dir() -> Option<PathBuf> {
-    recovery_dir_with(root_with(|key| std::env::var_os(key), executable_dir().as_deref()), designcraft_engine::recovery::default_dir)
+    // PressRoom keeps its recovered publications in its own settings folder, apart from an
+    // installed DesignCraft's.
+    recovery_dir_with(root_with(|key| std::env::var_os(key), executable_dir().as_deref()), || config_dir().map(|d| d.join("Recovery")))
         .and_then(own_run)
 }
 
