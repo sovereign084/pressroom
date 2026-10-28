@@ -128,7 +128,7 @@ fn save_with_large_entries_from(doc: &Document, preview: Option<&[u8]>, large_en
 }
 
 /// The file name extension of a DesignCraft document.
-pub const EXTENSION: &str = "designcraft";
+pub const EXTENSION: &str = "pressroom";
 
 /// Whether `bytes` are a DesignCraft document package: a zip holding `document.json`. Files
 /// without an extension are recognised by this (the legacy JSON form is too generic to sniff).

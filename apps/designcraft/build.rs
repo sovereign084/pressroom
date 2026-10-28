@@ -7,18 +7,18 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../../assets/app-icon/designcraft.ico");
+    println!("cargo:rerun-if-changed=../../packaging/pressroom/pressroom.ico");
     println!("cargo:rerun-if-env-changed=DESIGNCRAFT_REQUIRE_WINRES");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     let mut res = winresource::WindowsResource::new();
-    res.set_icon("../../assets/app-icon/designcraft.ico")
-        .set("ProductName", "DesignCraft")
-        .set("FileDescription", "DesignCraft page layout")
-        .set("CompanyName", "Learning Machines LLC")
-        .set("LegalCopyright", "Copyright (c) the DesignCraft authors. MIT OR Apache-2.0.")
-        .set("OriginalFilename", "designcraft.exe")
+    res.set_icon("../../packaging/pressroom/pressroom.ico")
+        .set("ProductName", "PressRoom")
+        .set("FileDescription", "PressRoom")
+        .set("CompanyName", "PressRoom (built on DesignCraft)")
+        .set("LegalCopyright", "Copyright (c) the DesignCraft authors and the PressRoom contributors. MIT OR Apache-2.0.")
+        .set("OriginalFilename", "PressRoom.exe")
         .set("InternalName", "designcraft");
     if let Err(e) = res.compile() {
         if std::env::var_os("DESIGNCRAFT_REQUIRE_WINRES").is_some() {

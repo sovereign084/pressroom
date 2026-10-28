@@ -308,7 +308,7 @@ impl DesignApp {
 /// IDML, and InDesign documents and templates (converted to IDML on open).
 pub fn opens_as_document(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    [".designcraft", ".idml", ".indd", ".indt"].iter().any(|ext| n.ends_with(ext))
+    [".pressroom", ".designcraft", ".idml", ".indd", ".indt"].iter().any(|ext| n.ends_with(ext))
 }
 
 #[cfg(test)]

@@ -278,8 +278,8 @@ fn open_filters(purpose: &str) -> &'static [OpenFilter] {
             OpenFilter { name: "Video and sound", extensions: &["mp4", "m4v", "mov", "webm", "mp3", "m4a", "wav", "ogg"] },
         ],
         _ => &[
-            OpenFilter { name: "PressRoom publications", extensions: &["designcraft", "idml", "indd", "indt"] },
-            OpenFilter { name: "PressRoom publication", extensions: &["designcraft"] },
+            OpenFilter { name: "PressRoom publications", extensions: &["pressroom", "designcraft", "idml", "indd", "indt"] },
+            OpenFilter { name: "PressRoom publication", extensions: &["pressroom"] },
             OpenFilter { name: "InDesign Markup (IDML)", extensions: &["idml"] },
             OpenFilter { name: "InDesign document or template (INDD, INDT)", extensions: &["indd", "indt"] },
             // Files saved without an extension; `file.open` tells the formats apart by content.
@@ -303,7 +303,7 @@ fn suggested_extension(name: &str) -> Option<&str> {
 /// writes it.
 fn picked_save_path(picked: std::path::PathBuf, ext: Option<&str>) -> std::path::PathBuf {
     let Some(ext) = ext else { return picked };
-    if ext.eq_ignore_ascii_case("designcraft") {
+    if ext.eq_ignore_ascii_case("pressroom") || ext.eq_ignore_ascii_case("designcraft") {
         let p = picked.to_string_lossy();
         return designcraft_engine::cmd::with_document_extension(&p).into();
     }
@@ -383,7 +383,7 @@ fn app_icon() -> Option<egui::IconData> {
     #[cfg(target_os = "macos")]
     let png: &[u8] = include_bytes!("../../../assets/app-icon/designcraft-macos-512.png");
     #[cfg(not(target_os = "macos"))]
-    let png: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.designcraft.png");
+    let png: &[u8] = include_bytes!("../../../packaging/pressroom/pressroom-256.png");
     eframe::icon_data::from_png_bytes(png).map_err(|e| log::warn!("app icon: {e}")).ok()
 }
 

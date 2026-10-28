@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PressRoom installer: per-user (no administrator prompt), into %LocalAppData%\Programs\PressRoom,
+     with Start menu and desktop shortcuts and .pressroom files opening in PressRoom.
+     Build: wix build pressroom.wxs -d Version=0.1.0 -d BinDir=<folder with designcraft.exe> -o PressRoom-Setup.msi -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="PressRoom" Manufacturer="PressRoom" Version="$(var.Version)" UpgradeCode="7C1E2A55-9B3D-4F0A-8E61-2D4B9C0F7A13"
+           Scope="perUser" Compressed="yes" Language="1033">
+    <SummaryInformation Description="PressRoom: bulletins, newsletters, flyers and cards" Manufacturer="PressRoom" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of PressRoom is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="PressRoomIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)pressroom.ico" />
+    <Property Id="ARPPRODUCTICON" Value="PressRoomIcon.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="PressRoom" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Main" Title="PressRoom" Level="1">
+      <ComponentGroupRef Id="PressRoomFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="PressRoomFiles" Directory="INSTALLFOLDER">
+      <Component Id="PressRoomApp" Guid="B6F4C2D1-3E5A-4B7C-9D8E-1F2A3B4C5D6E">
+        <File Id="PressRoomExe" Source="$(var.BinDir)\designcraft.exe" Name="PressRoom.exe" />
+        <RegistryValue Root="HKCU" Key="Software\PressRoom" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+
+        <!-- .pressroom: PressRoom's own publications. -->
+        <RegistryValue Root="HKCU" Key="Software\Classes\.pressroom" Value="PressRoom.Publication" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\PressRoom.Publication" Value="PressRoom Publication" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\PressRoom.Publication\DefaultIcon" Value="&quot;[#PressRoomExe]&quot;,0" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\PressRoom.Publication\shell\open\command" Value="&quot;[#PressRoomExe]&quot; &quot;%1&quot;" Type="string" />
+        <!-- Older .designcraft files: offered under "Open with". -->
+        <RegistryValue Root="HKCU" Key="Software\Classes\.designcraft\OpenWithProgids" Name="PressRoom.Publication" Value="" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\Applications\PressRoom.exe" Name="FriendlyAppName" Value="PressRoom" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\Applications\PressRoom.exe\shell\open\command" Value="&quot;[#PressRoomExe]&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\PressRoom.exe" Value="[#PressRoomExe]" Type="string" />
+      </Component>
+
+      <Component Id="PressRoomNotice" Guid="C7A5D3E2-4F6B-4C8D-0E9F-2A3B4C5D6E7F">
+        <File Id="PressRoomNoticeFile" Source="$(var.BinDir)\NOTICE" />
+        <File Id="PressRoomLicenseApache" Source="$(var.BinDir)\LICENSE-APACHE" />
+        <File Id="PressRoomLicenseMit" Source="$(var.BinDir)\LICENSE-MIT" />
+        <RegistryValue Root="HKCU" Key="Software\PressRoom" Name="Notice" Value="1" Type="integer" KeyPath="yes" />
+      </Component>
+
+      <Component Id="PressRoomStartMenu" Guid="D8B6E4F3-5A7C-4D9E-1F0A-3B4C5D6E7F80">
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="PressRoom" Description="Bulletins, newsletters, flyers and cards"
+                  Target="[#PressRoomExe]" WorkingDirectory="INSTALLFOLDER" Icon="PressRoomIcon.ico" IconIndex="0" />
+        <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="PressRoom" Description="Bulletins, newsletters, flyers and cards"
+                  Target="[#PressRoomExe]" WorkingDirectory="INSTALLFOLDER" Icon="PressRoomIcon.ico" IconIndex="0" />
+        <RegistryValue Root="HKCU" Key="Software\PressRoom" Name="Shortcuts" Value="1" Type="integer" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

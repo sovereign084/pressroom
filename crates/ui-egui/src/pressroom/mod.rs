@@ -480,10 +480,13 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         }
         // App mark and the Quick Access Toolbar.
         let mut x = full.min.x + 8.0;
+        // PressRoom's mark: an open booklet.
         let mark = Rect::from_min_size(pos2(x, full.center().y - 9.0), vec2(18.0, 18.0));
-        ui.painter().rect_filled(mark, 2.0, Color32::WHITE);
-        ui.painter().text(mark.center(), egui::Align2::CENTER_CENTER, "P", crate::theme::semibold(13.0), PR::TEAL);
-        ui.painter().line_segment([mark.center_bottom() + vec2(-6.0, -3.0), mark.center_bottom() + vec2(6.0, -3.0)], Stroke::new(1.0, PR::TEAL));
+        let (c, l, r) = (mark.center().x, mark.min.x + 1.0, mark.max.x - 1.0);
+        let (t, b) = (mark.min.y + 3.0, mark.max.y - 2.0);
+        ui.painter().add(egui::Shape::convex_polygon(vec![pos2(l, t), pos2(c - 0.5, t + 1.5), pos2(c - 0.5, b), pos2(l, b - 1.5)], Color32::from_rgb(226, 236, 240), Stroke::NONE));
+        ui.painter().add(egui::Shape::convex_polygon(vec![pos2(c + 0.5, t + 1.5), pos2(r, t), pos2(r, b - 1.5), pos2(c + 0.5, b)], Color32::WHITE, Stroke::NONE));
+        ui.painter().line_segment([pos2(c + 2.0, t + 4.0), pos2(r - 2.0, t + 3.2)], Stroke::new(1.5, Color32::from_rgb(238, 176, 58)));
         x += 30.0;
         let doc = app.session.active().is_some();
         for (icon, tip, cmd) in [("save", "Save (Ctrl+S)", "app.save"), ("undo", "Undo (Ctrl+Z)", "edit.undo"), ("redo", "Redo (Ctrl+Y)", "edit.redo")] {

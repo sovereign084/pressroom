@@ -9,3 +9,5 @@ plan/
 /.claude/
 /target-*/
 /craft-fonts/
+
+/target-pkg/

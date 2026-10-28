@@ -67,13 +67,12 @@ pub(crate) fn check(app: &mut DesignApp) -> Result<Value, String> {
 pub(crate) fn tick(app: &mut DesignApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // PressRoom never checks DesignCraft's releases: an update offer would install DesignCraft
+        // over it. PressRoom updates come as a new PressRoom installer.
         let rt = &mut app.updates_rt;
         rt.repaint = Some(ctx.clone());
-        if std::mem::take(&mut rt.check_requested) {
-            rt.updater.check_now(ctx);
-        } else if rt.startup_check {
-            rt.updater.check_at_start(ctx);
-        }
+        rt.check_requested = false;
+        rt.startup_check = false;
         rt.updater.tick(ctx);
     }
     #[cfg(target_arch = "wasm32")]
