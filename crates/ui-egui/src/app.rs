@@ -201,6 +201,8 @@ impl DesignApp {
                     let _ = self.open_dropped_at(&drop.path, drop.pointer);
                 }
             }
+            // Publisher's shortcuts first; the keymap gets what they leave.
+            crate::pressroom::shortcuts(self, &ctx);
             menus::shortcuts(self, &ctx);
         }
         let t0 = now_ms();
@@ -214,30 +216,21 @@ impl DesignApp {
         if dbg {
             eprintln!("root start {:?}", ui.available_rect_before_wrap());
         }
+        // PressRoom: the Publisher-style window (title bar, ribbon, Page Navigation, status bar).
         if !presenting {
-            chrome::app_bar(self, ui);
+            crate::pressroom::chrome(self, ui);
             if dbg {
-                eprintln!("after app bar {:?}", ui.available_rect_before_wrap());
-            }
-            if self.ui.control_bar && self.session.active().is_some() && self.ui.hidden_panels == 0 {
-                chrome::control_bar(self, ui);
-            }
-            chrome::status_bar(self, ui);
-            if dbg {
-                eprintln!("after status {:?}", ui.available_rect_before_wrap());
-            }
-            if self.ui.hidden_panels != 1 {
-                toolbar::show(self, ui);
+                eprintln!("after pressroom chrome {:?}", ui.available_rect_before_wrap());
             }
         }
-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| {
-            // The panel layout holds the canvas as its protected `canvas` panel.
-            if presenting || self.ui.hidden_panels != 0 {
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(crate::pressroom::PR::SCRATCH)).show(ui, |ui| {
+            if presenting {
                 self.canvas_area(ui, presenting);
             } else {
-                panel_docking::show(self, ui);
+                crate::pressroom::body(self, ui);
             }
         });
+        let _ = t.pasteboard;
         // New Window: pane 1 in a window of its own.
         if self.second_window
             && !presenting

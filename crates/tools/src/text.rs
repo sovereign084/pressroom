@@ -234,12 +234,11 @@ impl TypeTool {
             self.border = Some(b);
             return vec![];
         }
-        // Text frames take the caret (locked ones too, as in InDesign); an empty frame
-        // becomes one, unless it's locked: then the press draws a new text frame over it.
+        // Text frames take the caret (locked ones too). PressRoom, like Publisher, never turns a
+        // picture box or shape into a text box: a press on one draws a new text box over it.
         if let Some((_, id)) = cx.hit(ev.pos)
             && let Some(it) = cx.doc.item(id)
-            && !matches!(it.content, designcraft_doc::Content::Graphic(_) | designcraft_doc::Content::Group { .. })
-            && (it.is_text_frame() || !it.locked)
+            && it.is_text_frame()
         {
             let sp = cx.layout.spread_at(ev.pos).map(|(_, p)| p).unwrap_or(ev.pos);
             let clicks = ev.click_count();

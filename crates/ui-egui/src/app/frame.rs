@@ -102,9 +102,9 @@ impl DesignApp {
             chrome::start_screen(self, ui);
             return;
         }
-        if !presenting {
-            chrome::doc_tabs(self, ui);
-        }
+        // PressRoom shows one publication per window, as Publisher does: no document tabs
+        // (View › Switch Windows moves between open publications).
+        let _ = presenting;
         let split_layout = (self.split && !presenting)
             .then(|| {
                 craft_ui::layout::split_rect(

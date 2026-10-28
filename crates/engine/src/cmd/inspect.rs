@@ -33,6 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 return Err(super::bad("tool.select", format!("unknown tool `{t}`")));
             }
             s.set_tool(t);
+            s.tool_armed = t != "selection";
             Ok(json!({"tool": s.tool_id()}))
         }),
         cmd!(query "tool.list", "List Tools", [], None, "{}", always, |_, _| Ok(serde_json::to_value(designcraft_tools::TOOL_GROUPS).unwrap_or_default())),

@@ -212,7 +212,7 @@ impl Tokens {
                 hover: hex(0xdddddd),
                 tool_active: hex(0xcfcfcf),
                 row_selected: hex(0xc4dbf7),
-                pasteboard: hex(0xd4d4d4),
+                pasteboard: hex(0xababab),
                 ruler: hex(0xf2f2f2),
                 ruler_tick: hex(0x4a4a4a),
                 tab_inactive: hex(0xdcdcdc),

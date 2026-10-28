@@ -25,6 +25,7 @@ mod object_control;
 mod page_history;
 mod panel_docking;
 pub mod panels;
+pub mod pressroom;
 mod prefs;
 pub mod render_worker;
 mod rtl;

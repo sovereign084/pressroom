@@ -339,6 +339,9 @@ pub struct Session {
     /// The selection tool a Cmd-held press borrows for one gesture while another tool stays
     /// chosen (#919). Dropped on release.
     pub(crate) temp_tool: Option<Box<dyn designcraft_tools::Tool>>,
+    /// PressRoom: the tool was chosen on purpose (Draw Text Box, a shape): its next press draws.
+    /// Otherwise clicks pick the tool the way Publisher's single pointer does.
+    pub(crate) tool_armed: bool,
     /// The selection tool (`selection` or `directSelection`) chosen last: the one Cmd borrows.
     pub(crate) last_selection_tool: &'static str,
     pub journal: Vec<(String, Value)>,
@@ -403,6 +406,7 @@ impl Session {
             cache: Arc::new(Cache::new()),
             tool: designcraft_tools::create("selection"),
             temp_tool: None,
+            tool_armed: false,
             last_selection_tool: "selection",
             journal: vec![],
             find_context: None,

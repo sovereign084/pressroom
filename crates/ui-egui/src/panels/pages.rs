@@ -12,7 +12,7 @@ use crate::{DesignApp, icons};
 
 /// What a thumbnail shows: a document page (absolute index) or a whole parent spread.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum ThumbOf {
+pub(crate) enum ThumbOf {
     Page(usize),
     Parent(SpreadId),
 }
@@ -25,7 +25,7 @@ static THUMBS: Mutex<Option<HashMap<ThumbKey, egui::TextureHandle>>> = Mutex::ne
 /// Widest parent thumbnail, in pixels (a spread of many pages stays a small texture).
 const MAX_THUMB_W: f64 = 1024.0;
 
-fn thumb(app: &mut DesignApp, ctx: &egui::Context, of: ThumbOf, h: f32) -> Option<egui::TextureHandle> {
+pub(crate) fn thumb(app: &mut DesignApp, ctx: &egui::Context, of: ThumbOf, h: f32) -> Option<egui::TextureHandle> {
     let st = app.session.active()?;
     let key = (st.uid, st.revision, of, h.round() as u32);
     let mut g = THUMBS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

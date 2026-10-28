@@ -12,6 +12,19 @@ use serde_json::{Value, json};
 
 use crate::{EngineError, HistoryEntry, Interaction, Result, Session, record_undo};
 
+/// Whether `p` is well inside a text box (not on or near its edge, where a press moves or resizes
+/// it). Text boxes inside groups don't count: a click selects the group first.
+fn text_interior_at(cx: &ToolContext, p: designcraft_geom::Point) -> bool {
+    let Some((_, id)) = cx.hit_text_frame(p) else { return false };
+    if cx.doc.top_level_of(id).is_some_and(|top| top != id) {
+        return false;
+    }
+    let d = cx.tol(6.0);
+    [(d, 0.0), (-d, 0.0), (0.0, d), (0.0, -d)]
+        .into_iter()
+        .all(|(dx, dy)| cx.hit_text_frame(designcraft_geom::Point::new(p.x + dx, p.y + dy)).is_some_and(|(_, h)| h == id))
+}
+
 /// Something the UI should do in response to a tool or command.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -149,12 +162,32 @@ impl Session {
         {
             self.temp_tool = Some(designcraft_tools::create(id));
         }
+        self.publisher_pointer(ev, view);
         let actions = self.with_ctx(view, |s, cx| s.gesture_tool().pointer(cx, ev)).unwrap_or_default();
         let r = self.run_actions(actions);
         if ev.kind == PointerKind::Up && self.temp_tool.as_ref().is_some_and(|t| !t.busy()) {
             self.temp_tool = None;
         }
         r
+    }
+
+    /// PressRoom's single pointer, as in Publisher: a press inside a text box puts the text cursor
+    /// there (the Type tool takes the press), and a press anywhere else while typing goes back to
+    /// selecting (the Selection tool takes it). A tool chosen on purpose (Draw Text Box, a shape)
+    /// keeps its first press, which draws.
+    fn publisher_pointer(&mut self, ev: &PointerEvent, view: ViewInfo) {
+        if ev.kind != PointerKind::Down || ev.click_count() != 1 || ev.mods.cmd || ev.mods.shift || self.temp_tool.is_some() || self.tool.busy() {
+            return;
+        }
+        if std::mem::take(&mut self.tool_armed) {
+            return;
+        }
+        let in_text = self.with_ctx(view, |_, cx| text_interior_at(cx, ev.pos)).unwrap_or(false);
+        match self.tool.id() {
+            "selection" if in_text => self.set_tool("type"),
+            "type" if !in_text && !self.with_ctx(view, |_, cx| cx.hit_text_frame(ev.pos).is_some()).unwrap_or(false) => self.set_tool("selection"),
+            _ => {}
+        }
     }
 
     /// Dispatch a temporary view tool without replacing the active tool or its state.
