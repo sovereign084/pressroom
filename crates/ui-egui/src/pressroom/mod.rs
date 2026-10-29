@@ -103,6 +103,8 @@ struct State {
     link_from: Option<u64>,
     /// The canvas width last frame (Page Width zoom).
     canvas_w: f32,
+    /// The publication in front last frame (its session uid).
+    shown_doc: Option<u64>,
 }
 
 fn state_id() -> egui::Id {
@@ -159,7 +161,8 @@ fn set_master_view(app: &mut DesignApp, on: bool) {
 /// The kind of thing selected.
 fn context(app: &DesignApp) -> Context {
     let Some(st) = app.session.active() else { return Context::None };
-    if st.selection.cells.is_some() {
+    // Selected cells, or the text cursor in one: Table Tools, as in Publisher.
+    if st.selection.cells.is_some() || st.selection.text.as_ref().is_some_and(|t| t.cell.is_some()) {
         return Context::Table;
     }
     if st.selection.text.is_some() {
@@ -422,8 +425,17 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     // controls live.
     app.ui.task_bar = false;
     let mut s = state(&ctx);
+    // A publication that comes to the front shows itself, however it was opened (double-clicked
+    // in Explorer, Open with, a recent file): the File screen steps aside.
+    let front = app.session.active().map(|d| d.uid);
+    if front != s.shown_doc {
+        if front.is_some() {
+            s.backstage = None;
+        }
+        s.shown_doc = front;
+    }
     // No document: the File screen is the start screen.
-    if app.session.active().is_none() && s.backstage.is_none() {
+    if front.is_none() && s.backstage.is_none() {
         s.backstage = Some(Backstage::New);
     }
     let c = context(app);

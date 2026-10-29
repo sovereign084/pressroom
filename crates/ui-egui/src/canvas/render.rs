@@ -9,7 +9,8 @@ pub(super) fn screen_options(app: &DesignApp, layout: &CanvasLayout, preview: bo
     designcraft_render::RenderOptions {
         printing_only: preview,
         greek_below_px: 3.0 * ppp,
-        highlight_missing_fonts: !preview && app.session.prefs.highlight_substituted_fonts,
+        // Publisher draws a missing font's stand-in plainly: PressRoom's window doesn't mark it pink.
+        highlight_missing_fonts: !preview && app.session.prefs.highlight_substituted_fonts && !app.ui.pressroom_shell,
         highlight_hj: !preview && app.session.prefs.highlight_hj,
         condition_indicators: !preview,
         note_indicators: !preview && app.session.prefs.show_note_anchors,

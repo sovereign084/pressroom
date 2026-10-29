@@ -1200,22 +1200,58 @@ fn drawing_format(app: &mut DesignApp, ui: &mut Ui) {
     arrange_group(app, ui);
 }
 
+/// Table Tools › Layout, as in Publisher: select, delete and insert rows and columns, merge and
+/// split cells, and where text sits in its cells.
 fn table_layout(app: &mut DesignApp, ui: &mut Ui) {
+    let in_table = on(app, "table.deleteRow");
+    group(ui, "Table", false, |ui| {
+        big_menu(ui, "select", "Select", in_table, |ui| {
+            for (label, what) in [("Select Cell", "cell"), ("Select Column", "column"), ("Select Row", "row"), ("Select Table", "table")] {
+                if item(ui, label) {
+                    act_with(app, "table.select", json!({"what": what}));
+                }
+            }
+        });
+        if big(ui, "table", "Table\nOptions", true).clicked() {
+            act(app, "app.tablePanel");
+        }
+    });
     group(ui, "Rows & Columns", false, |ui| {
-        for (label, cmd) in [
-            ("Insert\nAbove", "table.insertRowAbove"),
-            ("Insert\nBelow", "table.insertRowBelow"),
-            ("Insert\nLeft", "table.insertColumnLeft"),
-            ("Insert\nRight", "table.insertColumnRight"),
+        big_menu(ui, "table-delete", "Delete", in_table, |ui| {
+            for (label, cmd) in [("Delete Columns", "table.deleteColumn"), ("Delete Rows", "table.deleteRow"), ("Delete Table", "table.delete")] {
+                if item(ui, label) {
+                    act(app, cmd);
+                }
+            }
+        });
+        for (icon, label, cmd) in [
+            ("row-above", "Insert\nAbove", "table.insertRowAbove"),
+            ("row-below", "Insert\nBelow", "table.insertRowBelow"),
+            ("col-left", "Insert\nLeft", "table.insertColumnLeft"),
+            ("col-right", "Insert\nRight", "table.insertColumnRight"),
         ] {
-            if big(ui, "table", label, on(app, cmd)).clicked() {
+            if big(ui, icon, label, on(app, cmd)).clicked() {
                 act(app, cmd);
             }
         }
     });
-    group(ui, "Table", false, |ui| {
-        if big(ui, "table", "Table\nOptions", true).clicked() {
-            act(app, "app.tablePanel");
+    group(ui, "Merge", false, |ui| {
+        if big(ui, "merge-cells", "Merge\nCells", on(app, "table.merge")).clicked() {
+            act(app, "table.merge");
         }
+        if big(ui, "split-cells", "Split\nCells", on(app, "table.unmerge")).clicked() {
+            act(app, "table.unmerge");
+        }
+    });
+    group(ui, "Alignment", false, |ui| {
+        column(ui, |ui| {
+            for (icon, tip, vj) in
+                [("cell-top", "Align Top", "top"), ("cell-middle", "Align Middle", "center"), ("cell-bottom", "Align Bottom", "bottom")]
+            {
+                if tool(ui, icon, tip, in_table, false).clicked() {
+                    act_with(app, "table.setCell", json!({"vj": vj}));
+                }
+            }
+        });
     });
 }

@@ -14,8 +14,10 @@ command-line tool:
     lines stay lines with their arrowheads;
   - objects stack in the same order, and text wraps around the objects it wrapped around in
     Publisher (only objects in front of a text box wrap its text, as in Publisher);
-  - anything else (WordArt, tables, fancy shapes) is saved by Publisher as a picture, so it looks
-    the same even though it is no longer editable;
+  - tables stay editable tables: the same columns, rows, text, fonts, fills, borders and cell
+    margins (a cell keeps one formatting: its first character's when Publisher's was mixed);
+  - anything else (WordArt, fancy shapes) is saved by Publisher as a picture, so it looks the
+    same even though it is no longer editable;
   - objects Publisher itself can't draw (some files carry invisible leftovers) are left out;
   - the master page's objects go on PressRoom's master page.
 
@@ -251,7 +253,7 @@ function Rect($shape, [double]$x) {
 $frameStep = @{}     # Publisher shape ID → step that created its PressRoom frame
 $chains = New-Object System.Collections.Generic.List[object]   # linked stories: first text frame and its step
 $picN = 0
-$stats = @{ text = 0; pictures = 0; shapes = 0; lines = 0; flattened = 0; linked = 0; skipped = 0 }
+$stats = @{ text = 0; pictures = 0; shapes = 0; lines = 0; tables = 0; mixedCells = 0; flattened = 0; linked = 0; skipped = 0 }
 
 # The page's (or group's) shapes from back to front.
 function Back-To-Front($shapes) {
@@ -349,9 +351,14 @@ function Emit-Frame-Options($tf, [int]$k) {
 # Character formatting of [a, b) bytes of the story, with the paragraph's line spacing (`lines` of
 # the font's single spacing, or `exact` points).
 function Emit-Chars($k, [int]$a, [int]$b, $f, [double]$lines, [double]$exact) {
+    [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = $a; focus = $b })
+    Emit-Format $f $lines $exact
+}
+
+# Character formatting `f` on what is selected (text, or table cells).
+function Emit-Format($f, [double]$lines, [double]$exact) {
     $fam = Map-Font $f.Name $f.Bold $f.Italic
     $lead = if ($exact -gt 0) { $exact } else { $f.Size * $fam[2] * $lines }
-    [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = $a; focus = $b })
     $attrs = @{ fontFamily = $fam[0]; size = $f.Size; underline = $f.Underline; leading = @{ kind = 'points'; value = [Math]::Round($lead, 2) } }
     # Character spacing: Publisher's tracking (percent) and kerning (points between letters).
     $trk = [Math]::Round(($f.Tracking - 100) * 10 + $f.Kerning / $f.Size * 1000)
@@ -361,6 +368,26 @@ function Emit-Chars($k, [int]$a, [int]$b, $f, [double]$lines, [double]$exact) {
     [void](Add-Step 'type.char' @{ attrs = $attrs })
     [void](Add-Step 'type.char' @{ attrs = @{ fontStyle = $fam[1] } })
     if ($f.Color -ne 0) { [void](Add-Step 'object.color' @{ color = (Hex $f.Color); text = $true }) }
+}
+
+# A paragraph's alignment, spacing and indents. Publisher breaks lines one at a time, never
+# squeezes spaces, and hyphenates only words that cross the last quarter inch (its hyphenation
+# zone).
+function Para-Attrs($pf) {
+    $attrs = @{ align = $alignMap[[int]$pf.Alignment]; composer = 'singleLine'; wordSpaceMin = 1.0; hyphZone = 18.0 }
+    if (-not $attrs.align) { $attrs.align = 'left' }
+    try { $attrs.spaceBefore = [double]$pf.SpaceBefore; $attrs.spaceAfter = [double]$pf.SpaceAfter } catch {}
+    try { $attrs.leftIndent = [double]$pf.LeftIndent; $attrs.firstLineIndent = [double]$pf.FirstLineIndent } catch {}
+    return $attrs
+}
+
+# Line spacing: Publisher's 'lines' (1.19 by default) or exact points → @(lines, exact).
+function Line-Spacing($pf) {
+    $lines = 1.0; $exact = 0.0
+    try {
+        switch ([int]$pf.LineSpacingRule) { 1 { $lines = 1.5 } 2 { $lines = 2.0 } 4 { $exact = [double]$pf.LineSpacing } 5 { $lines = [double]$pf.LineSpacing } }
+    } catch {}
+    return @($lines, $exact)
 }
 
 function Emit-Text($shape, $spread, [double]$x) {
@@ -412,12 +439,7 @@ function Emit-Text($shape, $spread, [double]$x) {
         if ($pl -lt 0) { $pl = 0 }
         $a = ByteOffset $text $ps; $b = ByteOffset $text ($ps + $pl)
         $pf = $pr.ParagraphFormat
-        # Publisher breaks lines one at a time, never squeezes spaces, and hyphenates only words
-        # that cross the last quarter inch (its hyphenation zone).
-        $attrs = @{ align = $alignMap[[int]$pf.Alignment]; composer = 'singleLine'; wordSpaceMin = 1.0; hyphZone = 18.0 }
-        if (-not $attrs.align) { $attrs.align = 'left' }
-        try { $attrs.spaceBefore = [double]$pf.SpaceBefore; $attrs.spaceAfter = [double]$pf.SpaceAfter } catch {}
-        try { $attrs.leftIndent = [double]$pf.LeftIndent; $attrs.firstLineIndent = [double]$pf.FirstLineIndent } catch {}
+        $attrs = Para-Attrs $pf
         # Line and paragraph breaks: Publisher's keep options and widow control.
         $keepFirst = 0; $keepLast = 0
         try {
@@ -430,11 +452,8 @@ function Emit-Text($shape, $spread, [double]$x) {
         $dc = $null
         try { $d = $pr.DropCap; if ([int]$d.Size -gt 1 -and [int]$d.Span -gt 0) { $dc = $d; $attrs.dropCapLines = [int]$d.Size; $attrs.dropCapChars = [int]$d.Span; $keepFirst = [Math]::Max($keepFirst, [int]$d.Size); $keepLast = [Math]::Max($keepLast, 1) } } catch {}
         if ($keepFirst -gt 0 -and -not $attrs.keepAllLines) { $attrs.keepLinesTogether = $true; $attrs.keepAllLines = $false; $attrs.keepFirst = $keepFirst; $attrs.keepLast = $keepLast }
-        # Line spacing: Publisher's 'lines' (1.19 by default) or exact points.
-        $lines = 1.0; $exact = 0.0
-        try {
-            switch ([int]$pf.LineSpacingRule) { 1 { $lines = 1.5 } 2 { $lines = 2.0 } 4 { $exact = [double]$pf.LineSpacing } 5 { $lines = [double]$pf.LineSpacing } }
-        } catch {}
+        $spacing = Line-Spacing $pf
+        $lines = $spacing[0]; $exact = $spacing[1]
         [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = $a; focus = $b })
         [void](Add-Step 'type.para' @{ attrs = $attrs })
         # Character runs, merged where the formatting repeats.
@@ -487,6 +506,109 @@ function Emit-Line($shape, $spread, [double]$x) {
     $script:stats.lines++
 }
 
+# A swatch for an RGB colour (table fills and borders take swatches): black and white are the
+# document's own, others are made once, named as InDesign names an RGB colour.
+$swatches = @{}
+function Swatch-For([int]$rgb) {
+    $hex = Hex $rgb
+    if ($hex -eq '#000000') { return '[Black]' }
+    if ($hex -eq '#ffffff') { return '[Paper]' }
+    if (-not $swatches.ContainsKey($hex)) {
+        $name = 'R={0} G={1} B={2}' -f ($rgb -band 0xFF), (($rgb -shr 8) -band 0xFF), (($rgb -shr 16) -band 0xFF)
+        [void](Add-Step 'swatch.create' @{ name = $name; color = $hex })
+        $swatches[$hex] = $name
+    }
+    return $swatches[$hex]
+}
+
+# A table: a PressRoom table of the same columns, rows, text, fills, borders and cell margins, in
+# a text box of its own, so it can be edited (the monthly calendar).
+function Emit-Table($shape, $spread, [double]$x) {
+    $t = $shape.Table
+    $nr = [int]$t.Rows.Count; $nc = [int]$t.Columns.Count
+    $k = Add-Step 'frame.create' @{ spread = $spread; rect = (Rect $shape $x); content = 'text'; text = '' }
+    # The box grows down with the table, as Publisher's table does when a row is added.
+    [void](Add-Step 'object.textFrameOptions' @{ inset = 0; autoSize = 'heightOnly'; autoSizeReference = 'topLeft'; ids = @((Ref $k 'id')) })
+    [void](Add-Step 'object.stroke' @{ swatch = '[None]'; ids = @((Ref $k 'id')) })
+    [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = 0; focus = 0 })
+    $ti = Add-Step 'table.insert' @{ rows = $nr; cols = $nc; width = [double]$shape.Width }
+    $cells = { param([int]$r0, [int]$r1, [int]$c0, [int]$c1) @{ story = (Ref $k 'story'); table = (Ref $ti 'table'); rows = @($r0, $r1); cols = @($c0, $c1) } }
+    # Sizes: rows grow with their text when Publisher's do.
+    for ($c = 1; $c -le $nc; $c++) {
+        $p = & $cells 0 ($nr - 1) ($c - 1) ($c - 1); $p.width = [double]$t.Columns.Item($c).Width
+        [void](Add-Step 'table.setColumnWidth' $p)
+    }
+    $grow = $true
+    try { $grow = $t.GrowToFitText -ne 0 } catch {}
+    for ($r = 1; $r -le $nr; $r++) {
+        $p = & $cells ($r - 1) ($r - 1) 0 ($nc - 1); $p.height = [double]$t.Rows.Item($r).Height; $p.mode = if ($grow) { 'atLeast' } else { 'exactly' }
+        [void](Add-Step 'table.setRowHeight' $p)
+    }
+    # Each cell: its text, fill, margins and vertical alignment, then its formatting.
+    $edges = @{}
+    $put = { param([string]$key, $border) $w = 0.0; $rgb = 0; try { $w = [double]$border.Weight; $rgb = [int]$border.Color.RGB } catch {}; if (-not $edges.ContainsKey($key) -or $w -gt $edges[$key][0]) { $edges[$key] = @($w, $rgb) } }
+    for ($r = 1; $r -le $nr; $r++) {
+        for ($c = 1; $c -le $nc; $c++) {
+            $cell = $t.Rows.Item($r).Cells.Item($c)
+            $tr = $cell.TextRange
+            $p = & $cells ($r - 1) ($r - 1) ($c - 1) ($c - 1)
+            $text = Convert-Text (([string]$tr.Text).TrimEnd("`r"))
+            if ($text) { $p.text = $text }
+            try { $p.fill = if ($cell.Fill.Visible -eq -1) { Swatch-For ([int]$cell.Fill.ForeColor.RGB) } else { '[None]' } } catch {}
+            try { $p.insets = @([double]$cell.MarginTop, [double]$cell.MarginLeft, [double]$cell.MarginBottom, [double]$cell.MarginRight) } catch {}
+            try { $p.vj = switch ([int]$cell.VerticalTextAlignment) { 1 { 'center' } 2 { 'bottom' } default { 'top' } } } catch {}
+            [void](Add-Step 'table.setCell' $p)
+            # A cell's text takes one formatting (its first character's when it is mixed), as typed
+            # into the cell from then on.
+            $sel = & $cells ($r - 1) ($r - 1) ($c - 1) ($c - 1); $sel.what = 'cell'
+            [void](Add-Step 'table.select' $sel)
+            $f = Read-Font $tr
+            if (-not $f -and [int]$tr.Length -gt 0) { $f = Read-Font $tr.Characters(1, 1); $script:stats.mixedCells++ }
+            $pf = $tr.Paragraphs(1, 1).ParagraphFormat
+            [void](Add-Step 'type.para' @{ attrs = (Para-Attrs $pf) })
+            if ($f) { $spacing = Line-Spacing $pf; Emit-Format $f $spacing[0] $spacing[1] }
+            # Borders: where two cells meet, the heavier of their two sides.
+            & $put "h,$($r - 1),$($c - 1)" $cell.BorderTop
+            & $put "h,$r,$($c - 1)" $cell.BorderBottom
+            & $put "v,$($r - 1),$($c - 1)" $cell.BorderLeft
+            & $put "v,$($r - 1),$c" $cell.BorderRight
+        }
+    }
+    # The borders, a run of cells at a time.
+    $stroke = { param($e) if ($e[0] -gt 0) { @{ weight = $e[0]; color = (Swatch-For $e[1]); edges = '' } } else { @{ weight = 0; edges = '' } } }
+    $same = { param($a, $b) $a[0] -eq $b[0] -and ($a[0] -eq 0 -or $a[1] -eq $b[1]) }
+    for ($line = 0; $line -le $nr; $line++) {
+        $c0 = 0
+        while ($c0 -lt $nc) {
+            $e = $edges["h,$line,$c0"]; $c1 = $c0
+            while ($c1 + 1 -lt $nc -and (& $same $edges["h,$line,$($c1 + 1)"] $e)) { $c1++ }
+            $row = [Math]::Min($line, $nr - 1)
+            $p = & $cells $row $row $c0 $c1; $p.stroke = & $stroke $e; $p.stroke.edges = if ($line -lt $nr) { 'top' } else { 'bottom' }
+            [void](Add-Step 'table.setCell' $p)
+            $c0 = $c1 + 1
+        }
+    }
+    for ($line = 0; $line -le $nc; $line++) {
+        $r0 = 0
+        while ($r0 -lt $nr) {
+            $e = $edges["v,$r0,$line"]; $r1 = $r0
+            while ($r1 + 1 -lt $nr -and (& $same $edges["v,$($r1 + 1),$line"] $e)) { $r1++ }
+            $col = [Math]::Min($line, $nc - 1)
+            $p = & $cells $r0 $r1 $col $col; $p.stroke = & $stroke $e; $p.stroke.edges = if ($line -lt $nc) { 'left' } else { 'right' }
+            [void](Add-Step 'table.setCell' $p)
+            $r0 = $r1 + 1
+        }
+    }
+    # The empty line the table sits on takes no room, so the box is the table's height. (Last: the
+    # table commands above need the insertion point in the table.)
+    [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = 0; focus = 64 })
+    [void](Add-Step 'type.char' @{ attrs = @{ size = 1; leading = @{ kind = 'points'; value = 0.1 } } })
+    [void](Add-Step 'edit.deselectAll' @{})
+    Emit-Rotation $shape $k
+    Emit-Wrap $shape $k
+    $script:stats.tables++
+}
+
 function Emit-Shape($shape, $spread, [double]$x) {
     $type = [int]$shape.Type
     if ($type -eq 6) {   # Group: its members, each in its own place.
@@ -498,6 +620,18 @@ function Emit-Shape($shape, $spread, [double]$x) {
     $isLine = $type -eq 9
     if ($type -eq 1) { try { $isLine = ($shape.Connector -eq -1) -or ($ast -eq -2 -and ([double]$shape.Width -eq 0 -or [double]$shape.Height -eq 0)) } catch {} }
     if ($isLine) { Emit-Line $shape $spread $x; return }
+    $isTable = $type -eq 18
+    try { $isTable = $isTable -or $shape.HasTable -eq -1 } catch {}
+    if ($isTable) {
+        # A table Publisher can't describe is taken back and kept as its picture.
+        $mark = $steps.Count
+        $known = @($swatches.Keys)
+        try { Emit-Table $shape $spread $x; return } catch {
+            while ($steps.Count -gt $mark) { $steps.RemoveAt($steps.Count - 1) }
+            foreach ($hex in @($swatches.Keys)) { if ($known -notcontains $hex) { $swatches.Remove($hex) } }
+            Write-Warning "A table on this page couldn't be read, so it is kept as a picture: $($_.Exception.Message)"
+        }
+    }
     $hasText = $false
     try { $hasText = ($shape.HasTextFrame -eq -1) -and ($type -eq 17 -or [int]$shape.TextFrame.Story.TextRange.Length -gt 1) } catch {}
     if ($hasText) { Emit-Text $shape $spread $x; return }
@@ -588,6 +722,6 @@ elseif (-not $KeepWork -and (Test-Path $Out)) {
     Remove-Item $picDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $scriptFile -Force -ErrorAction SilentlyContinue
 }
-"{0} -> {1}: {2} pages, {3} text boxes ({4} linked boxes), {5} pictures, {6} shapes, {7} lines, {8} objects kept as pictures, {9} invisible objects left out; {10} steps, {11} problems" -f `
-    [IO.Path]::GetFileName($In), [IO.Path]::GetFileName($Out), $n, $stats.text, $stats.linked, $stats.pictures, $stats.shapes, $stats.lines, $stats.flattened, $stats.skipped, $steps.Count, $failed.Count
+"{0} -> {1}: {2} pages, {3} text boxes ({4} linked boxes), {5} pictures, {6} shapes, {7} lines, {8} tables ({9} cells of mixed formatting simplified), {10} objects kept as pictures, {11} invisible objects left out; {12} steps, {13} problems" -f `
+    [IO.Path]::GetFileName($In), [IO.Path]::GetFileName($Out), $n, $stats.text, $stats.linked, $stats.pictures, $stats.shapes, $stats.lines, $stats.tables, $stats.mixedCells, $stats.flattened, $stats.skipped, $steps.Count, $failed.Count
 if ($failed.Count -gt 0) { "Problems listed in $base.import-problems.txt" }

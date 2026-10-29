@@ -350,11 +350,50 @@ fn info(app: &mut DesignApp, ui: &mut Ui) {
             ui.end_row();
         }
     });
+    // Fonts this computer doesn't have. Opening the publication doesn't stop to say so (Publisher
+    // doesn't either): they are listed here.
+    let missing = missing_fonts(app);
+    if !missing.is_empty() {
+        ui.add_space(18.0);
+        ui.label(egui::RichText::new("Fonts not on this computer").strong());
+        ui.label(
+            egui::RichText::new("A similar font shows in their place. The publication keeps them, so they come back on a computer that has them.")
+                .color(PR::GROUP_LABEL),
+        );
+        ui.add_space(4.0);
+        egui::Grid::new("pr_missing_fonts").num_columns(2).spacing(vec2(24.0, 4.0)).show(ui, |ui| {
+            for (family, shown_as) in &missing {
+                ui.label(family);
+                ui.label(egui::RichText::new(format!("shows as {shown_as}")).color(PR::GROUP_LABEL));
+                ui.end_row();
+            }
+        });
+        ui.add_space(6.0);
+        if ui.button("  Replace Fonts…  ").clicked() {
+            super::close_backstage(ui.ctx());
+            let _ = app.run("app.findFontDialog", json!({}));
+        }
+    }
     ui.add_space(18.0);
     if ui.button("  Run Design Checker  ").clicked() {
         super::close_backstage(ui.ctx());
         let _ = app.run("window.panel.activate", json!({"panel": "preflight"}));
     }
+}
+
+/// The document's fonts that aren't installed, each once, with the family shown in its place.
+fn missing_fonts(app: &mut DesignApp) -> Vec<(String, String)> {
+    let Ok(fonts) = app.session.execute("font.list", &json!({})) else { return vec![] };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for f in fonts.as_array().into_iter().flatten().filter(|f| f["missing"] == true) {
+        let family = f["family"].as_str().unwrap_or_default().to_string();
+        if family.is_empty() || out.iter().any(|(name, _)| *name == family) {
+            continue;
+        }
+        let shown_as = f["replacementFamily"].as_str().unwrap_or("a similar font").to_string();
+        out.push((family, shown_as));
+    }
+    out
 }
 
 /// The Print page's choices, kept while the File screen is open.

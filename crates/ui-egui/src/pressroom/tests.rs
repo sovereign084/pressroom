@@ -90,6 +90,86 @@ fn draw_text_box_readies_the_text_box_tool() {
     assert_eq!(tool(&h), "type");
 }
 
+/// The text cursor in a table cell brings up Table Tools, whose Layout tab adds and deletes rows,
+/// as in Publisher (a calendar gains or loses a week).
+#[test]
+fn table_tools_insert_and_delete_rows_with_the_cursor_in_a_cell() {
+    let mut h = window();
+    let story = run(&mut h, "frame.create", json!({"rect": [72, 72, 400, 300], "content": "text", "text": ""}))["story"].clone();
+    run(&mut h, "text.select", json!({"story": story, "anchor": 0, "focus": 0}));
+    run(&mut h, "table.insert", json!({"rows": 3, "cols": 3}));
+    let rows = |h: &mut Harness<'static, Window>| run(h, "table.get", json!({"story": story}))["rows"].as_array().map_or(0, Vec::len);
+    assert_eq!(rows(&mut h), 3);
+    assert!(h.state().app.session.active().unwrap().selection.text.as_ref().unwrap().cell.is_some(), "the cursor is in a cell");
+    h.get_by_label("Layout").click();
+    h.run_steps(4);
+    h.get_by_label("Insert Below").click();
+    h.run_steps(4);
+    assert_eq!(rows(&mut h), 4);
+    h.get_by_label("Delete").click();
+    h.run_steps(4);
+    h.get_by_label("Delete Rows").click();
+    h.run_steps(4);
+    assert_eq!(rows(&mut h), 3);
+}
+
+/// PressRoom starts on the File screen; a publication opened any other way than its buttons (a
+/// double-click in Explorer, Open with) must not stay hidden behind it.
+#[test]
+fn a_publication_opened_from_outside_is_shown_not_the_file_screen() {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::services::Services::default());
+    app.ui.pressroom_shell = true;
+    let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_step_dt(0.25).build_ui_state(
+        |ui, app: &mut DesignApp| {
+            let ctx = ui.ctx().clone();
+            app.logic(&ctx);
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(4);
+    assert!(h.query_by_label("Blank page sizes").is_some() || h.query_by_label("Open").is_some(), "the File screen shows at start");
+    assert!(h.query_by_label("Bold (Ctrl+B)").is_none());
+    // Opened the way Explorer's double-click opens it: not through the File screen.
+    h.state_mut().run("file.new", json!({})).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Bold (Ctrl+B)").is_some(), "the ribbon and the publication show");
+    // Chosen on purpose, the File screen stays while that publication is in front.
+    h.get_by_label("File").click();
+    h.run_steps(4);
+    assert!(h.query_by_label("Bold (Ctrl+B)").is_none());
+    h.run_steps(4);
+    assert!(h.query_by_label("Bold (Ctrl+B)").is_none(), "it stays open");
+}
+
+/// A publication using fonts this computer lacks opens without stopping (no Find Font dialog, as
+/// in Publisher); File › Info lists them and offers Replace Fonts….
+#[test]
+fn missing_fonts_open_quietly_and_file_info_lists_them() {
+    let mut h = window();
+    let story = run(&mut h, "frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "Sample"}))["story"].as_u64().unwrap();
+    {
+        let app = &mut h.state_mut().app;
+        let d = std::sync::Arc::make_mut(&mut app.session.doc_mut().unwrap().doc);
+        d.story_mut(designcraft_doc::StoryId(story)).unwrap().format_chars(0..6, |f| {
+            f.over.font_family = Some("Unavailable Test Family".into());
+            f.over.font_style = Some("Regular".into());
+        });
+    }
+    let path = std::env::temp_dir().join(format!("pressroom-missing-font-{}.pressroom", std::process::id()));
+    run(&mut h, "file.save", json!({"path": path}));
+    run(&mut h, "file.open", json!({"path": path}));
+    assert!(h.state().app.ui.dialog.is_none(), "no dialog on opening");
+    assert!(h.query_by_label("Bold (Ctrl+B)").is_some(), "the publication shows");
+    h.get_by_label("File").click();
+    h.run_steps(4);
+    assert!(h.query_by_label("Unavailable Test Family").is_some(), "File › Info lists the font");
+    h.get_by_label_contains("Replace Fonts").click();
+    h.run_steps(4);
+    assert_eq!(h.state().app.ui.dialog.as_ref().map(|d| d.id.as_str()), Some("findFont"));
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn the_tabs_switch_the_ribbon() {
     let mut h = window();

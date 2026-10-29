@@ -648,6 +648,64 @@ pub fn paint(p: &Painter, r: Rect, name: &str, enabled: bool) {
             g.line((3.0, 16.0), (29.0, 16.0), INK, 1.0);
             g.line((20.0, 22.0), (28.0, 30.0), GOLD, 2.4);
         }
+        // Table Tools › Layout: a grid with the new row or column in blue.
+        "row-above" | "row-below" | "col-left" | "col-right" => {
+            g.boxed(4.0, 6.0, 28.0, 28.0, PAPER, INK);
+            match name {
+                "row-above" => g.fill(4.5, 6.5, 27.5, 13.0, SKY),
+                "row-below" => g.fill(4.5, 21.0, 27.5, 27.5, SKY),
+                "col-left" => g.fill(4.5, 6.5, 12.0, 27.5, SKY),
+                _ => g.fill(20.0, 6.5, 27.5, 27.5, SKY),
+            }
+            for x in [12.0, 20.0] {
+                g.line((x, 6.0), (x, 28.0), INK, 1.0);
+            }
+            for y in [13.3, 20.6] {
+                g.line((4.0, y), (28.0, y), INK, 1.0);
+            }
+            let (cx, cy) = match name {
+                "row-above" => (16.0, 9.7),
+                "row-below" => (16.0, 24.3),
+                "col-left" => (8.2, 17.0),
+                _ => (23.8, 17.0),
+            };
+            g.line((cx - 2.6, cy), (cx + 2.6, cy), BLUE, 1.6);
+            g.line((cx, cy - 2.6), (cx, cy + 2.6), BLUE, 1.6);
+        }
+        "table-delete" => {
+            g.boxed(3.0, 6.0, 25.0, 26.0, PAPER, INK);
+            for x in [10.3, 17.6] {
+                g.line((x, 6.0), (x, 26.0), INK, 1.0);
+            }
+            for y in [12.6, 19.3] {
+                g.line((3.0, y), (25.0, y), INK, 1.0);
+            }
+            g.line((19.0, 19.0), (29.0, 29.0), RED, 2.6);
+            g.line((29.0, 19.0), (19.0, 29.0), RED, 2.6);
+        }
+        "merge-cells" | "split-cells" => {
+            g.boxed(3.0, 9.0, 29.0, 24.0, PAPER, INK);
+            if name == "split-cells" {
+                g.line((16.0, 9.0), (16.0, 24.0), INK, 1.0);
+                g.path(&[(11.0, 14.0), (8.0, 16.5), (11.0, 19.0)], BLUE, 1.6);
+                g.path(&[(21.0, 14.0), (24.0, 16.5), (21.0, 19.0)], BLUE, 1.6);
+            } else {
+                g.path(&[(8.0, 14.0), (11.0, 16.5), (8.0, 19.0)], BLUE, 1.6);
+                g.path(&[(24.0, 14.0), (21.0, 16.5), (24.0, 19.0)], BLUE, 1.6);
+                g.line((16.0, 9.0), (16.0, 12.0), INK, 1.0);
+                g.line((16.0, 21.0), (16.0, 24.0), INK, 1.0);
+            }
+        }
+        // Text at the top, middle or bottom of a cell.
+        "cell-top" | "cell-middle" | "cell-bottom" => {
+            g.boxed(5.0, 5.0, 27.0, 27.0, PAPER, INK);
+            let y = match name {
+                "cell-top" => 9.0,
+                "cell-middle" => 14.5,
+                _ => 20.0,
+            };
+            g.lines(9.0, 23.0, y, 2, 3.5, BLUE);
+        }
         _ => {
             g.outline(6.0, 6.0, 26.0, 26.0, GREY, 1.0);
         }

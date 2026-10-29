@@ -55,7 +55,9 @@ impl DesignApp {
             }
             Ok(_) => {}
         }
-        if r.is_ok() && matches!(id, "file.open" | "file.openIdml" | "file.openBytes") {
+        // PressRoom opens a publication without stopping, as Publisher does: a font this computer
+        // lacks shows in a similar one, and File › Info lists them (with Replace Fonts…).
+        if r.is_ok() && matches!(id, "file.open" | "file.openIdml" | "file.openBytes") && !self.ui.pressroom_shell {
             if self.ui.dialog.as_ref().is_some_and(|d| d.id == "findFont") {
                 self.ui.dialog = None;
             }
