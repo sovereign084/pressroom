@@ -12,6 +12,9 @@ command-line tool:
   - pictures are saved at 300 dpi and placed in picture boxes of the same size and place;
   - rectangles, rounded rectangles and ovals stay editable shapes with their fill and outline, and
     lines stay lines with their arrowheads;
+  - PANTONE-style inks stay inks: spot colours of the same name and CMYK recipe as in Publisher's
+    PDFs, so PressRoom's PDFs match Publisher's; a shape with a 3-D bevel takes the shade
+    Publisher draws its face in;
   - objects stack in the same order, and text wraps around the objects it wrapped around in
     Publisher (only objects in front of a text box wrap its text, as in Publisher);
   - tables stay editable tables: the same columns, rows, text, fonts, fills, borders and cell
@@ -36,6 +39,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName System.Drawing
 $In = (Resolve-Path $In).Path
 # A folder: every .pub in it (and below), each beside its original.
 if (Test-Path $In -PathType Container) {
@@ -189,7 +193,7 @@ function Read-Font($range) {
     if ($caps -eq -2 -or $small -eq -2 -or $trk -lt -1000 -or $kern -lt -1000 -or $scale -le 0) { return $null }
     return [pscustomobject]@{
         Name = $name; Size = [double]$size; Bold = ($b -eq -1); Italic = ($i -eq -1); Underline = ($u -ne 0); Color = [int]$f.Color.RGB
-        Caps = ($caps -eq -1); Small = ($small -eq -1); Tracking = $trk; Kerning = $kern; Scaling = $scale
+        Ink = (Ink-For $f.Color); Caps = ($caps -eq -1); Small = ($small -eq -1); Tracking = $trk; Kerning = $kern; Scaling = $scale
     }
 }
 
@@ -325,12 +329,106 @@ function Emit-Picture($shape, $spread, [double]$x) {
     return $k
 }
 
+# Inflate the zlib stream that starts at byte `at` of a PDF (as Latin-1 text).
+$latin1 = [Text.Encoding]::GetEncoding(28591)
+function Inflate([byte[]]$bytes, [int]$at) {
+    $out = New-Object IO.MemoryStream
+    $ds = New-Object IO.Compression.DeflateStream((New-Object IO.MemoryStream($bytes, ($at + 2), ($bytes.Length - $at - 2), $false)), [IO.Compression.CompressionMode]::Decompress)
+    try { $ds.CopyTo($out) } catch {} finally { $ds.Dispose() }
+    return $latin1.GetString($out.ToArray())
+}
+
+function Ink-Key($cmyk) { return ($cmyk | ForEach-Object { [Math]::Round([double]$_, 3).ToString($en) }) -join ',' }
+
+# Publisher names a colour-matching ink ("PANTONE 626 C") only in its PDFs, as a Separation with
+# its CMYK recipe: read from a PDF Publisher makes of the file. Recipe key → @(name, recipe).
+$inkNames = @{}
+function Read-Ink-Names([string]$pdf) {
+    try {
+        $bytes = [IO.File]::ReadAllBytes($pdf)
+        $raw = $latin1.GetString($bytes)
+        # Objects packed in object streams too.
+        $all = New-Object System.Text.StringBuilder $raw
+        foreach ($m in [regex]::Matches($raw, '/Type\s*/ObjStm[^>]*>>\s*stream\r?\n')) { [void]$all.Append("`n").Append((Inflate $bytes ($m.Index + $m.Length))) }
+        foreach ($m in [regex]::Matches($all.ToString(), '/Separation\s*/([^\s/\[\]<>()]+)\s*/DeviceCMYK\s*(\d+)\s+0\s+R')) {
+            $name = [regex]::Replace($m.Groups[1].Value, '#([0-9A-Fa-f]{2})', { param($h) [string][char][Convert]::ToInt32($h.Groups[1].Value, 16) })
+            $obj = [regex]::Match($raw, "(?<!\d)$($m.Groups[2].Value)\s+0\s+obj\s*<<(.*?)>>\s*stream\r?\n", 'Singleline')
+            if (-not $obj.Success) { continue }
+            # Publisher's tint function: {dup 0.792 mul exch dup 0.173 mul exch ...}; or C1 [c m y k].
+            $v = @()
+            if ($obj.Groups[1].Value -match '/C1\s*\[([^\]]*)\]') { $v = @($Matches[1].Trim() -split '\s+' | ForEach-Object { [double]::Parse($_, $en) }) }
+            else {
+                $fn = if ($obj.Groups[1].Value -match '/FlateDecode') { Inflate $bytes ($obj.Index + $obj.Length) } else { $raw.Substring($obj.Index + $obj.Length, [Math]::Min(400, $raw.Length - $obj.Index - $obj.Length)) }
+                $v = @([regex]::Matches($fn, '([\d.]+)\s+mul') | ForEach-Object { [double]::Parse($_.Groups[1].Value, $en) })
+            }
+            if ($v.Count -eq 4) { $script:inkNames[(Ink-Key $v)] = @($name, $v) }
+        }
+    } catch { Write-Warning "Publisher's ink names could not be read: $($_.Exception.Message)" }
+}
+
+# A colour-matching (PANTONE-style) ink → its spot swatch, made once; $null for other colours.
+# Publisher shows the ink on screen through its own RGB, but its PDFs carry the ink with its CMYK
+# recipe, which PDF viewers and print shops show deeper; PressRoom keeps the ink. One its PDF
+# doesn't name (a process ink) is a CMYK colour of that recipe, as in the PDF.
+function Ink-For($cf) {
+    try {
+        if ([int]$cf.Type -ne 4 -or [double]$cf.TintAndShade -ne 0) { return $null }
+        $c = $cf.CMYK
+        $recipe = @(([double]$c.Cyan / 255), ([double]$c.Magenta / 255), ([double]$c.Yellow / 255), ([double]$c.Black / 255))
+    } catch { return $null }
+    $key = Ink-Key $recipe
+    if ($swatches.ContainsKey("ink:$key")) { return $swatches["ink:$key"] }
+    $found = $inkNames[$key]
+    $p = $recipe | ForEach-Object { [Math]::Round($_ * 100, 1) }
+    $name = if ($found) { $found[0] } else { 'C={0} M={1} Y={2} K={3}' -f ($p | ForEach-Object { [Math]::Round($_) }) }
+    if ($found) { $p = $found[1] | ForEach-Object { [Math]::Round($_ * 100, 1) } }
+    [void](Add-Step 'swatch.create' @{ name = $name; spot = [bool]$found; color = @{ c = $p[0]; m = $p[1]; y = $p[2]; k = $p[3] } })
+    $swatches["ink:$key"] = $name
+    return $name
+}
+
+# A 3-D bevel: Publisher lights the face, so it shows darker than its colour (the page-1 sidebar's
+# grey 127 shows as 96). PressRoom draws no bevels, so the face takes the colour Publisher shows:
+# the commonest opaque colour of Publisher's picture of the shape.
+function Bevel-Face($shape) {
+    try { $t = $shape.ThreeD; if ($t.Visible -ne -1 -or [int]$t.BevelTopType -le 1) { return $null } } catch { return $null }
+    $file = Join-Path $picDir 'bevel.png'
+    try {
+        $shape.SaveAsPicture($file, 1)
+        $bmp = New-Object System.Drawing.Bitmap $file
+        try {
+            $counts = @{}
+            for ($i = 1; $i -lt 40; $i++) {
+                for ($j = 1; $j -lt 40; $j++) {
+                    $px = $bmp.GetPixel([int]($bmp.Width * $i / 40), [int]($bmp.Height * $j / 40))
+                    if ($px.A -lt 255) { continue }
+                    $hex = '#{0:x2}{1:x2}{2:x2}' -f $px.R, $px.G, $px.B
+                    $counts[$hex] = 1 + [int]$counts[$hex]
+                }
+            }
+        } finally { $bmp.Dispose() }
+        if ($counts.Count -eq 0) { return $null }
+        return ($counts.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1).Key
+    } catch { return $null } finally { Remove-Item $file -Force -ErrorAction SilentlyContinue }
+}
+
 function Emit-Box-Style($shape, [int]$k) {
     try {
-        if ($shape.Fill.Visible -eq -1) { [void](Add-Step 'object.color' @{ color = (Hex $shape.Fill.ForeColor.RGB); target = 'fill'; ids = @((Ref $k 'id')) }) }
-        if ($shape.Line.Visible -eq -1) {
+        if ($shape.Fill.Visible -eq -1) {
+            $face = Bevel-Face $shape
+            $ink = if ($face) { $null } else { Ink-For $shape.Fill.ForeColor }
+            if ($ink) { [void](Add-Step 'object.fill' @{ swatch = $ink; ids = @((Ref $k 'id')) }) }
+            else {
+                $color = if ($face) { $face } else { Hex $shape.Fill.ForeColor.RGB }
+                [void](Add-Step 'object.color' @{ color = $color; target = 'fill'; ids = @((Ref $k 'id')) })
+            }
+        }
+        # A 0 pt outline draws nothing in Publisher.
+        if ($shape.Line.Visible -eq -1 -and [double]$shape.Line.Weight -gt 0) {
             [void](Add-Step 'object.stroke' @{ weight = [double]$shape.Line.Weight; ids = @((Ref $k 'id')) })
-            [void](Add-Step 'object.color' @{ color = (Hex $shape.Line.ForeColor.RGB); target = 'stroke'; ids = @((Ref $k 'id')) })
+            $ink = Ink-For $shape.Line.ForeColor
+            if ($ink) { [void](Add-Step 'object.stroke' @{ swatch = $ink; ids = @((Ref $k 'id')) }) }
+            else { [void](Add-Step 'object.color' @{ color = (Hex $shape.Line.ForeColor.RGB); target = 'stroke'; ids = @((Ref $k 'id')) }) }
         } else {
             [void](Add-Step 'object.stroke' @{ swatch = '[None]'; ids = @((Ref $k 'id')) })
         }
@@ -367,7 +465,8 @@ function Emit-Format($f, [double]$lines, [double]$exact) {
     if ($f.Caps) { $attrs.capitalization = 'allCaps' } elseif ($f.Small) { $attrs.capitalization = 'smallCaps' }
     [void](Add-Step 'type.char' @{ attrs = $attrs })
     [void](Add-Step 'type.char' @{ attrs = @{ fontStyle = $fam[1] } })
-    if ($f.Color -ne 0) { [void](Add-Step 'object.color' @{ color = (Hex $f.Color); text = $true }) }
+    if ($f.Ink) { [void](Add-Step 'type.char' @{ attrs = @{ fill = $f.Ink } }) }
+    elseif ($f.Color -ne 0) { [void](Add-Step 'object.color' @{ color = (Hex $f.Color); text = $true }) }
 }
 
 # A paragraph's alignment, spacing and indents. Publisher breaks lines one at a time, never
@@ -501,8 +600,10 @@ function Emit-Line($shape, $spread, [double]$x) {
     $stroke = @{ weight = [double]$ln.Weight; ids = @((Ref $k 'id')) }
     $s = Arrow-Name ([int]$ln.BeginArrowheadStyle); if ($s) { $stroke.start = $s }
     $e = Arrow-Name ([int]$ln.EndArrowheadStyle); if ($e) { $stroke.end = $e }
+    $ink = Ink-For $ln.ForeColor
+    if ($ink) { $stroke.swatch = $ink }
     [void](Add-Step 'object.stroke' $stroke)
-    [void](Add-Step 'object.color' @{ color = (Hex $ln.ForeColor.RGB); target = 'stroke'; ids = @((Ref $k 'id')) })
+    if (-not $ink) { [void](Add-Step 'object.color' @{ color = (Hex $ln.ForeColor.RGB); target = 'stroke'; ids = @((Ref $k 'id')) }) }
     $script:stats.lines++
 }
 
@@ -554,7 +655,10 @@ function Emit-Table($shape, $spread, [double]$x) {
             $p = & $cells ($r - 1) ($r - 1) ($c - 1) ($c - 1)
             $text = Convert-Text (([string]$tr.Text).TrimEnd("`r"))
             if ($text) { $p.text = $text }
-            try { $p.fill = if ($cell.Fill.Visible -eq -1) { Swatch-For ([int]$cell.Fill.ForeColor.RGB) } else { '[None]' } } catch {}
+            try {
+                $p.fill = '[None]'
+                if ($cell.Fill.Visible -eq -1) { $p.fill = Ink-For $cell.Fill.ForeColor; if (-not $p.fill) { $p.fill = Swatch-For ([int]$cell.Fill.ForeColor.RGB) } }
+            } catch {}
             try { $p.insets = @([double]$cell.MarginTop, [double]$cell.MarginLeft, [double]$cell.MarginBottom, [double]$cell.MarginRight) } catch {}
             try { $p.vj = switch ([int]$cell.VerticalTextAlignment) { 1 { 'center' } 2 { 'bottom' } default { 'top' } } } catch {}
             [void](Add-Step 'table.setCell' $p)
@@ -654,6 +758,11 @@ function Emit-Shape($shape, $spread, [double]$x) {
 $app = New-Object -ComObject Publisher.Application
 try {
     $doc = $app.Open($In, $true, $false, 'pbDoNotSaveChanges')
+    # Publisher's own PDF, for its ink names (and to compare against): made first, as exporting
+    # once the file has been read through can hang Publisher.
+    $pdf = if ($Reference) { "$base (Publisher).pdf" } else { Join-Path $picDir 'inks.pdf' }
+    try { $doc.ExportAsFixedFormat(2, $pdf); Read-Ink-Names $pdf } catch { Write-Warning "Publisher's own PDF could not be made: $($_.Exception.Message)" }
+    if (-not $Reference) { Remove-Item $pdf -Force -ErrorAction SilentlyContinue }
     $pw = [double]$doc.PageSetup.PageWidth
     $ph = [double]$doc.PageSetup.PageHeight
     $n = [int]$doc.Pages.Count
@@ -693,9 +802,6 @@ try {
             Emit-Frame-Options $next $m
             $prev = $m
         }
-    }
-    if ($Reference) {
-        try { $doc.ExportAsFixedFormat(2, "$base (Publisher).pdf") } catch { Write-Warning "Publisher's own PDF could not be made: $($_.Exception.Message)" }
     }
     $doc.Close()
 }
