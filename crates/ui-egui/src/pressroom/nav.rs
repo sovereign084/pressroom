@@ -69,7 +69,10 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
             egui::ScrollArea::vertical().id_salt("pr_nav_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(6.0);
                 for pages in spreads {
-                    let widths: Vec<f32> = pages.iter().map(|&(_, w, h)| (THUMB_H * (w / h.max(1.0)) as f32).min(54.0 * if pages.len() > 1 { 1.0 } else { 2.0 })).collect();
+                    let widths: Vec<f32> = pages
+                        .iter()
+                        .map(|&(_, w, h)| (THUMB_H * (w / h.max(1.0)) as f32).min(54.0 * if pages.len() > 1 { 1.0 } else { 2.0 }))
+                        .collect();
                     let row_w: f32 = widths.iter().sum();
                     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), THUMB_H + 26.0), Sense::hover());
                     let mut x = row.center().x - row_w / 2.0;
@@ -98,7 +101,13 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                         }
                         ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_gray(150)), StrokeKind::Outside);
                         let label = labels.get(abs).cloned().unwrap_or_else(|| (abs + 1).to_string());
-                        ui.painter().text(pos2(r.center().x, row.max.y - 10.0), egui::Align2::CENTER_CENTER, label, FontId::proportional(11.5), PR::TEXT);
+                        ui.painter().text(
+                            pos2(r.center().x, row.max.y - 10.0),
+                            egui::Align2::CENTER_CENTER,
+                            label,
+                            FontId::proportional(11.5),
+                            PR::TEXT,
+                        );
                         if resp.clicked() {
                             crate::canvas::go_to_page(app, abs);
                         }

@@ -410,6 +410,10 @@ pub struct DocSettings {
     /// Documents saved before the setting existed read as on, the way they were drawn.
     #[serde(default = "yes")]
     pub glyph_fallback: bool,
+    /// Preferences › Composition › Text Wrap Only Affects Text Beneath: an object's text wrap
+    /// pushes aside only the text of frames stacked below it, as in Publisher (PressRoom's
+    /// documents turn it on). Off, as in InDesign, it wraps every frame it reaches.
+    pub text_wrap_only_beneath: bool,
     /// What the rulers measure from before the zero point moves it.
     pub ruler_origin: RulerOrigin,
     /// The rulers' zero point: points right of and below the ruler origin (`ruler_origin`).
@@ -490,6 +494,7 @@ impl Default for DocSettings {
             overprint_black: true,
             track_changes: false,
             glyph_fallback: false,
+            text_wrap_only_beneath: false,
             ruler_origin: RulerOrigin::Spread,
             zero_point: [0.0, 0.0],
             zero_point_locked: false,

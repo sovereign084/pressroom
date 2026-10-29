@@ -6,32 +6,40 @@ Convert a Microsoft Publisher file (.pub) into a PressRoom publication (.pressro
 Runs on a Windows PC that has Publisher installed. Publisher itself opens the .pub (read-only) and
 reports every page, text box, picture and shape; this script rebuilds them with PressRoom's
 command-line tool:
-  - text boxes keep their text, fonts, sizes, bold/italic/underline, colours, paragraph alignment and
-    spacing, inner margins, columns and vertical alignment; linked text boxes stay linked;
+  - text boxes keep their text, fonts, sizes, bold/italic/underline, ALL CAPS and small caps,
+    character spacing, colours, paragraph alignment and spacing, drop caps, page numbers, inner
+    margins, columns and vertical alignment; linked text boxes stay linked;
   - pictures are saved at 300 dpi and placed in picture boxes of the same size and place;
-  - plain rectangles and ovals stay editable shapes with their fill and outline;
-  - anything else (WordArt, tables, lines, fancy shapes, groups' odd members) is saved by Publisher as
-    a picture, so it looks the same even though it is no longer editable;
+  - rectangles, rounded rectangles and ovals stay editable shapes with their fill and outline, and
+    lines stay lines with their arrowheads;
+  - objects stack in the same order, and text wraps around the objects it wrapped around in
+    Publisher (only objects in front of a text box wrap its text, as in Publisher);
+  - anything else (WordArt, tables, fancy shapes) is saved by Publisher as a picture, so it looks
+    the same even though it is no longer editable;
+  - objects Publisher itself can't draw (some files carry invisible leftovers) are left out;
   - the master page's objects go on PressRoom's master page.
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File pub2pressroom.ps1 -In "Bulletin Oct 26.pub"
-Writes "Bulletin Oct 26.pressroom" beside it, and a "Bulletin Oct 26 pictures" folder.
+Writes "Bulletin Oct 26.pressroom" beside it, with its pictures inside.
 #>
 param(
     [Parameter(Mandatory)][string]$In,
     [string]$Out,
     [string]$Cli = (Join-Path $PSScriptRoot 'PressRoom-cli.exe'),
     # Also export Publisher's own PDF of the file, to compare against.
-    [switch]$Reference
+    [switch]$Reference,
+    # Keep the pictures folder and the step list (left out once the publication is made).
+    [switch]$KeepWork
 )
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName PresentationCore
 $In = (Resolve-Path $In).Path
 # A folder: every .pub in it (and below), each beside its original.
 if (Test-Path $In -PathType Container) {
     $files = Get-ChildItem $In -Recurse -Filter *.pub | Where-Object { -not $_.PSIsContainer }
     foreach ($file in $files) {
-        try { & $PSCommandPath -In $file.FullName -Cli $Cli -Reference:$Reference } catch { "{0}: FAILED - {1}" -f $file.Name, $_.Exception.Message }
+        try { & $PSCommandPath -In $file.FullName -Cli $Cli -Reference:$Reference -KeepWork:$KeepWork } catch { "{0}: FAILED - {1}" -f $file.Name, $_.Exception.Message }
     }
     "Converted {0} Publisher file(s) in {1}" -f $files.Count, $In
     return
@@ -77,12 +85,114 @@ function Style-Name($bold, $italic) {
     return 'Regular'
 }
 
+# Fonts: Publisher names them as Windows does ("Arial Narrow", bold), PressRoom by their typographic
+# family and style ("Arial", "Narrow Bold"). The installed font files say which is which.
+$en = [Globalization.CultureInfo]'en-US'
+$fontFaces = @{}
+$fontRegistry = $null
+function En-Name($names) {
+    $v = $null
+    try { $v = $names[$en] } catch {}
+    if (-not $v) { $v = @($names.Values) | Select-Object -First 1 }
+    return [string]$v
+}
+function Font-Faces([string]$win32) {
+    $key = $win32.ToLowerInvariant()
+    if ($fontFaces.ContainsKey($key)) { return ,$fontFaces[$key] }
+    if ($null -eq $script:fontRegistry) {
+        $script:fontRegistry = New-Object System.Collections.Generic.List[object]
+        foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts', 'HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts') {
+            $p = Get-ItemProperty $k -ErrorAction SilentlyContinue
+            if ($p) { $p.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { $script:fontRegistry.Add(@($_.Name, [string]$_.Value)) } }
+        }
+    }
+    $faces = New-Object System.Collections.Generic.List[object]
+    foreach ($r in $script:fontRegistry) {
+        if (-not $r[0].StartsWith($win32, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $file = if ([IO.Path]::IsPathRooted($r[1])) { $r[1] } else { Join-Path $env:WINDIR "Fonts\$($r[1])" }
+        try {
+            $g = New-Object Windows.Media.GlyphTypeface ([Uri]$file)
+            if ((En-Name $g.Win32FamilyNames) -ine $win32) { continue }
+            $faces.Add([pscustomobject]@{
+                Family = (En-Name $g.FamilyNames); Style = (En-Name $g.FaceNames); Win32Style = (En-Name $g.Win32FaceNames)
+                Weight = $g.Weight.ToOpenTypeWeight(); Italic = ($g.Style -ne [Windows.FontStyles]::Normal); File = $file
+            })
+        } catch {}
+    }
+    $fontFaces[$key] = $faces
+    return ,$faces
+}
+
+# Publisher's single line spacing: the font's typographic ascender, descender and line gap (its
+# OS/2 table) as a multiple of its size. Arial: 1.09, Times New Roman: 1.06, Calibri: 1.22.
+$lineFactors = @{}
+function Typo-Factor([string]$file) {
+    if ($lineFactors.ContainsKey($file)) { return $lineFactors[$file] }
+    $factor = $null
+    try {
+        $b = [IO.File]::ReadAllBytes($file)
+        $u16 = { param($i) ([int]$b[$i] -shl 8) -bor [int]$b[$i + 1] }
+        $s16 = { param($i) $v = & $u16 $i; if ($v -ge 0x8000) { $v - 0x10000 } else { $v } }
+        $u32 = { param($i) ([long](& $u16 $i) -shl 16) -bor [long](& $u16 ($i + 2)) }
+        $off = 0
+        if ([Text.Encoding]::ASCII.GetString($b, 0, 4) -eq 'ttcf') { $off = & $u32 12 }
+        $upem = 0; $asc = $null
+        for ($t = 0; $t -lt (& $u16 ($off + 4)); $t++) {
+            $rec = $off + 12 + 16 * $t
+            $tag = [Text.Encoding]::ASCII.GetString($b, $rec, 4)
+            $at = & $u32 ($rec + 8)
+            if ($tag -eq 'head') { $upem = & $u16 ($at + 18) }
+            if ($tag -eq 'OS/2') { $asc = & $s16 ($at + 68); $desc = & $s16 ($at + 70); $gap = & $s16 ($at + 72) }
+        }
+        if ($upem -gt 0 -and $null -ne $asc) { $f = ($asc - $desc + $gap) / $upem; if ($f -gt 0.5 -and $f -lt 3) { $factor = $f } }
+    } catch {}
+    $lineFactors[$file] = $factor
+    return $factor
+}
+
+# PressRoom's (family, style) for a Publisher font name with bold and italic, and the font's line
+# spacing factor.
+function Map-Font([string]$name, [bool]$bold, [bool]$italic) {
+    $want = Style-Name $bold $italic
+    $faces = Font-Faces $name
+    if ($faces.Count -eq 0) {
+        # Not installed for every program: Microsoft 365's cloud fonts are only Office's to draw,
+        # but their files still give the line spacing (Kermit Expanded is in the Kermit folder).
+        $factor = 1.2
+        $clouds = Join-Path $env:LOCALAPPDATA 'Microsoft\FontCache\4\CloudFonts'
+        $folder = Get-ChildItem $clouds -Directory -ErrorAction SilentlyContinue | Where-Object { $name.StartsWith($_.Name, [StringComparison]::OrdinalIgnoreCase) } | Sort-Object { $_.Name.Length } -Descending | Select-Object -First 1
+        $file = if ($folder) { Get-ChildItem $folder.FullName -Filter *.ttf -ErrorAction SilentlyContinue | Select-Object -First 1 }
+        if ($file) { $f = Typo-Factor $file.FullName; if ($f) { $factor = $f } }
+        return @($name, $want, $factor)
+    }
+    $face = $faces | Where-Object { $_.Win32Style -ieq $want } | Select-Object -First 1
+    if (-not $face) {
+        # No face of that name: the nearest in weight and slant (Lucida Bright's bold is Demibold).
+        $w = if ($bold) { 700 } else { 400 }
+        $face = $faces | Sort-Object { [Math]::Abs($_.Weight - $w) + $(if ($_.Italic -ne $italic) { 1000 } else { 0 }) } | Select-Object -First 1
+    }
+    $factor = Typo-Factor $face.File
+    if (-not $factor) { $factor = 1.2 }
+    return @($face.Family, $face.Style, $factor)
+}
+
 # Character formatting of a range, or $null when it is mixed.
 function Read-Font($range) {
     $f = $range.Font
     $name = $f.Name; $size = $f.Size; $b = $f.Bold; $i = $f.Italic; $u = $f.Underline
     if (-not $name -or $size -le 0 -or $b -eq -2 -or $i -eq -2 -or ($u -ne 0 -and $u -ne 1 -and $u -ne -1)) { return $null }
-    return [pscustomobject]@{ Name = $name; Size = [double]$size; Bold = ($b -eq -1); Italic = ($i -eq -1); Underline = ($u -ne 0); Color = [int]$f.Color.RGB }
+    $caps = 0; $small = 0; $trk = 100.0; $kern = 0.0; $scale = 100.0
+    try { $caps = [int]$f.AllCaps; $small = [int]$f.SmallCaps } catch {}
+    try { $trk = [double]$f.Tracking; $kern = [double]$f.Kerning; $scale = [double]$f.Scaling } catch {}
+    if ($caps -eq -2 -or $small -eq -2 -or $trk -lt -1000 -or $kern -lt -1000 -or $scale -le 0) { return $null }
+    return [pscustomobject]@{
+        Name = $name; Size = [double]$size; Bold = ($b -eq -1); Italic = ($i -eq -1); Underline = ($u -ne 0); Color = [int]$f.Color.RGB
+        Caps = ($caps -eq -1); Small = ($small -eq -1); Tracking = $trk; Kerning = $kern; Scaling = $scale
+    }
+}
+
+function Font-Key($f) {
+    return '{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}' -f $f.Name, $f.Size, $f.Bold, $f.Italic, $f.Underline, $f.Color, $f.Caps, $f.Small, $f.Tracking, $f.Kerning, $f.Scaling
 }
 
 # Runs of uniform formatting in [start, start+len) of the story: (offset, length, font).
@@ -120,15 +230,6 @@ function Get-Runs($storyRange, [int]$start, [int]$len) {
     return ,$runs
 }
 
-# A font's natural line height as a multiple of its size (single spacing in Publisher).
-function Line-Factor([string]$name) {
-    switch -Wildcard ($name) { 'Calibri*' { 1.22 } 'Cambria*' { 1.17 } 'Times New Roman' { 1.15 } 'Arial*' { 1.15 } 'Georgia' { 1.14 } 'Garamond' { 1.12 } 'Verdana' { 1.22 } 'Segoe*' { 1.33 } default { 1.2 } }
-}
-
-function Same-Font($a, $b) {
-    return $a.Name -eq $b.Name -and $a.Size -eq $b.Size -and $a.Bold -eq $b.Bold -and $a.Italic -eq $b.Italic -and $a.Underline -eq $b.Underline -and $a.Color -eq $b.Color
-}
-
 # Publisher's PbParagraphAlignmentType → PressRoom's alignment.
 $alignMap = @{ 0 = 'left'; 1 = 'center'; 2 = 'right'; 3 = 'leftJustified'; 4 = 'fullyJustified'; 6 = 'leftJustified'; 7 = 'leftJustified'; 8 = 'leftJustified'; 9 = 'fullyJustified'; 10 = 'centerJustified' }
 
@@ -148,19 +249,61 @@ function Rect($shape, [double]$x) {
 }
 
 $frameStep = @{}     # Publisher shape ID → step that created its PressRoom frame
-$shapeAt = @{}       # Publisher shape ID → @(spread, x) for linked boxes found later
+$chains = New-Object System.Collections.Generic.List[object]   # linked stories: first text frame and its step
 $picN = 0
-$stats = @{ text = 0; pictures = 0; shapes = 0; flattened = 0; linked = 0 }
+$stats = @{ text = 0; pictures = 0; shapes = 0; lines = 0; flattened = 0; linked = 0; skipped = 0 }
+
+# The page's (or group's) shapes from back to front.
+function Back-To-Front($shapes) {
+    $list = New-Object System.Collections.Generic.List[object]
+    for ($s = 1; $s -le $shapes.Count; $s++) {
+        $sh = $shapes.Item($s)
+        $z = $s
+        try { $z = [int]$sh.ZOrderPosition } catch {}
+        $list.Add(@($z, $s, $sh))
+    }
+    return $list | Sort-Object @{ Expression = { $_[0] } }, @{ Expression = { $_[1] } } | ForEach-Object { $_[2] }
+}
+
+# Can Publisher draw the shape? Some files carry leftover shapes it never shows (it can't save them
+# as a picture either: "the image size is too big").
+function Is-Drawable($shape) {
+    $probe = Join-Path $picDir 'probe.png'
+    try { $shape.SaveAsPicture($probe, 1); return $true } catch { return $false } finally { Remove-Item $probe -Force -ErrorAction SilentlyContinue }
+}
 
 function Emit-Rotation($shape, [int]$step) {
     $rot = [double]$shape.Rotation
     if ($rot -ne 0) { [void](Add-Step 'transform.rotate' @{ angle = -$rot; ids = @((Ref $step 'id')) }) }
 }
 
+# Text wrap: square and tight wrap around the object's box, top and bottom jumps it.
+function Emit-Wrap($shape, [int]$k) {
+    try { $w = $shape.TextWrap; $type = [int]$w.Type; $side = [int]$w.Side } catch { return }
+    $mode = switch ($type) { 1 { 'boundingBox' } 2 { 'boundingBox' } 4 { 'jumpObject' } default { $null } }
+    if (-not $mode) { return }
+    if ($side -eq 4) { $mode = 'jumpObject' }
+    # Automatic distance (the usual case) is 0.04" all round, whatever distances are stored.
+    $wrap = @{ mode = $mode; ids = @((Ref $k 'id')); offset = 2.88 }
+    try { if ($w.DistanceAuto -ne -1) { $wrap.offset = @([double]$w.DistanceTop, [double]$w.DistanceLeft, [double]$w.DistanceBottom, [double]$w.DistanceRight) } } catch {}
+    $sideName = switch ($side) { 1 { 'leftSide' } 2 { 'rightSide' } 3 { 'largestArea' } default { $null } }
+    if ($sideName -and $mode -eq 'boundingBox') { $wrap.side = $sideName }
+    [void](Add-Step 'object.textWrap' $wrap)
+}
+
+# Rounded rectangles: Publisher's corner is a fraction of the shorter side.
+function Emit-Corners($shape, [int]$k) {
+    if ([int]$shape.AutoShapeType -ne 5) { return }
+    $adj = 0.16667
+    try { if ($shape.Adjustments.Count -ge 1) { $adj = [double]$shape.Adjustments.Item(1) } } catch {}
+    $size = [Math]::Round($adj * [Math]::Min([double]$shape.Width, [double]$shape.Height), 2)
+    if ($size -gt 0) { [void](Add-Step 'object.cornerOptions' @{ shape = 'rounded'; size = $size; ids = @((Ref $k 'id')) }) }
+}
+
 function Emit-Picture($shape, $spread, [double]$x) {
     $script:picN++
     $file = Join-Path $picDir ('picture-{0:000}.png' -f $script:picN)
-    try { $shape.SaveAsPicture($file, 'pbPictureResolutionCommercialPrint_300dpi') } catch { $shape.SaveAsPicture($file) }
+    try { $shape.SaveAsPicture($file, 3) } catch { $shape.SaveAsPicture($file) }
     $rot = [double]$shape.Rotation
     # A rotated object is saved as it looks: place it in its upright bounding box.
     $r = Rect $shape $x
@@ -171,9 +314,12 @@ function Emit-Picture($shape, $spread, [double]$x) {
         $r = @(($cx - $bw / 2), ($cy - $bh / 2), ($cx + $bw / 2), ($cy + $bh / 2))
     }
     $k = Add-Step 'frame.create' @{ spread = $spread; rect = $r; content = 'graphic' }
-    [void](Add-Step 'file.place' @{ path = $file; frame = (Ref $k 'id') })
+    $placed = Add-Step 'file.place' @{ path = $file; frame = (Ref $k 'id') }
+    # Kept inside the publication, as Publisher keeps its pictures: one file to move or email.
+    [void](Add-Step 'links.embed' @{ asset = (Ref $placed 'asset') })
     [void](Add-Step 'object.fit' @{ mode = 'fitContentToFrame'; ids = @((Ref $k 'id')) })
     [void](Add-Step 'object.stroke' @{ swatch = '[None]'; ids = @((Ref $k 'id')) })
+    Emit-Wrap $shape $k
     return $k
 }
 
@@ -200,19 +346,61 @@ function Emit-Frame-Options($tf, [int]$k) {
     [void](Add-Step 'object.textFrameOptions' $opts)
 }
 
+# Character formatting of [a, b) bytes of the story, with the paragraph's line spacing (`lines` of
+# the font's single spacing, or `exact` points).
+function Emit-Chars($k, [int]$a, [int]$b, $f, [double]$lines, [double]$exact) {
+    $fam = Map-Font $f.Name $f.Bold $f.Italic
+    $lead = if ($exact -gt 0) { $exact } else { $f.Size * $fam[2] * $lines }
+    [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = $a; focus = $b })
+    $attrs = @{ fontFamily = $fam[0]; size = $f.Size; underline = $f.Underline; leading = @{ kind = 'points'; value = [Math]::Round($lead, 2) } }
+    # Character spacing: Publisher's tracking (percent) and kerning (points between letters).
+    $trk = [Math]::Round(($f.Tracking - 100) * 10 + $f.Kerning / $f.Size * 1000)
+    if ($trk -ne 0) { $attrs.tracking = $trk }
+    if ([Math]::Abs($f.Scaling - 100) -gt 0.01) { $attrs.hScale = $f.Scaling / 100 }
+    if ($f.Caps) { $attrs.capitalization = 'allCaps' } elseif ($f.Small) { $attrs.capitalization = 'smallCaps' }
+    [void](Add-Step 'type.char' @{ attrs = $attrs })
+    [void](Add-Step 'type.char' @{ attrs = @{ fontStyle = $fam[1] } })
+    if ($f.Color -ne 0) { [void](Add-Step 'object.color' @{ color = (Hex $f.Color); text = $true }) }
+}
+
 function Emit-Text($shape, $spread, [double]$x) {
     $tf = $shape.TextFrame
-    if ($tf.HasPreviousLink -eq -1) { return }   # Its text arrives through the link.
+    $kind = if ([int]$shape.Type -eq 1 -and [int]$shape.AutoShapeType -eq 9) { 'ellipse' } else { 'rectangle' }
+    if ($tf.HasPreviousLink -eq -1) {
+        # Its text arrives through the link, threaded once every frame is made.
+        $k = Add-Step 'frame.create' @{ spread = $spread; rect = (Rect $shape $x); shape = $kind; content = 'unassigned' }
+        $frameStep[[int]$shape.ID] = $k
+        Emit-Box-Style $shape $k
+        Emit-Corners $shape $k
+        Emit-Rotation $shape $k
+        Emit-Wrap $shape $k
+        $script:stats.linked++
+        return
+    }
     $range = if ($tf.HasNextLink -eq -1) { $tf.Story.TextRange } else { $tf.TextRange }
     $raw = [string]$range.Text
+    # Page-number fields: Publisher keeps "#" in the text, PressRoom its page-number marker.
+    try {
+        $fields = $range.Fields
+        for ($fi = 1; $fi -le $fields.Count; $fi++) {
+            $fl = $fields.Item($fi)
+            $marker = switch ([int]$fl.Type) { 1 { [string][char]0xE000 } 2 { [string][char]0xE007 } 3 { [string][char]0xE008 } default { $null } }
+            if ($null -eq $marker) { continue }
+            $fs = [int]$fl.TextRange.Start - [int]$range.Start
+            if ([int]$fl.TextRange.Length -eq 1 -and $fs -ge 0 -and $fs -lt $raw.Length) { $raw = $raw.Substring(0, $fs) + $marker + $raw.Substring($fs + 1) }
+        }
+    } catch {}
     $trim = $raw.TrimEnd("`r")
     $text = Convert-Text $trim
-    $k = Add-Step 'frame.create' @{ spread = $spread; rect = (Rect $shape $x); content = 'text'; text = $text }
+    $k = Add-Step 'frame.create' @{ spread = $spread; rect = (Rect $shape $x); shape = $kind; content = 'text'; text = $text }
     $frameStep[[int]$shape.ID] = $k
+    if ($tf.HasNextLink -eq -1) { $chains.Add(@($tf, $k)) }
     $script:stats.text++
     Emit-Frame-Options $tf $k
     Emit-Box-Style $shape $k
+    Emit-Corners $shape $k
     Emit-Rotation $shape $k
+    Emit-Wrap $shape $k
     # Paragraphs.
     $paraCount = ($trim.Split("`r")).Count
     $rangeStart = [int]$range.Start
@@ -224,10 +412,24 @@ function Emit-Text($shape, $spread, [double]$x) {
         if ($pl -lt 0) { $pl = 0 }
         $a = ByteOffset $text $ps; $b = ByteOffset $text ($ps + $pl)
         $pf = $pr.ParagraphFormat
-        $attrs = @{ align = $alignMap[[int]$pf.Alignment] }
+        # Publisher breaks lines one at a time, never squeezes spaces, and hyphenates only words
+        # that cross the last quarter inch (its hyphenation zone).
+        $attrs = @{ align = $alignMap[[int]$pf.Alignment]; composer = 'singleLine'; wordSpaceMin = 1.0; hyphZone = 18.0 }
         if (-not $attrs.align) { $attrs.align = 'left' }
         try { $attrs.spaceBefore = [double]$pf.SpaceBefore; $attrs.spaceAfter = [double]$pf.SpaceAfter } catch {}
         try { $attrs.leftIndent = [double]$pf.LeftIndent; $attrs.firstLineIndent = [double]$pf.FirstLineIndent } catch {}
+        # Line and paragraph breaks: Publisher's keep options and widow control.
+        $keepFirst = 0; $keepLast = 0
+        try {
+            if ($pf.KeepWithNext -eq -1) { $attrs.keepWithNext = 1 }
+            if ($pf.KeepLinesTogether -eq -1) { $attrs.keepLinesTogether = $true; $attrs.keepAllLines = $true }
+            if ($pf.WidowControl -eq -1) { $keepFirst = 2; $keepLast = 2 }
+        } catch {}
+        # Drop cap: how many lines it drops and how many letters it takes. Publisher never starts
+        # one where its lines don't fit.
+        $dc = $null
+        try { $d = $pr.DropCap; if ([int]$d.Size -gt 1 -and [int]$d.Span -gt 0) { $dc = $d; $attrs.dropCapLines = [int]$d.Size; $attrs.dropCapChars = [int]$d.Span; $keepFirst = [Math]::Max($keepFirst, [int]$d.Size); $keepLast = [Math]::Max($keepLast, 1) } } catch {}
+        if ($keepFirst -gt 0 -and -not $attrs.keepAllLines) { $attrs.keepLinesTogether = $true; $attrs.keepAllLines = $false; $attrs.keepFirst = $keepFirst; $attrs.keepLast = $keepLast }
         # Line spacing: Publisher's 'lines' (1.19 by default) or exact points.
         $lines = 1.0; $exact = 0.0
         try {
@@ -241,53 +443,72 @@ function Emit-Text($shape, $spread, [double]$x) {
         foreach ($r in $runs) {
             if ($merged.Count -gt 0) {
                 $last = $merged[$merged.Count - 1]
-                if ((Same-Font $last[2] $r[2]) -and ($last[0] + $last[1] -eq $r[0])) { $merged[$merged.Count - 1] = @($last[0], ($last[1] + $r[1]), $last[2]); continue }
+                if ((Font-Key $last[2]) -eq (Font-Key $r[2]) -and ($last[0] + $last[1] -eq $r[0])) { $merged[$merged.Count - 1] = @($last[0], ($last[1] + $r[1]), $last[2]); continue }
             }
             $merged.Add($r)
         }
         foreach ($r in $merged) {
             $ra = ByteOffset $text $r[0]; $rb = ByteOffset $text ([Math]::Min($text.Length, $r[0] + $r[1]))
             if ($rb -le $ra) { continue }
-            $f = $r[2]
-            [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = $ra; focus = $rb })
-            $lead = if ($exact -gt 0) { $exact } else { $f.Size * (Line-Factor $f.Name) * $lines }
-            [void](Add-Step 'type.char' @{ attrs = @{ fontFamily = $f.Name; size = $f.Size; underline = $f.Underline; leading = @{ kind = 'points'; value = [Math]::Round($lead, 2) } } })
-            [void](Add-Step 'type.char' @{ attrs = @{ fontStyle = (Style-Name $f.Bold $f.Italic) } })
-            if ($f.Color -ne 0) { [void](Add-Step 'object.color' @{ color = (Hex $f.Color); text = $true }) }
+            Emit-Chars $k $ra $rb $r[2] $lines $exact
+        }
+        # The drop cap's own font and colour.
+        if ($dc -and $dc.FontName) {
+            $cb = ByteOffset $text ([Math]::Min($text.Length, $ps + [int]$dc.Span))
+            if ($cb -gt $a) {
+                $fam = Map-Font ([string]$dc.FontName) ($dc.FontBold -eq -1) ($dc.FontItalic -eq -1)
+                [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = $a; focus = $cb })
+                [void](Add-Step 'type.char' @{ attrs = @{ fontFamily = $fam[0] } })
+                [void](Add-Step 'type.char' @{ attrs = @{ fontStyle = $fam[1] } })
+                try { [void](Add-Step 'object.color' @{ color = (Hex $dc.FontColor.RGB); text = $true }) } catch {}
+            }
         }
     }
     [void](Add-Step 'edit.deselectAll' @{})
-    # The rest of a linked chain: empty boxes threaded after this one.
-    $prevStep = $k
-    $next = $tf
-    while ($next.HasNextLink -eq -1) {
-        $next = $next.NextLinkedTextFrame
-        $ns = $next.Parent
-        $place = $shapeAt[[int]$ns.ID]
-        if (-not $place) { break }
-        $m = Add-Step 'frame.create' @{ spread = $place[0]; rect = (Rect $ns $place[1]); content = 'unassigned' }
-        [void](Add-Step 'text.thread' @{ from = (Ref $prevStep 'id'); to = (Ref $m 'id') })
-        [void](Add-Step 'object.stroke' @{ swatch = '[None]'; ids = @((Ref $m 'id')) })
-        Emit-Frame-Options $next $m
-        $script:stats.linked++
-        $prevStep = $m
-    }
+}
+
+# Publisher's arrowheads (MsoArrowheadStyle) → PressRoom's line ends.
+function Arrow-Name([int]$style) {
+    switch ($style) { 2 { 'triangle' } 3 { 'barbed' } 4 { 'barbed' } 5 { 'square' } 6 { 'circleSolid' } default { $null } }
+}
+
+function Emit-Line($shape, $spread, [double]$x) {
+    $x0 = [double]$shape.Left + $x; $y0 = [double]$shape.Top
+    $x1 = $x0 + [double]$shape.Width; $y1 = $y0 + [double]$shape.Height
+    if ($shape.HorizontalFlip -eq -1) { $t = $x0; $x0 = $x1; $x1 = $t }
+    if ($shape.VerticalFlip -eq -1) { $t = $y0; $y0 = $y1; $y1 = $t }
+    $k = Add-Step 'line.create' @{ spread = $spread; a = @($x0, $y0); b = @($x1, $y1) }
+    $ln = $shape.Line
+    $stroke = @{ weight = [double]$ln.Weight; ids = @((Ref $k 'id')) }
+    $s = Arrow-Name ([int]$ln.BeginArrowheadStyle); if ($s) { $stroke.start = $s }
+    $e = Arrow-Name ([int]$ln.EndArrowheadStyle); if ($e) { $stroke.end = $e }
+    [void](Add-Step 'object.stroke' $stroke)
+    [void](Add-Step 'object.color' @{ color = (Hex $ln.ForeColor.RGB); target = 'stroke'; ids = @((Ref $k 'id')) })
+    $script:stats.lines++
 }
 
 function Emit-Shape($shape, $spread, [double]$x) {
     $type = [int]$shape.Type
     if ($type -eq 6) {   # Group: its members, each in its own place.
-        foreach ($i in 1..$shape.GroupItems.Count) { Emit-Shape $shape.GroupItems.Item($i) $spread $x }
+        foreach ($member in (Back-To-Front $shape.GroupItems)) { Emit-Shape $member $spread $x }
         return
     }
+    $ast = 0
+    try { $ast = [int]$shape.AutoShapeType } catch {}
+    $isLine = $type -eq 9
+    if ($type -eq 1) { try { $isLine = ($shape.Connector -eq -1) -or ($ast -eq -2 -and ([double]$shape.Width -eq 0 -or [double]$shape.Height -eq 0)) } catch {} }
+    if ($isLine) { Emit-Line $shape $spread $x; return }
     $hasText = $false
     try { $hasText = ($shape.HasTextFrame -eq -1) -and ($type -eq 17 -or [int]$shape.TextFrame.Story.TextRange.Length -gt 1) } catch {}
     if ($hasText) { Emit-Text $shape $spread $x; return }
-    if ($type -eq 1 -and @(1, 9) -contains [int]$shape.AutoShapeType) {
-        $kind = if ([int]$shape.AutoShapeType -eq 9) { 'ellipse' } else { 'rectangle' }
+    if ($type -eq 1 -and -not (Is-Drawable $shape)) { $script:stats.skipped++; return }
+    if ($type -eq 1 -and @(1, 5, 9) -contains $ast) {
+        $kind = if ($ast -eq 9) { 'ellipse' } else { 'rectangle' }
         $k = Add-Step 'frame.create' @{ spread = $spread; rect = (Rect $shape $x); shape = $kind; content = 'unassigned' }
         Emit-Box-Style $shape $k
+        Emit-Corners $shape $k
         Emit-Rotation $shape $k
+        Emit-Wrap $shape $k
         $script:stats.shapes++
         return
     }
@@ -308,24 +529,35 @@ try {
     $margins = 36.0
     try { $margins = [double]$doc.LayoutGuides.MarginTop } catch {}
     [void](Add-Step 'file.new' @{ units = 'inches'; width = $pw; height = $ph; pages = $n; facingPages = $script:facing; margins = $margins; intent = 'print' })
+    # As in Publisher: only objects in front of a text box wrap its text, and characters a font
+    # lacks come from another font.
+    [void](Add-Step 'document.preferences' @{ textWrapOnlyBeneath = $true; glyphFallback = $true })
     [void](Add-Step 'style.paragraph.edit' @{ name = '[Basic Paragraph]'; chars = @{ fontFamily = 'Calibri'; fontStyle = 'Regular'; size = 10.0 } })
-    # Where every shape is, first: linked boxes may sit on a later page.
     for ($p = 1; $p -le $n; $p++) {
         $place = Page-Place ($p - 1)
-        $pg = $doc.Pages.Item($p)
-        for ($s = 1; $s -le $pg.Shapes.Count; $s++) { $shapeAt[[int]$pg.Shapes.Item($s).ID] = $place }
-    }
-    for ($p = 1; $p -le $n; $p++) {
-        $place = Page-Place ($p - 1)
-        $pg = $doc.Pages.Item($p)
-        for ($s = 1; $s -le $pg.Shapes.Count; $s++) { Emit-Shape $pg.Shapes.Item($s) $place[0] $place[1] }
+        foreach ($sh in (Back-To-Front $doc.Pages.Item($p).Shapes)) { Emit-Shape $sh $place[0] $place[1] }
     }
     # Master page: on each page of PressRoom's master spread.
     if ($doc.MasterPages.Count -ge 1) {
         $m = $doc.MasterPages.Item(1)
         $parentPages = if ($script:facing) { @(0.0, $pw) } else { @(0.0) }
         foreach ($px in $parentPages) {
-            for ($s = 1; $s -le $m.Shapes.Count; $s++) { Emit-Shape $m.Shapes.Item($s) @{ kind = 'parent'; index = 0 } $px }
+            foreach ($sh in (Back-To-Front $m.Shapes)) { Emit-Shape $sh @{ kind = 'parent'; index = 0 } $px }
+        }
+    }
+    # Linked text boxes: thread each story's frames in Publisher's order.
+    foreach ($c in $chains) {
+        $prev = $c[1]
+        $next = $c[0]
+        $guard = 0
+        while ($next.HasNextLink -eq -1 -and $guard -lt 1000) {
+            $guard++
+            $next = $next.NextLinkedTextFrame
+            $m = $frameStep[[int]$next.Parent.ID]
+            if ($null -eq $m) { break }
+            [void](Add-Step 'text.thread' @{ from = (Ref $prev 'id'); to = (Ref $m 'id') })
+            Emit-Frame-Options $next $m
+            $prev = $m
         }
     }
     if ($Reference) {
@@ -351,6 +583,11 @@ try {
     }
 } catch { $failed += "could not read the report: $report" }
 if ($failed.Count -gt 0) { [IO.File]::WriteAllLines("$base.import-problems.txt", [string[]]$failed, $utf8) }
-"{0} -> {1}: {2} pages, {3} text boxes ({4} linked boxes), {5} pictures, {6} shapes, {7} objects kept as pictures; {8} steps, {9} problems" -f `
-    [IO.Path]::GetFileName($In), [IO.Path]::GetFileName($Out), $n, $stats.text, $stats.linked, $stats.pictures, $stats.shapes, $stats.flattened, $steps.Count, $failed.Count
+elseif (-not $KeepWork -and (Test-Path $Out)) {
+    # The pictures now live inside the publication.
+    Remove-Item $picDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $scriptFile -Force -ErrorAction SilentlyContinue
+}
+"{0} -> {1}: {2} pages, {3} text boxes ({4} linked boxes), {5} pictures, {6} shapes, {7} lines, {8} objects kept as pictures, {9} invisible objects left out; {10} steps, {11} problems" -f `
+    [IO.Path]::GetFileName($In), [IO.Path]::GetFileName($Out), $n, $stats.text, $stats.linked, $stats.pictures, $stats.shapes, $stats.lines, $stats.flattened, $stats.skipped, $steps.Count, $failed.Count
 if ($failed.Count -gt 0) { "Problems listed in $base.import-problems.txt" }

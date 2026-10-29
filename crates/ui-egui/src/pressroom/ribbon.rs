@@ -86,13 +86,7 @@ fn big_inner(ui: &mut Ui, icon: &str, label: &str, enabled: bool, arrow: bool, o
     paint_button_bg(ui, r, &resp, on && enabled);
     art::paint(ui.painter(), Rect::from_min_size(pos2(r.center().x - 16.0, r.min.y + 4.0), vec2(32.0, 32.0)), icon, enabled);
     for (i, l) in lines.iter().enumerate() {
-        ui.painter().text(
-            pos2(r.center().x, r.min.y + 46.0 + i as f32 * 13.0),
-            egui::Align2::CENTER_CENTER,
-            l,
-            font.clone(),
-            text_color(enabled),
-        );
+        ui.painter().text(pos2(r.center().x, r.min.y + 46.0 + i as f32 * 13.0), egui::Align2::CENTER_CENTER, l, font.clone(), text_color(enabled));
     }
     let tip = label.replace('\n', " ");
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &tip));
@@ -193,7 +187,13 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
         });
         let w = content.response.rect.width().max(text_w(ui, name, &label_font()) + if launcher { 26.0 } else { 12.0 });
         let (lr, _) = ui.allocate_exact_size(vec2(w, LABEL_H), Sense::hover());
-        ui.painter().text(pos2(lr.center().x - if launcher { 6.0 } else { 0.0 }, lr.center().y), egui::Align2::CENTER_CENTER, name, label_font(), PR::GROUP_LABEL);
+        ui.painter().text(
+            pos2(lr.center().x - if launcher { 6.0 } else { 0.0 }, lr.center().y),
+            egui::Align2::CENTER_CENTER,
+            name,
+            label_font(),
+            PR::GROUP_LABEL,
+        );
         let mut clicked = false;
         if launcher {
             let br = Rect::from_min_size(pos2(lr.max.x - 15.0, lr.min.y + 3.0), vec2(12.0, 12.0));
@@ -362,7 +362,9 @@ fn font_group(app: &mut DesignApp, ui: &mut Ui) {
                 }
                 let resp = tool(ui, "change-case", "Change Case", text, false);
                 egui::Popup::menu(&resp).show(|ui| {
-                    for (label, case) in [("Sentence case.", "sentence"), ("lowercase", "lower"), ("UPPERCASE", "upper"), ("Capitalize Each Word", "title")] {
+                    for (label, case) in
+                        [("Sentence case.", "sentence"), ("lowercase", "lower"), ("UPPERCASE", "upper"), ("Capitalize Each Word", "title")]
+                    {
                         if item(ui, label) {
                             act_with(app, "type.changeCase", json!({"case": case}));
                         }
@@ -426,7 +428,9 @@ fn paragraph_group(app: &mut DesignApp, ui: &mut Ui) {
                     if item(ui, "None") {
                         let _ = app.run("list.numbers", json!({"on": false}));
                     }
-                    for (label, style) in [("1. 2. 3.", "arabic"), ("a. b. c.", "lowerLetters"), ("A. B. C.", "upperLetters"), ("i. ii. iii.", "lowerRoman")] {
+                    for (label, style) in
+                        [("1. 2. 3.", "arabic"), ("a. b. c.", "lowerLetters"), ("A. B. C.", "upperLetters"), ("i. ii. iii.", "lowerRoman")]
+                    {
                         if item(ui, label) {
                             let _ = app.run("list.numbers", json!({"on": true}));
                             let _ = app.run("type.para", json!({"attrs": {"numberStyle": style, "numberExpression": "^#.^t"}}));
@@ -686,7 +690,9 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
         }
     });
     group(ui, "Building Blocks", false, |ui| {
-        for (icon, label) in [("page-parts", "Page\nParts"), ("calendars", "Calendars"), ("borders", "Borders &\nAccents"), ("ads", "Advertise-\nments")] {
+        for (icon, label) in
+            [("page-parts", "Page\nParts"), ("calendars", "Calendars"), ("borders", "Borders &\nAccents"), ("ads", "Advertise-\nments")]
+        {
             big_inner(ui, icon, label, false, true, false).on_hover_text("Coming in a later PressRoom update");
         }
     });
@@ -701,9 +707,10 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
         column(ui, |ui| {
             small_menu(ui, "symbol", "Symbol", doc, |ui| {
                 egui::Grid::new("pr_symbols").spacing(vec2(2.0, 2.0)).show(ui, |ui| {
-                    for (i, s) in ["©", "®", "™", "§", "¶", "†", "•", "…", "–", "—", "°", "±", "×", "÷", "½", "¼", "¾", "€", "£", "¢", "✝", "♥", "★", "✓"]
-                        .into_iter()
-                        .enumerate()
+                    for (i, s) in
+                        ["©", "®", "™", "§", "¶", "†", "•", "…", "–", "—", "°", "±", "×", "÷", "½", "¼", "¾", "€", "£", "¢", "✝", "♥", "★", "✓"]
+                            .into_iter()
+                            .enumerate()
                     {
                         if ui.add_sized(vec2(26.0, 26.0), egui::Button::new(s)).clicked() {
                             let _ = app.run("text.insert", json!({"text": s}));

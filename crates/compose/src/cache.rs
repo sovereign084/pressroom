@@ -209,6 +209,8 @@ impl Cache {
         sig.extend([a.superscript_size, a.superscript_position, a.subscript_size, a.subscript_position].into_iter().flat_map(bits));
         // Missing glyphs: fallback fonts or the font's box.
         sig.push(usize::from(doc.settings.glyph_fallback));
+        // Which objects wrap a frame's text.
+        sig.push(usize::from(doc.settings.text_wrap_only_beneath));
         // Named lists continue from earlier stories.
         for l in &doc.settings.lists {
             let mut h = std::collections::hash_map::DefaultHasher::new();

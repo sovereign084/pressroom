@@ -662,17 +662,50 @@ fn wrap_obstacles(it: &Item, parent: Affine, inv: Affine, skip: ItemId, left_pag
     }
 }
 
+/// Does `it` hold the item `id`: is it that item, or a group with it inside?
+fn holds(it: &Item, id: ItemId, depth: usize) -> bool {
+    it.id == id || (depth < MAX_WRAP_DEPTH && it.children().iter().any(|c| holds(c, id, depth + 1)))
+}
+
+/// Text Wrap Only Affects Text Beneath (Publisher's rule): the wrap exclusions of the `items`
+/// (back to front) stacked above the frame `id`; inside a group that holds the frame, of the
+/// members above it. Arguments as for [`wrap_obstacles`].
+fn wraps_above(
+    items: &[&Arc<Item>],
+    parent: Affine,
+    inv: Affine,
+    id: ItemId,
+    left_page: &dyn Fn(f64) -> bool,
+    depth: usize,
+    out: &mut Vec<Exclusion>,
+) {
+    let mut above = false;
+    for it in items {
+        if above {
+            wrap_obstacles(it, parent, inv, id, left_page, depth, out);
+        } else if it.id == id {
+            above = true;
+        } else if depth < MAX_WRAP_DEPTH && holds(it, id, depth) {
+            let members: Vec<&Arc<Item>> = it.shown_children().collect();
+            wraps_above(&members, parent * it.xf, inv, id, left_page, depth + 1, out);
+            above = true;
+        }
+    }
+}
+
 /// Adds to `exclusions` the objects on `sp` that wrap the text of frame `item`. Only objects that
 /// reach the frame's text area wrap its text: one elsewhere on the spread would otherwise cost a
 /// narrow column its room (the 1.5 em minimum segment of `free_slots` applies once an object cuts
 /// the column).
 fn frame_wrap_exclusions(doc: &Document, sp: &designcraft_doc::Spread, item: &Item, inv: Affine, exclusions: &mut Vec<Exclusion>) {
     let left = |x: f64| sp.page_at_x(x).and_then(|pi| sp.pages.get(pi)).is_some_and(|p| p.side == designcraft_doc::PageSide::Left);
-    for other in &sp.items {
-        if doc.layer(other.layer).is_some_and(|l| !l.visible) {
-            continue;
+    let shown: Vec<&Arc<Item>> = sp.items.iter().filter(|o| doc.layer(o.layer).is_none_or(|l| l.visible)).collect();
+    if doc.settings.text_wrap_only_beneath && shown.iter().any(|o| holds(o, item.id, 0)) {
+        wraps_above(&shown, Affine::IDENTITY, inv, item.id, &left, 0, exclusions);
+    } else {
+        for other in shown {
+            wrap_obstacles(other, Affine::IDENTITY, inv, item.id, &left, 0, exclusions);
         }
-        wrap_obstacles(other, Affine::IDENTITY, inv, item.id, &left, 0, exclusions);
     }
     let a = item.text_area();
     exclusions.retain(|e| {

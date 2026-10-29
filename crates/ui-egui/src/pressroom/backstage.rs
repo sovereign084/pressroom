@@ -104,7 +104,10 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
         y += 38.0;
         if label == "Close" {
             y += 12.0;
-            ui.painter().line_segment([pos2(column.min.x + 20.0, y - 6.0), pos2(column.max.x - 20.0, y - 6.0)], Stroke::new(1.0, Color32::from_rgb(70, 150, 140)));
+            ui.painter().line_segment(
+                [pos2(column.min.x + 20.0, y - 6.0), pos2(column.max.x - 20.0, y - 6.0)],
+                Stroke::new(1.0, Color32::from_rgb(70, 150, 140)),
+            );
         }
     }
     let r = Rect::from_min_size(pos2(column.min.x, y), vec2(COLUMN_W, 38.0));
@@ -157,7 +160,13 @@ fn tile(ui: &mut Ui, id: &str, size: egui::Vec2, caption: &str, draw: impl FnOnc
     }
     draw(ui.painter(), card);
     for (i, line) in caption.split('\n').enumerate() {
-        ui.painter().text(pos2(r.center().x, card.max.y + 12.0 + i as f32 * 14.0), egui::Align2::CENTER_CENTER, line, FontId::proportional(12.0), PR::TEXT);
+        ui.painter().text(
+            pos2(r.center().x, card.max.y + 12.0 + i as f32 * 14.0),
+            egui::Align2::CENTER_CENTER,
+            line,
+            FontId::proportional(12.0),
+            PR::TEXT,
+        );
     }
     let _ = id;
     resp.on_hover_text(caption.replace('\n', " ")).clicked()
@@ -208,7 +217,10 @@ fn new_page(app: &mut DesignApp, ui: &mut Ui) {
 /// A little sketch of what a built-in starting point looks like.
 fn preview(p: &egui::Painter, r: Rect, kind: &str) {
     let line = |y: f32, x0: f32, x1: f32, c: Color32| {
-        p.line_segment([pos2(r.min.x + x0 * r.width(), r.min.y + y * r.height()), pos2(r.min.x + x1 * r.width(), r.min.y + y * r.height())], Stroke::new(1.5, c));
+        p.line_segment(
+            [pos2(r.min.x + x0 * r.width(), r.min.y + y * r.height()), pos2(r.min.x + x1 * r.width(), r.min.y + y * r.height())],
+            Stroke::new(1.5, c),
+        );
     };
     let block = |x0: f32, y0: f32, x1: f32, y1: f32, c: Color32| {
         p.rect_filled(
@@ -271,6 +283,9 @@ fn create(app: &mut DesignApp, ctx: &egui::Context, k: &Kind) {
         s.two_page = k.facing;
         s.tab = super::Tab::Home;
     });
+    // As in Publisher: only objects in front of a text box wrap its text, and characters a font
+    // lacks come from another font.
+    let _ = app.run("document.preferences", json!({"textWrapOnlyBeneath": true, "glyphFallback": true}));
     // Publisher's default text: Calibri 10 pt, where Windows has it.
     if let Some(style) = app.session.active().map(|d| d.doc.styles.default_paragraph.clone()) {
         let _ = app.run("style.paragraph.edit", json!({"name": style, "chars": {"fontFamily": "Calibri", "fontStyle": "Regular", "size": 10.0}}));
@@ -301,7 +316,13 @@ fn open_page(app: &mut DesignApp, ui: &mut Ui) {
             ui.painter().rect_filled(r, 0.0, Color32::from_rgb(222, 236, 233));
         }
         art::paint(ui.painter(), Rect::from_min_size(r.min + vec2(6.0, 8.0), vec2(28.0, 28.0)), "single-page", exists);
-        ui.painter().text(r.min + vec2(44.0, 14.0), egui::Align2::LEFT_CENTER, name, FontId::proportional(13.5), if exists { PR::TEXT } else { PR::DISABLED });
+        ui.painter().text(
+            r.min + vec2(44.0, 14.0),
+            egui::Align2::LEFT_CENTER,
+            name,
+            FontId::proportional(13.5),
+            if exists { PR::TEXT } else { PR::DISABLED },
+        );
         ui.painter().text(r.min + vec2(44.0, 31.0), egui::Align2::LEFT_CENTER, path, FontId::proportional(11.0), PR::GROUP_LABEL);
         if resp.on_hover_text(path).clicked() {
             super::close_backstage(ui.ctx());
@@ -384,7 +405,8 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
     });
     if s.printers.is_none() {
         let r = app.run("file.printers", json!({})).unwrap_or(Value::Null);
-        let names: Vec<String> = r["printers"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let names: Vec<String> =
+            r["printers"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
         let default = r["default"].as_str().map(str::to_string);
         if s.printer.is_none() {
             s.printer = default.clone().or_else(|| names.first().cloned());
@@ -473,7 +495,9 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
                 ui.add_space(10.0);
                 ui.label(egui::RichText::new("Each sheet holds two pages; fold the printed stack in half.").color(PR::GROUP_LABEL));
                 if n % 4 != 0 {
-                    ui.label(egui::RichText::new(format!("{n} pages: blank pages fill the booklet out to {}.", n.div_ceil(4) * 4)).color(PR::GROUP_LABEL));
+                    ui.label(
+                        egui::RichText::new(format!("{n} pages: blank pages fill the booklet out to {}.", n.div_ceil(4) * 4)).color(PR::GROUP_LABEL),
+                    );
                 }
             }
         });

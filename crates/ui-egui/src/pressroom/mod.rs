@@ -282,7 +282,8 @@ fn today() -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const MONTHS: [&str; 12] =
+        ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     let name = MONTHS.get((m - 1).clamp(0, 11) as usize).copied().unwrap_or("January");
     format!("{name} {d}, {y}")
 }
@@ -310,7 +311,8 @@ fn edit_header_footer(app: &mut DesignApp, header: bool) {
         let _ = app.run("selection.set", json!({"ids": [id]}));
         return;
     }
-    if app.run("frame.create", json!({"spread": {"kind": "parent", "index": 0}, "rect": [x0, y0, x1, y1], "content": "text", "caret": true})).is_ok() {
+    if app.run("frame.create", json!({"spread": {"kind": "parent", "index": 0}, "rect": [x0, y0, x1, y1], "content": "text", "caret": true})).is_ok()
+    {
         let _ = app.run("object.label", json!({"label": label}));
     }
 }
@@ -451,8 +453,20 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
         let card = Rect::from_center_size(r.center(), vec2(420.0, 90.0));
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("pr_pubimport")));
         painter.rect(card, 4.0, Color32::WHITE, Stroke::new(1.0, PR::RIBBON_EDGE), egui::StrokeKind::Inside);
-        painter.text(card.center() - vec2(0.0, 14.0), egui::Align2::CENTER_CENTER, format!("Bringing in \u{201c}{name}\u{201d}"), FontId::proportional(15.0), PR::TEXT);
-        painter.text(card.center() + vec2(0.0, 14.0), egui::Align2::CENTER_CENTER, "Publisher is reading the file. This can take a minute.", FontId::proportional(12.0), PR::GROUP_LABEL);
+        painter.text(
+            card.center() - vec2(0.0, 14.0),
+            egui::Align2::CENTER_CENTER,
+            format!("Bringing in \u{201c}{name}\u{201d}"),
+            FontId::proportional(15.0),
+            PR::TEXT,
+        );
+        painter.text(
+            card.center() + vec2(0.0, 14.0),
+            egui::Align2::CENTER_CENTER,
+            "Publisher is reading the file. This can take a minute.",
+            FontId::proportional(12.0),
+            PR::GROUP_LABEL,
+        );
     }
     if let Some(page) = s.backstage {
         backstage::show(app, ui, page);
@@ -495,12 +509,22 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         let mark = Rect::from_min_size(pos2(x, full.center().y - 9.0), vec2(18.0, 18.0));
         let (c, l, r) = (mark.center().x, mark.min.x + 1.0, mark.max.x - 1.0);
         let (t, b) = (mark.min.y + 3.0, mark.max.y - 2.0);
-        ui.painter().add(egui::Shape::convex_polygon(vec![pos2(l, t), pos2(c - 0.5, t + 1.5), pos2(c - 0.5, b), pos2(l, b - 1.5)], Color32::from_rgb(226, 236, 240), Stroke::NONE));
-        ui.painter().add(egui::Shape::convex_polygon(vec![pos2(c + 0.5, t + 1.5), pos2(r, t), pos2(r, b - 1.5), pos2(c + 0.5, b)], Color32::WHITE, Stroke::NONE));
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![pos2(l, t), pos2(c - 0.5, t + 1.5), pos2(c - 0.5, b), pos2(l, b - 1.5)],
+            Color32::from_rgb(226, 236, 240),
+            Stroke::NONE,
+        ));
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![pos2(c + 0.5, t + 1.5), pos2(r, t), pos2(r, b - 1.5), pos2(c + 0.5, b)],
+            Color32::WHITE,
+            Stroke::NONE,
+        ));
         ui.painter().line_segment([pos2(c + 2.0, t + 4.0), pos2(r - 2.0, t + 3.2)], Stroke::new(1.5, Color32::from_rgb(238, 176, 58)));
         x += 30.0;
         let doc = app.session.active().is_some();
-        for (icon, tip, cmd) in [("save", "Save (Ctrl+S)", "app.save"), ("undo", "Undo (Ctrl+Z)", "edit.undo"), ("redo", "Redo (Ctrl+Y)", "edit.redo")] {
+        for (icon, tip, cmd) in
+            [("save", "Save (Ctrl+S)", "app.save"), ("undo", "Undo (Ctrl+Z)", "edit.undo"), ("redo", "Redo (Ctrl+Y)", "edit.redo")]
+        {
             let r = Rect::from_min_size(pos2(x, full.min.y + 3.0), vec2(26.0, TITLE_H - 6.0));
             let enabled = doc && ribbon::on(app, cmd);
             let resp = ui.interact(r, egui::Id::new(("pr_qat", cmd)), if enabled { Sense::click() } else { Sense::hover() });
@@ -526,7 +550,13 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
                 let r = Rect::from_min_max(pos2(x0, full.min.y + 4.0), pos2(x1.max(x0 + 100.0), full.max.y));
                 ui.painter().rect_filled(r, 0.0, PR::TEAL_DARK);
                 ui.painter().rect_filled(Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + 3.0)), 0.0, PR::CONTEXT);
-                ui.painter().text(r.center() + vec2(0.0, 1.5), egui::Align2::CENTER_CENTER, s.context.title(), FontId::proportional(11.5), Color32::WHITE);
+                ui.painter().text(
+                    r.center() + vec2(0.0, 1.5),
+                    egui::Align2::CENTER_CENTER,
+                    s.context.title(),
+                    FontId::proportional(11.5),
+                    Color32::WHITE,
+                );
             }
         }
         if app.custom_titlebar {
@@ -644,7 +674,8 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         }
         let body = Rect::from_min_max(pos2(full.min.x, strip.max.y), full.max);
         ui.painter().line_segment([body.left_bottom() - vec2(0.0, 0.5), body.right_bottom() - vec2(0.0, 0.5)], Stroke::new(1.0, PR::RIBBON_EDGE));
-        let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(vec2(0.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Min)));
+        let mut inner =
+            ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(vec2(0.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Min)));
         inner.style_mut().visuals = egui::Visuals::light();
         egui::ScrollArea::horizontal().id_salt("pr_ribbon_scroll").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
             &mut inner,
@@ -685,7 +716,13 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
             ui.painter().rect_filled(pr, 0.0, PR::HOVER);
         }
         art::paint(ui.painter(), Rect::from_min_size(pr.min + vec2(2.0, 1.5), vec2(15.0, 15.0)), "single-page", true);
-        ui.painter().text(pr.min + vec2(20.0, pr.height() / 2.0), egui::Align2::LEFT_CENTER, format!("Page: {} of {}", cur + 1, n), font.clone(), PR::TEXT);
+        ui.painter().text(
+            pr.min + vec2(20.0, pr.height() / 2.0),
+            egui::Align2::LEFT_CENTER,
+            format!("Page: {} of {}", cur + 1, n),
+            font.clone(),
+            PR::TEXT,
+        );
         if resp.on_hover_text("Page Navigation").clicked() {
             let hidden = nav_hidden(ui.ctx());
             set_nav_hidden(ui.ctx(), !hidden);
@@ -719,7 +756,8 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let from_t = |t: f32| (0.1f64.ln() + f64::from(t) * (4.0f64.ln() - 0.1f64.ln())).exp();
         let track = Rect::from_min_max(pos2(sr.min.x, sr.center().y - 0.5), pos2(sr.max.x, sr.center().y + 0.5));
         ui.painter().rect_filled(track, 0.0, PR::GROUP_LABEL);
-        ui.painter().line_segment([pos2(sr.center().x, sr.center().y - 4.0), pos2(sr.center().x, sr.center().y + 4.0)], Stroke::new(1.0, PR::GROUP_LABEL));
+        ui.painter()
+            .line_segment([pos2(sr.center().x, sr.center().y - 4.0), pos2(sr.center().x, sr.center().y + 4.0)], Stroke::new(1.0, PR::GROUP_LABEL));
         let resp = ui.interact(sr, egui::Id::new("pr_zoom_slider"), Sense::click_and_drag());
         let t = to_t(zoom);
         let knob = Rect::from_center_size(pos2(sr.min.x + t * sr.width(), sr.center().y), vec2(4.0, 12.0));

@@ -90,11 +90,7 @@ pub fn poll(app: &mut DesignApp, ctx: &egui::Context) {
     let done = {
         let mut g = JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let ready = g.as_ref().and_then(|(_, rx)| rx.try_recv().ok());
-        if ready.is_some() {
-            g.take().map(|(n, _)| n).zip(ready)
-        } else {
-            None
-        }
+        if ready.is_some() { g.take().map(|(n, _)| n).zip(ready) } else { None }
     };
     match done {
         Some((name, Ok(out))) => {

@@ -848,6 +848,32 @@ fn text_wrap_on_selected_content_sets_the_graphic_wrap() {
 }
 
 #[test]
+fn text_wrap_only_beneath_spares_the_frames_above_an_object() {
+    let mut s = session();
+    // One object below the text frame and one above it, both wrapping.
+    let below = s.execute("frame.create", &json!({"rect": [36, 36, 136, 80]})).unwrap()["id"].as_u64().unwrap();
+    let text = "word ".repeat(400);
+    let r = s.execute("frame.create", &json!({"rect": [36, 36, 336, 300], "content": "text", "text": text})).unwrap();
+    let sid = designcraft_doc::StoryId(r["story"].as_u64().unwrap());
+    let above = s.execute("frame.create", &json!({"rect": [36, 150, 136, 200]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("object.textWrap", &json!({"mode": "boundingBox", "ids": [below, above]})).unwrap();
+    // (baseline, line start) of each line, on the spread.
+    let lines = |s: &Session| -> Vec<(f64, f64)> {
+        s.cache.get(&s.doc().unwrap().doc, sid, None).frames[0].lines.iter().map(|l| (l.baseline, l.x0)).collect()
+    };
+    let pushed = |lines: &[(f64, f64)], ys: std::ops::Range<f64>| lines.iter().any(|(y, x)| ys.contains(y) && *x > 100.0);
+    // As in InDesign: both objects push the text aside.
+    let l = lines(&s);
+    assert!(pushed(&l, 36.0..92.0) && pushed(&l, 150.0..212.0), "{l:?}");
+    // As in Publisher: only the object above the frame does.
+    s.execute("document.preferences", &json!({"textWrapOnlyBeneath": true})).unwrap();
+    let l = lines(&s);
+    assert!(!pushed(&l, 36.0..92.0) && pushed(&l, 150.0..212.0), "{l:?}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(pushed(&lines(&s), 36.0..92.0), "undone");
+}
+
+#[test]
 fn custom_wrap_path_follows_resize_and_yields_to_offsets() {
     let mut s = session();
     let r = s.execute("frame.create", &json!({"rect": [0, 0, 100, 100]})).unwrap();

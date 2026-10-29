@@ -22,6 +22,7 @@ const DOC_KEYS: &[&str] = &[
     "advancedType",
     "overprintBlack",
     "glyphFallback",
+    "textWrapOnlyBeneath",
     "rulerOrigin",
 ];
 
@@ -65,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Document Preferences",
             [],
             None,
-            "{horizontalUnits?, verticalUnits?: points|picas|inches|millimeters|…, keyboardIncrement? (pt), kerningIncrement? (1/1000 em: Alt+Left/Right in text), baselineGrid?: {start, increment, relativeTo, color, viewThreshold}, grid?: {horizontal, vertical, subdivisions, color, inBack}, pasteboard?: [h, v], marginColor?, columnColor?, bleedColor?, slugColor?: [r, g, b], advancedType?: {superscriptSize, superscriptPosition, subscriptSize, subscriptPosition} (%), overprintBlack?, glyphFallback? (draw characters the font lacks from fallback fonts; off: as the font's missing-glyph box), rulerOrigin?: spread|page|spine (what rulers and X/Y measure from, with the zero point)} → those settings",
+            "{horizontalUnits?, verticalUnits?: points|picas|inches|millimeters|…, keyboardIncrement? (pt), kerningIncrement? (1/1000 em: Alt+Left/Right in text), baselineGrid?: {start, increment, relativeTo, color, viewThreshold}, grid?: {horizontal, vertical, subdivisions, color, inBack}, pasteboard?: [h, v], marginColor?, columnColor?, bleedColor?, slugColor?: [r, g, b], advancedType?: {superscriptSize, superscriptPosition, subscriptSize, subscriptPosition} (%), overprintBlack?, glyphFallback? (draw characters the font lacks from fallback fonts; off: as the font's missing-glyph box), textWrapOnlyBeneath? (an object's text wrap affects only frames stacked below it, as in Publisher), rulerOrigin?: spread|page|spine (what rulers and X/Y measure from, with the zero point)} → those settings",
             has_doc,
             |s, p| {
                 let cur = serde_json::to_value(&s.doc()?.doc.settings).map_err(|e| bad("document.preferences", e.to_string()))?;
