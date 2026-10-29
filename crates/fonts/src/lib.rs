@@ -678,6 +678,30 @@ mod resolution_tests {
         assert!(scope.canonical_family("An Unavailable Original Family").is_none());
         assert_eq!(scope.face("An Unavailable Original Family", "Regular").family, FALLBACK_FAMILY);
     }
+
+    /// PressRoom: Microsoft 365's cloud fonts show in the free look-alikes PressRoom installs,
+    /// and stay missing fonts (the document keeps their names).
+    #[test]
+    fn office_cloud_fonts_show_in_their_free_look_alikes() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        for family in ["Patrick Hand", "Bitter", "Literata", "Shantell Sans"] {
+            db.add_font(testing::font_with(family, &['A']).unwrap());
+        }
+        let scope = db.scoped(0);
+        for (cloud, look_alike) in [
+            ("Buxton Sketch", "Patrick Hand"),
+            ("Amasis MT Pro", "Bitter"),
+            ("Tisa Offc Serif Pro", "Literata"),
+            ("Kermit", "Shantell Sans"),
+            ("Kermit Expanded", "Shantell Sans"),
+        ] {
+            assert_eq!(scope.substitute_family(cloud), look_alike, "{cloud}");
+            assert_eq!(scope.face(cloud, "Regular").family, look_alike, "{cloud} is drawn in it");
+            assert!(!scope.has_family(cloud), "{cloud} is still a missing font");
+        }
+        // Without the look-alike installed: the usual fallback.
+        assert_eq!(FontDb::with_font_dirs(Vec::new()).scoped(0).substitute_family("Buxton Sketch"), FALLBACK_FAMILY);
+    }
 }
 
 #[cfg(test)]

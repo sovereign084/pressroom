@@ -78,6 +78,14 @@ impl ScopedFonts<'_> {
             "arial" | "helvetica" => &["Liberation Sans", "Arial", "Helvetica"],
             "times new roman" | "times" => &["Liberation Serif", "Times New Roman", "Times"],
             "courier new" | "courier" => &["Liberation Mono", "Courier New", "Courier"],
+            // PressRoom: Microsoft 365's cloud fonts, which only Office can draw, in the free
+            // look-alikes PressRoom installs (packaging/pressroom/fonts.json).
+            "buxton sketch" => &["Patrick Hand"],
+            "amasis mt pro" | "amasis mt" => &["Bitter"],
+            "tisa offc serif pro" | "tisa offc pro" | "tisa pro" => &["Literata"],
+            "boucherie block" => &["Bitter"],
+            _ if lower.starts_with("kermit") => &["Shantell Sans"],
+            _ if lower.starts_with("georgia pro") => &["Georgia"],
             _ if lower.contains("arabic") || lower.contains("naskh") => &["Amiri", "Noto Naskh Arabic", "Geeza Pro"],
             _ if family.contains('楷') => &["Kaiti SC", "STKaiti", "KaiTi", "Songti SC"],
             _ if family.contains("仿宋") => &["STFangsong", "FangSong", "Songti SC"],

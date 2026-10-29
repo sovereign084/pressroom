@@ -23,6 +23,8 @@
 
     <Feature Id="Main" Title="PressRoom" Level="1">
       <ComponentGroupRef Id="PressRoomFiles" />
+      <!-- Free look-alikes of Microsoft 365's cloud fonts (fonts.json, made into fonts.wxs by build-installer.ps1). -->
+      <ComponentGroupRef Id="PressRoomFonts" />
     </Feature>
   </Package>
 

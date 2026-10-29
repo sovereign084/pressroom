@@ -4,6 +4,8 @@ Every non-code asset in this repository (fonts, images, example art, presets) is
 
 **Policy (mandatory):** DesignCraft contains **no Adobe iconography, images, artwork, presets, swatch libraries or ICC profiles**. Every asset is original work by DesignCraft contributors or third-party material under an open licence (OSI open source, public domain / CC0, or Creative Commons that allows redistribution). Screenshots of Adobe software are never committed. Font files are not added here: shared fonts live in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), an optional build input (`CRAFT_FONTS_DIR`, see AGENTS.md and craftrules [`standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md)). The one exception is the ArtCraft brand files in `docs/brand/`: ArtCraft trademarks, not open source, used under `docs/brand/LICENSE-brand.txt`.
 
+PressRoom's installer also carries free fonts that are not in this repository: `packaging/pressroom/fonts.json` lists them (Patrick Hand, ADLaM Display, Bitter, Literata, Shantell Sans; SIL Open Font License 1.1, from Google Fonts) with each file's SHA-256. `packaging/pressroom/build-installer.ps1` downloads and checks them, and the installer puts their licences beside PressRoom. They stand in for Microsoft 365's cloud fonts, which only Office can draw.
+
 Generated-in-code art is original and has no file to list: the UI icon set (`crates/ui-egui/src/icons.rs`), default swatches, and the sample magazine's imagery (`crates/engine/src/sample.rs`).
 
 | Asset | Author | Source | Licence | Notes |

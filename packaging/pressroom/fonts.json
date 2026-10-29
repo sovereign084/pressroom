@@ -1,0 +1,130 @@
+{
+    "about":  "Free fonts PressRoom installs for the user (Windows per-user fonts): look-alikes of Microsoft 365 cloud fonts that only Office can draw, and ADLaM Display itself. All SIL Open Font License 1.1, from Google Fonts. build-installer.ps1 downloads them into target-pkg and checks each SHA-256; font files are never committed (CLAUDE.md).",
+    "fonts":  [
+                  {
+                      "file":  "ADLaMDisplay-Regular.ttf",
+                      "family":  "ADLaM Display",
+                      "style":  "Regular",
+                      "url":  "https://fonts.gstatic.com/s/adlamdisplay/v1/KFOhCnGXkPOLlhx6jD8_b1ZECsE.ttf",
+                      "sha256":  "c0c6866f31b512aa9a6bae6b23ce9021171974422ace265cbe8cc6564fd31432"
+                  },
+                  {
+                      "file":  "Bitter-Italic.ttf",
+                      "family":  "Bitter",
+                      "style":  "Italic",
+                      "url":  "https://fonts.gstatic.com/s/bitter/v42/raxjHiqOu8IVPmn7epZnDMyKBvHf5D6c4PzOWA.ttf",
+                      "sha256":  "53e9a4769672971e329e7bad7e4788b3447c8e524a1868a438733199fccf05c2"
+                  },
+                  {
+                      "file":  "Bitter-BoldItalic.ttf",
+                      "family":  "Bitter",
+                      "style":  "Bold Italic",
+                      "url":  "https://fonts.gstatic.com/s/bitter/v42/raxjHiqOu8IVPmn7epZnDMyKBvHf5D6cB_vOWA.ttf",
+                      "sha256":  "bd194e1f87dd2978cd14eb4b34fa59e488c06d05933652d98fe44e05fe3a1e24"
+                  },
+                  {
+                      "file":  "Bitter-Regular.ttf",
+                      "family":  "Bitter",
+                      "style":  "Regular",
+                      "url":  "https://fonts.gstatic.com/s/bitter/v42/raxhHiqOu8IVPmnRc6SY1KXhnF_Y8fbfCL8.ttf",
+                      "sha256":  "04b9e632f0791325153b80c882bdb6b1f099fdd5de99406e0485aa9a00e5674a"
+                  },
+                  {
+                      "file":  "Bitter-Bold.ttf",
+                      "family":  "Bitter",
+                      "style":  "Bold",
+                      "url":  "https://fonts.gstatic.com/s/bitter/v42/raxhHiqOu8IVPmnRc6SY1KXhnF_Y8RHYCL8.ttf",
+                      "sha256":  "266d6ec27877c5c2b5840d1ab5edd0fc1eeb686c6d820b320e7b35e0f62b3e65"
+                  },
+                  {
+                      "file":  "Literata-Italic.ttf",
+                      "family":  "Literata",
+                      "style":  "Italic",
+                      "url":  "https://fonts.gstatic.com/s/literata/v40/or3NQ6P12-iJxAIgLYT1PLs1Zd0nfUwAbeGVKoRYzNiCp1OUedn8_7XWSQ.ttf",
+                      "sha256":  "bad55524c5f792c2796e2e62f2edd100506cd108b2456c34dea7afa4f297ab88"
+                  },
+                  {
+                      "file":  "Literata-BoldItalic.ttf",
+                      "family":  "Literata",
+                      "style":  "Bold Italic",
+                      "url":  "https://fonts.gstatic.com/s/literata/v40/or3NQ6P12-iJxAIgLYT1PLs1Zd0nfUwAbeGVKoRYzNiCp1OUedn8GLLWSQ.ttf",
+                      "sha256":  "72233aa2728bbb5937781bf69b0afeaa1e8d38d73ae0a10080cbc921675f7551"
+                  },
+                  {
+                      "file":  "Literata-Regular.ttf",
+                      "family":  "Literata",
+                      "style":  "Regular",
+                      "url":  "https://fonts.gstatic.com/s/literata/v40/or3PQ6P12-iJxAIgLa78DkrbXsDgk0oVDaDPYLanFLHpPf2TbBG_F_Y.ttf",
+                      "sha256":  "1d6eafdc620333fcc3d573c115fc62ea78d0965d1f72a8f549fc9660fef556b3"
+                  },
+                  {
+                      "file":  "Literata-Bold.ttf",
+                      "family":  "Literata",
+                      "style":  "Bold",
+                      "url":  "https://fonts.gstatic.com/s/literata/v40/or3PQ6P12-iJxAIgLa78DkrbXsDgk0oVDaDPYLanFLHpPf2TbPa4F_Y.ttf",
+                      "sha256":  "752bd45b08e48848cd2bd30c969f1ad52742c6a519665cedabf3cf29164823ac"
+                  },
+                  {
+                      "file":  "PatrickHand-Regular.ttf",
+                      "family":  "Patrick Hand",
+                      "style":  "Regular",
+                      "url":  "https://fonts.gstatic.com/s/patrickhand/v25/LDI1apSQOAYtSuYWp8ZhfYeMWQ.ttf",
+                      "sha256":  "8a384204c8ab3e9ed82954d46d8110a66fb5d7acf8f6b64c6f3980c1d0c01993"
+                  },
+                  {
+                      "file":  "ShantellSans-Italic.ttf",
+                      "family":  "Shantell Sans",
+                      "style":  "Italic",
+                      "url":  "https://fonts.gstatic.com/s/shantellsans/v13/FeUcS0pCoLIo-lcdY7kjvNoQg2xkycTqsuA6bi9pTt8YiT-NXidjb_ee-maigL6R8nKVh8BbE1mv4wwmM0WUkSqmTpG0CID1wvg.ttf",
+                      "sha256":  "8127fe3cb5a5822401c781d1096a3525663e702d07644f24681d1498d6b9ac2f"
+                  },
+                  {
+                      "file":  "ShantellSans-BoldItalic.ttf",
+                      "family":  "Shantell Sans",
+                      "style":  "Bold Italic",
+                      "url":  "https://fonts.gstatic.com/s/shantellsans/v13/FeUcS0pCoLIo-lcdY7kjvNoQg2xkycTqsuA6bi9pTt8YiT-NXidjb_ee-maigL6R8nKVh8BbE1mv4wwmM0WUkSqmTpG0CGfywvg.ttf",
+                      "sha256":  "1ec1684be46a65d4bc8268b6aaba1d8cab4748c33ccf29ab1132681733c1fd12"
+                  },
+                  {
+                      "file":  "ShantellSans-Regular.ttf",
+                      "family":  "Shantell Sans",
+                      "style":  "Regular",
+                      "url":  "https://fonts.gstatic.com/s/shantellsans/v13/FeUaS0pCoLIo-lcdY7kjvNoQqWVWB0qWpl29ajppTuUTu_kJKmHesPOL-maYi4xZeHCNQ09eBlmv2QcUzJ39-rAISYR8S2i2.ttf",
+                      "sha256":  "335ce03b4f2e90df95a7e4a383979a817fc4843a33498e8cdb77e692cc740fc4"
+                  },
+                  {
+                      "file":  "ShantellSans-Bold.ttf",
+                      "family":  "Shantell Sans",
+                      "style":  "Bold",
+                      "url":  "https://fonts.gstatic.com/s/shantellsans/v13/FeUaS0pCoLIo-lcdY7kjvNoQqWVWB0qWpl29ajppTuUTu_kJKmHesPOL-maYi4xZeHCNQ09eBlmv2QcUzJ39-rAISYSbTGi2.ttf",
+                      "sha256":  "8582d69250e8a78463d49e5388fc28f20e0496abb65bc7cae848599128c74d57"
+                  }
+              ],
+    "licences":  [
+                     {
+                         "file":  "OFL-patrickhand.txt",
+                         "url":  "https://raw.githubusercontent.com/google/fonts/main/ofl/patrickhand/OFL.txt",
+                         "sha256":  "377f4f9c19e935228552478eb68cc2ed82910988a60ba60e2ac73b09f32d02d1"
+                     },
+                     {
+                         "file":  "OFL-adlamdisplay.txt",
+                         "url":  "https://raw.githubusercontent.com/google/fonts/main/ofl/adlamdisplay/OFL.txt",
+                         "sha256":  "657961e80b42febe82f70a56a4ffe6bbd1dba06aec6338f002f729e637fdb902"
+                     },
+                     {
+                         "file":  "OFL-bitter.txt",
+                         "url":  "https://raw.githubusercontent.com/google/fonts/main/ofl/bitter/OFL.txt",
+                         "sha256":  "152a1e283e23b42c4940da4c72f2f5bebaa17969cb77c76d7af05903846006f1"
+                     },
+                     {
+                         "file":  "OFL-literata.txt",
+                         "url":  "https://raw.githubusercontent.com/google/fonts/main/ofl/literata/OFL.txt",
+                         "sha256":  "8742963604cd89dc81437811a850018fc03b2bfad686d7422c8235967c87614e"
+                     },
+                     {
+                         "file":  "OFL-shantellsans.txt",
+                         "url":  "https://raw.githubusercontent.com/google/fonts/main/ofl/shantellsans/OFL.txt",
+                         "sha256":  "ebfce7d104d597c385b71e9fbf8f0e2034e73320f857086105dc265b82c05caa"
+                     }
+                 ]
+}
