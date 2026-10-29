@@ -1039,7 +1039,8 @@ fn type_tool_frames_snap_to_the_margins() {
     use designcraft_tools::{PointerEvent, PointerKind};
     let mut s = session();
     let margin = s.doc().unwrap().doc.spreads[0].pages[0].margin_rect();
-    s.set_tool("type");
+    // Chosen as the Tools panel chooses it: the tool's first press draws.
+    s.execute("tool.select", &json!({"tool": "type"})).unwrap();
     let v = ViewInfo::at_zoom(1.0);
     let c = |s: &Session, x: f64, y: f64| s.layout().to_canvas(designcraft_doc::SpreadRef::Doc(0), Point::new(x, y));
     // From 1.5 pt off the top-left margin corner to 1.5 pt off the right margin.
@@ -1055,6 +1056,46 @@ fn type_tool_frames_snap_to_the_margins() {
     let r = items.last().unwrap().bounds();
     assert!((r.x0 - margin.x0).abs() < 1e-6 && (r.y0 - margin.y0).abs() < 1e-6, "press point {r:?} vs {margin:?}");
     assert!((r.x1 - margin.x1).abs() < 1e-6, "right edge {} vs {}", r.x1, margin.x1);
+}
+
+/// PressRoom's single pointer, as in Publisher: a press inside a text box types there, a press
+/// elsewhere while typing selects again, and a tool chosen on purpose keeps its first press.
+#[test]
+fn the_pointer_types_in_text_boxes_and_selects_elsewhere_as_in_publisher() {
+    use designcraft_tools::{PointerEvent, PointerKind, SnapView};
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 612, "height": 792, "facingPages": false})).unwrap();
+    s.execute("frame.create", &json!({"rect": [100, 100, 300, 300], "content": "text", "text": "Hello"})).unwrap();
+    s.execute("edit.deselectAll", &json!({})).unwrap();
+    s.execute("tool.select", &json!({"tool": "selection"})).unwrap();
+    let v = ViewInfo { snap: SnapView::OFF, ..ViewInfo::at_zoom(1.0) };
+    let at = |s: &Session, x: f64, y: f64| s.layout().to_canvas(designcraft_doc::SpreadRef::Doc(0), designcraft_geom::Point::new(x, y));
+    let click = |s: &mut Session, x: f64, y: f64| {
+        let p = at(s, x, y);
+        s.pointer(&PointerEvent::new(PointerKind::Down, p.x, p.y), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, p.x, p.y), v).unwrap();
+    };
+    // Inside the text box: the text cursor goes there.
+    click(&mut s, 200.0, 200.0);
+    assert_eq!(s.tool_id(), "type");
+    assert!(s.doc().unwrap().selection.text.is_some(), "a caret in the box");
+    // Near its edge the press is the box's (to move or resize it): no switch.
+    s.execute("tool.select", &json!({"tool": "selection"})).unwrap();
+    click(&mut s, 101.0, 200.0);
+    assert_eq!(s.tool_id(), "selection");
+    // Typing, a press on empty page goes back to selecting.
+    click(&mut s, 200.0, 200.0);
+    click(&mut s, 450.0, 600.0);
+    assert_eq!(s.tool_id(), "selection");
+    // Draw Text Box chosen on purpose: its first press draws a new box, even on empty page.
+    let before = s.doc().unwrap().doc.spreads[0].items.len();
+    s.execute("tool.select", &json!({"tool": "type"})).unwrap();
+    let (a, b) = (at(&s, 350.0, 350.0), at(&s, 500.0, 450.0));
+    s.pointer(&PointerEvent::new(PointerKind::Down, a.x, a.y), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, (a.x + b.x) / 2.0, (a.y + b.y) / 2.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, b.x, b.y), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, b.x, b.y), v).unwrap();
+    assert_eq!(s.doc().unwrap().doc.spreads[0].items.len(), before + 1, "a box was drawn");
 }
 
 #[test]
@@ -1643,7 +1684,8 @@ fn the_type_tool_draws_a_text_frame_over_a_locked_frame() {
     s.execute("object.stroke", &json!({"ids": [big], "swatch": "[Black]", "weight": 6})).unwrap();
     s.execute("object.lock", &json!({"ids": [big]})).unwrap();
     s.execute("edit.deselectAll", &json!({})).unwrap();
-    s.set_tool("type");
+    // Chosen as the Tools panel chooses it: the tool's first press draws.
+    s.execute("tool.select", &json!({"tool": "type"})).unwrap();
     let v = ViewInfo { snap: SnapView::OFF, ..ViewInfo::at_zoom(1.0) };
     let layout = s.layout();
     let at = |x: f64, y: f64| layout.to_canvas(designcraft_doc::SpreadRef::Doc(0), designcraft_geom::Point::new(x, y));

@@ -197,7 +197,7 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
         let mut clicked = false;
         if launcher {
             let br = Rect::from_min_size(pos2(lr.max.x - 15.0, lr.min.y + 3.0), vec2(12.0, 12.0));
-            let resp = ui.interact(br, ui.id().with(("launcher", name)), Sense::click());
+            let resp = ui.interact(br, ui.scope_id().with(("launcher", name)), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(br, 0.0, PR::HOVER);
             }

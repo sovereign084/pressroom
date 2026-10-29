@@ -214,6 +214,11 @@ impl DesignApp {
         if path.to_ascii_lowercase().ends_with(".ase") {
             return self.run("swatch.load", json!({"path": path}));
         }
+        // A Publisher file dropped on the window is brought in, as File › Open does.
+        if crate::pressroom::pubimport::is_pub(path) {
+            crate::pressroom::pubimport::start(self, path);
+            return Ok(Value::Null);
+        }
         let document = opens_as_document(path)
             || (std::path::Path::new(path).extension().is_none()
                 && designcraft_engine::io::read_capped(path, designcraft_engine::cmd::DOCUMENT_SNIFF_BYTES)

@@ -87,7 +87,8 @@ impl Exporter<'_> {
         let inks: Vec<Option<Ink>> = g.stops.iter().map(|s| self.stop_ink(s)).collect();
         let has_spot = inks.iter().any(|i| matches!(i, Some(Ink::Spot { .. })));
         let on_paper = g.stops.iter().any(|s| s.swatch.as_deref() == Some(designcraft_color::swatch::PAPER));
-        if !has_spot && !overprint && !(on_paper && self.for_print() && !self.rgb_only) {
+        let paper_on_press = on_paper && self.for_print() && !self.rgb_only;
+        if !(has_spot || overprint || paper_on_press) {
             return None;
         }
         let Some(inks) = inks.into_iter().collect::<Option<Vec<Ink>>>() else {

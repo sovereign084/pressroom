@@ -79,7 +79,7 @@ fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
         if designcraft_idml::is_idml(&bytes) || (!native && (crate::cmd::interchange::is_indd(path, &bytes) || ext == "idml")) {
             return crate::cmd::interchange::open_idml(s, p);
         }
-        if !native && ext != designcraft_format::EXTENSION {
+        if !native && !designcraft_format::is_document_extension(&ext) {
             return Err(bad("file.open", format!("{path}: not a DesignCraft or IDML file")));
         }
         let (mut d, mut warnings) = load_bytes(&bytes)?;

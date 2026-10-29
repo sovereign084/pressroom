@@ -202,7 +202,9 @@ impl DesignApp {
                 }
             }
             // Publisher's shortcuts first; the keymap gets what they leave.
-            crate::pressroom::shortcuts(self, &ctx);
+            if self.ui.pressroom_shell {
+                crate::pressroom::shortcuts(self, &ctx);
+            }
             menus::shortcuts(self, &ctx);
         }
         let t0 = now_ms();
@@ -217,20 +219,39 @@ impl DesignApp {
             eprintln!("root start {:?}", ui.available_rect_before_wrap());
         }
         // PressRoom: the Publisher-style window (title bar, ribbon, Page Navigation, status bar).
-        if !presenting {
+        let pressroom = self.ui.pressroom_shell;
+        if !presenting && pressroom {
             crate::pressroom::chrome(self, ui);
             if dbg {
                 eprintln!("after pressroom chrome {:?}", ui.available_rect_before_wrap());
             }
+        } else if !presenting {
+            chrome::app_bar(self, ui);
+            if dbg {
+                eprintln!("after app bar {:?}", ui.available_rect_before_wrap());
+            }
+            if self.ui.control_bar && self.session.active().is_some() && self.ui.hidden_panels == 0 {
+                chrome::control_bar(self, ui);
+            }
+            chrome::status_bar(self, ui);
+            if dbg {
+                eprintln!("after status {:?}", ui.available_rect_before_wrap());
+            }
+            if self.ui.hidden_panels != 1 {
+                toolbar::show(self, ui);
+            }
         }
-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(crate::pressroom::PR::SCRATCH)).show(ui, |ui| {
-            if presenting {
+        let backdrop = if pressroom { crate::pressroom::PR::SCRATCH } else { t.pasteboard };
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(backdrop)).show(ui, |ui| {
+            if presenting || (!pressroom && self.ui.hidden_panels != 0) {
                 self.canvas_area(ui, presenting);
-            } else {
+            } else if pressroom {
                 crate::pressroom::body(self, ui);
+            } else {
+                // The panel layout holds the canvas as its protected `canvas` panel.
+                panel_docking::show(self, ui);
             }
         });
-        let _ = t.pasteboard;
         // New Window: pane 1 in a window of its own.
         if self.second_window
             && !presenting

@@ -857,6 +857,8 @@ mod tests {
     }
 
     /// Spinner buttons and presets inherit a disabled parent in both AccessKit and widget metadata.
+    /// (egui keeps `Style::debug` in debug builds only.)
+    #[cfg(debug_assertions)]
     #[test]
     fn numeric_controls_inherit_a_disabled_parents_state() {
         use egui_kittest::kittest::{NodeT, Queryable};

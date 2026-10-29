@@ -103,14 +103,49 @@ mod tests {
             assert!(command.contains(&"print-scaling=auto-fit"));
             assert!(!command.iter().any(|a| a.starts_with("sides=")));
         } else {
+            // Without a grayscale request the printer's own colour setting applies (craft-print).
             assert_eq!(
                 command,
-                ["xps-print", "printer=Office", "copies=2", "collate=true", "duplex=(queue default)", "scaling=shrink-to-fit", "color=color"]
+                [
+                    "xps-print",
+                    "printer=Office",
+                    "copies=2",
+                    "collate=true",
+                    "duplex=(queue default)",
+                    "scaling=shrink-to-fit",
+                    "color=(driver default)"
+                ]
             );
         }
         assert!(r["bytes"].as_u64().unwrap() > 500);
         assert!(s.execute("file.print", &json!({"pages": "9", "dryRun": true})).is_err());
         assert!(s.execute("file.printers", &json!({})).unwrap()["printers"].is_array());
+    }
+
+    #[test]
+    fn print_takes_sides_grayscale_and_booklet() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 8, "facingPages": true})).unwrap();
+        let mut job = None;
+        let r = print_with(&mut s, &json!({"sides": "shortEdge", "grayscale": true, "layout": "booklet"}), |pdf, j| {
+            assert!(pdf.starts_with(b"%PDF-"));
+            job = Some(j.clone());
+            Ok("request id is Office-1".into())
+        })
+        .unwrap();
+        let job = job.unwrap();
+        assert_eq!((job.duplex, job.grayscale), (Some(craft_print::Duplex::ShortEdge), true));
+        // Eight pages fold into two sheets, each side two pages: four booklet pages.
+        assert_eq!(r["pages"], 4, "{r}");
+        for (sides, duplex) in [("one", Some(craft_print::Duplex::Off)), ("longEdge", Some(craft_print::Duplex::LongEdge)), ("default", None)] {
+            print_with(&mut s, &json!({"sides": sides}), |_, j| {
+                assert_eq!(j.duplex, duplex, "{sides}");
+                assert!(!j.grayscale);
+                Ok(String::new())
+            })
+            .unwrap();
+        }
+        assert!(print_with(&mut s, &json!({"sides": "both"}), |_, _| panic!("unknown sides must not spool")).is_err());
     }
 
     #[test]

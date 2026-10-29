@@ -24,15 +24,25 @@ fn config_dir_with(os: &str, env: impl Fn(&str) -> Option<OsString>, exe_dir: Op
     }
 }
 
-/// The folder that holds settings and recovery data instead of the user's profile:
-/// `DESIGNCRAFT_CONFIG_DIR` (empty: none at all), else a portable install's data folder.
-fn root_with(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -> Option<OsString> {
-    env("PRESSROOM_CONFIG_DIR").or_else(|| exe_dir.and_then(portable_dir).map(PathBuf::into_os_string))
+/// The variables that name an isolated profile, PressRoom's first: DesignCraft's is still honoured,
+/// as its documentation (and automation following it) sets that one.
+const CONFIG_DIR_VARS: [&str; 2] = ["PRESSROOM_CONFIG_DIR", "DESIGNCRAFT_CONFIG_DIR"];
+
+/// The isolated profile folder an environment variable names (empty: none at all).
+fn config_override(env: &impl Fn(&str) -> Option<OsString>) -> Option<OsString> {
+    CONFIG_DIR_VARS.iter().find_map(|key| env(key))
 }
 
-/// `<dir>/DesignCraftData` when `dir` holds [`PORTABLE_MARKER`], where `dir` is the folder the
-/// user sees the app in: the executable's, or the one holding `DesignCraft.app` when the executable
-/// sits inside a macOS bundle (`DesignCraft.app/Contents/MacOS`, signed, never edited by hand).
+/// The folder that holds settings and recovery data instead of the user's profile:
+/// `PRESSROOM_CONFIG_DIR` or `DESIGNCRAFT_CONFIG_DIR` (empty: none at all), else a portable
+/// install's data folder.
+fn root_with(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -> Option<OsString> {
+    config_override(&env).or_else(|| exe_dir.and_then(portable_dir).map(PathBuf::into_os_string))
+}
+
+/// `<dir>/PressRoomData` when `dir` holds [`PORTABLE_MARKER`], where `dir` is the folder the
+/// user sees the app in: the executable's, or the one holding `PressRoom.app` when the executable
+/// sits inside a macOS bundle (`PressRoom.app/Contents/MacOS`, signed, never edited by hand).
 /// A folder named like the marker is no marker. A data folder that cannot be written (a portable
 /// copy unzipped into Program Files) is no portable install either: settings and recovery would be
 /// lost without a word, so the platform paths are used and [`unwritable_portable_dir`] says why.
@@ -58,8 +68,8 @@ fn writable(dir: &Path) -> bool {
 }
 
 /// The data folder of a portable install that could not be used because it is not writable, for
-/// the start-up warning. None when `DESIGNCRAFT_CONFIG_DIR` is set: the portable folder is not
-/// wanted then.
+/// the start-up warning. None when an isolated profile is named ([`CONFIG_DIR_VARS`]): the
+/// portable folder is not wanted then.
 pub fn unwritable_portable_dir() -> Option<PathBuf> {
     unwritable_portable_dir_with(|key| std::env::var_os(key), executable_dir().as_deref())
 }
@@ -72,7 +82,7 @@ fn app_bundle_parent(exe_dir: &Path) -> Option<&Path> {
 }
 
 fn unwritable_portable_dir_with(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -> Option<PathBuf> {
-    if env("PRESSROOM_CONFIG_DIR").is_some() {
+    if config_override(&env).is_some() {
         return None;
     }
     exe_dir.and_then(marked_data_dir).filter(|data| !writable(data))
@@ -130,6 +140,21 @@ mod tests {
         assert_eq!(recovery_dir_with(Some("/isolated".into()), || Some("/user/recovery".into())), Some(PathBuf::from("/isolated/Recovery")));
     }
 
+    /// PressRoom's own variable, and DesignCraft's (which its documentation names) when only that
+    /// one is set.
+    #[test]
+    fn pressrooms_variable_wins_and_designcrafts_still_isolates() {
+        let both = |key: &str| match key {
+            "PRESSROOM_CONFIG_DIR" => Some("/pressroom".into()),
+            "DESIGNCRAFT_CONFIG_DIR" => Some("/designcraft".into()),
+            _ => environment(key),
+        };
+        assert_eq!(config_dir_with("windows", both, None), Some(PathBuf::from("/pressroom")));
+        let only_pressroom = |key: &str| if key == "PRESSROOM_CONFIG_DIR" { Some("/pressroom".into()) } else { environment(key) };
+        assert_eq!(config_dir_with("linux", only_pressroom, None), Some(PathBuf::from("/pressroom")));
+        assert_eq!(unwritable_portable_dir_with(only_pressroom, None), None);
+    }
+
     #[test]
     fn empty_override_never_reads_or_writes_the_default_profile() {
         assert_eq!(
@@ -152,25 +177,22 @@ mod tests {
     fn portable_marker_keeps_settings_and_recovery_next_to_the_executable() {
         let exe = install("portable", |marker| std::fs::write(marker, "").unwrap());
         for os in ["macos", "windows", "linux"] {
-            assert_eq!(config_dir_with(os, environment, Some(&exe)), Some(exe.join("DesignCraftData")));
+            assert_eq!(config_dir_with(os, environment, Some(&exe)), Some(exe.join("PressRoomData")));
         }
-        assert_eq!(
-            recovery_dir_with(root_with(environment, Some(&exe)), || Some("/user/recovery".into())),
-            Some(exe.join("DesignCraftData/Recovery"))
-        );
+        assert_eq!(recovery_dir_with(root_with(environment, Some(&exe)), || Some("/user/recovery".into())), Some(exe.join("PressRoomData/Recovery")));
         let _ = std::fs::remove_dir_all(&exe);
     }
 
     #[test]
     fn inside_a_macos_bundle_the_marker_sits_next_to_the_app() {
         let folder = install("bundle", |marker| std::fs::write(marker, "").unwrap());
-        let exe = folder.join("DesignCraft.app/Contents/MacOS");
+        let exe = folder.join("PressRoom.app/Contents/MacOS");
         std::fs::create_dir_all(&exe).unwrap();
-        assert_eq!(config_dir_with("macos", environment, Some(&exe)), Some(folder.join("DesignCraftData")));
+        assert_eq!(config_dir_with("macos", environment, Some(&exe)), Some(folder.join("PressRoomData")));
         // a marker dropped inside the bundle is not looked at
         std::fs::remove_file(folder.join(PORTABLE_MARKER)).unwrap();
         std::fs::write(exe.join(PORTABLE_MARKER), "").unwrap();
-        assert_eq!(config_dir_with("macos", environment, Some(&exe)), Some("/user/Library/Application Support/DesignCraft".into()));
+        assert_eq!(config_dir_with("macos", environment, Some(&exe)), Some("/user/Library/Application Support/PressRoom".into()));
         let _ = std::fs::remove_dir_all(&folder);
     }
 
@@ -179,7 +201,7 @@ mod tests {
         let plain = install("plain", |_| {});
         let folder = install("marker-folder", |marker| std::fs::create_dir(marker).unwrap());
         for exe in [&plain, &folder] {
-            assert_eq!(config_dir_with("windows", environment, Some(exe)), Some("/roaming/DesignCraft".into()));
+            assert_eq!(config_dir_with("windows", environment, Some(exe)), Some("/roaming/PressRoom".into()));
             assert_eq!(recovery_dir_with(root_with(environment, Some(exe)), || Some("/existing/recovery".into())), Some("/existing/recovery".into()));
         }
         let _ = std::fs::remove_dir_all(&plain);
@@ -193,7 +215,7 @@ mod tests {
     fn a_portable_install_that_cannot_write_its_data_uses_the_platform_paths() {
         use std::os::unix::fs::PermissionsExt;
         let set_mode = |dir: &Path, mode| std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
-        // DesignCraftData cannot be created
+        // PressRoomData cannot be created
         let exe = install("read-only", |marker| std::fs::write(marker, "").unwrap());
         set_mode(&exe, 0o555);
         if std::fs::write(exe.join("root"), "").is_ok() {
@@ -202,15 +224,15 @@ mod tests {
             let _ = std::fs::remove_dir_all(&exe);
             return;
         }
-        assert_eq!(config_dir_with("windows", environment, Some(&exe)), Some("/roaming/DesignCraft".into()));
+        assert_eq!(config_dir_with("windows", environment, Some(&exe)), Some("/roaming/PressRoom".into()));
         assert_eq!(recovery_dir_with(root_with(environment, Some(&exe)), || Some("/user/recovery".into())), Some("/user/recovery".into()));
-        assert_eq!(unwritable_portable_dir_with(environment, Some(&exe)), Some(exe.join("DesignCraftData")));
+        assert_eq!(unwritable_portable_dir_with(environment, Some(&exe)), Some(exe.join("PressRoomData")));
         set_mode(&exe, 0o755);
-        // DesignCraftData is there, but nothing can be written in it
+        // PressRoomData is there, but nothing can be written in it
         let data = exe.join(PORTABLE_DATA_DIR);
         std::fs::create_dir(&data).unwrap();
         set_mode(&data, 0o555);
-        assert_eq!(config_dir_with("windows", environment, Some(&exe)), Some("/roaming/DesignCraft".into()));
+        assert_eq!(config_dir_with("windows", environment, Some(&exe)), Some("/roaming/PressRoom".into()));
         assert_eq!(unwritable_portable_dir_with(environment, Some(&exe)), Some(data.clone()));
         // the override still wins, so there is nothing to warn about
         assert_eq!(
@@ -237,13 +259,10 @@ mod tests {
 
     #[test]
     fn unset_override_preserves_existing_platform_paths() {
-        assert_eq!(config_dir_with("macos", environment, None), Some("/user/Library/Application Support/DesignCraft".into()));
-        assert_eq!(config_dir_with("windows", environment, None), Some("/roaming/DesignCraft".into()));
-        assert_eq!(config_dir_with("linux", environment, None), Some("/xdg-config/designcraft".into()));
-        assert_eq!(
-            config_dir_with("linux", |key| if key == "HOME" { environment(key) } else { None }, None),
-            Some("/user/.config/designcraft".into())
-        );
+        assert_eq!(config_dir_with("macos", environment, None), Some("/user/Library/Application Support/PressRoom".into()));
+        assert_eq!(config_dir_with("windows", environment, None), Some("/roaming/PressRoom".into()));
+        assert_eq!(config_dir_with("linux", environment, None), Some("/xdg-config/pressroom".into()));
+        assert_eq!(config_dir_with("linux", |key| if key == "HOME" { environment(key) } else { None }, None), Some("/user/.config/pressroom".into()));
         assert_eq!(recovery_dir_with(None, || Some("/existing/recovery".into())), Some("/existing/recovery".into()));
     }
 

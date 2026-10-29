@@ -117,6 +117,12 @@ fn default_zone() -> f64 {
     4.0
 }
 
+/// PressRoom's window in the app; DesignCraft's in this crate's tests (see
+/// [`UiState::pressroom_shell`]).
+fn pressroom_shell() -> bool {
+    !cfg!(test)
+}
+
 /// File › Export PDF… options: the values persisted in `UiState.pdf_export` and used as the
 /// dialog's defaults. Serialised as `pdfExport` with camelCase field names.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -340,6 +346,12 @@ pub struct UiState {
     pub formatting_affects_text: bool,
     /// Window > Contextual Task Bar.
     pub task_bar: bool,
+    /// PressRoom's Publisher-style window (title bar, ribbon, Page Navigation, Publisher's
+    /// shortcuts) in place of DesignCraft's app bar, control bar, Tools panel, panel dock and
+    /// document tabs. This crate's own tests keep checking DesignCraft's, which stays whole so its
+    /// changes keep merging; PressRoom's have tests of their own (`pressroom::tests`).
+    #[serde(skip, default = "pressroom_shell")]
+    pub pressroom_shell: bool,
     /// Where the Contextual Task Bar is pinned: its top-left, in points from the canvas's top-left
     /// (`None`: it follows the selection).
     pub task_bar_pin: Option<[f32; 2]>,
@@ -460,6 +472,7 @@ impl Default for UiState {
             snap_zone: 4.0,
             formatting_affects_text: false,
             task_bar: true,
+            pressroom_shell: pressroom_shell(),
             task_bar_pin: None,
             task_bar_at: None,
             about: false,

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, channel};
 
+use designcraft_engine::{file_access, io};
 use serde_json::json;
 
 use crate::DesignApp;
@@ -29,10 +30,10 @@ fn free_output(pub_path: &Path) -> PathBuf {
     let dir = pub_path.parent().map(Path::to_path_buf).unwrap_or_default();
     let stem = pub_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Publication".into());
     let first = dir.join(format!("{stem}.pressroom"));
-    if !first.exists() {
+    if !io::exists(&first) {
         return first;
     }
-    (2..1000).map(|n| dir.join(format!("{stem} ({n}).pressroom"))).find(|p| !p.exists()).unwrap_or(first)
+    (2..1000).map(|n| dir.join(format!("{stem} ({n}).pressroom"))).find(|p| !io::exists(p)).unwrap_or(first)
 }
 
 /// Start bringing in `path`.
@@ -46,14 +47,24 @@ pub fn start(app: &mut DesignApp, path: &str) {
         app.status("Couldn't find PressRoom's folder to bring in the Publisher file.");
         return;
     };
-    let script = dir.join("pub2pressroom.ps1");
-    let cli = ["PressRoom-cli.exe", "designcraft-cli.exe"].iter().map(|n| dir.join(n)).find(|p| p.exists());
-    let (true, Some(cli)) = (script.exists(), cli) else {
+    // The converter installed beside PressRoom: the app's own folder, outside any automation roots.
+    let (script, cli) = file_access::unconfined(|| {
+        let script = dir.join("pub2pressroom.ps1");
+        let cli = ["PressRoom-cli.exe", "designcraft-cli.exe"].iter().map(|n| dir.join(n)).find(|p| io::is_file(p));
+        (io::is_file(&script).then_some(script), cli)
+    });
+    let (Some(script), Some(cli)) = (script, cli) else {
         app.status("The Publisher converter isn't installed with this copy of PressRoom.");
         return;
     };
     let src = PathBuf::from(path);
     let out = free_output(&src);
+    // The converter reads the Publisher file and writes the publication beside it: inside the
+    // automation roots when they are in force.
+    if let Err(e) = file_access::check_read(&src).and_then(|()| file_access::check_write(&out)) {
+        app.status(format!("Couldn't bring in the Publisher file: {e}"));
+        return;
+    }
     let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
     let (tx, rx) = channel();
     let job_name = name.clone();
@@ -67,7 +78,7 @@ pub fn start(app: &mut DesignApp, path: &str) {
             cmd.creation_flags(0x0800_0000);
         }
         let result = match cmd.output() {
-            Ok(_) if out.exists() => Ok(out.to_string_lossy().to_string()),
+            Ok(_) if io::is_file(&out) => Ok(out.to_string_lossy().to_string()),
             Ok(o) => {
                 let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
                 let tail: String = text.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");

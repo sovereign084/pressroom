@@ -58,7 +58,7 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
     if has_doc {
         let c = pos2(column.min.x + 30.0, y + 16.0);
         let br = Rect::from_center_size(c, vec2(34.0, 34.0));
-        let resp = ui.interact(br, egui::Id::new("pr_bs_back"), Sense::click());
+        let resp = ui.interact(br, egui::Id::unique("pr_bs_back"), Sense::click());
         let col = if resp.hovered() { Color32::from_rgb(200, 230, 225) } else { Color32::WHITE };
         ui.painter().circle_stroke(c, 15.0, Stroke::new(1.5, col));
         ui.painter().line_segment([c + vec2(-7.0, 0.0), c + vec2(7.0, 0.0)], Stroke::new(1.8, col));
@@ -83,7 +83,7 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
     ];
     for (label, target, cmd, enabled) in items {
         let r = Rect::from_min_size(pos2(column.min.x, y), vec2(COLUMN_W, 38.0));
-        let resp = ui.interact(r, egui::Id::new(("pr_bs_item", label)), if enabled { Sense::click() } else { Sense::hover() });
+        let resp = ui.interact(r, egui::Id::unique(("pr_bs_item", label)), if enabled { Sense::click() } else { Sense::hover() });
         let current = target == Some(page);
         if current {
             ui.painter().rect_filled(r, 0.0, super::PR::TEAL_DARK);
@@ -111,7 +111,7 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
         }
     }
     let r = Rect::from_min_size(pos2(column.min.x, y), vec2(COLUMN_W, 38.0));
-    let resp = ui.interact(r, egui::Id::new("pr_bs_options"), Sense::click());
+    let resp = ui.interact(r, egui::Id::unique("pr_bs_options"), Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(r, 0.0, PR::TEAL_HOVER);
     }
@@ -271,7 +271,7 @@ fn create(app: &mut DesignApp, ctx: &egui::Context, k: &Kind) {
         "facingPages": k.facing,
         "columns": k.columns,
         "gutter": 18.0,
-        "margins": if k.w <= 6.0 { 36.0 } else { 36.0 },
+        "margins": 36.0,
         "intent": "print",
     });
     if let Err(e) = app.run("file.new", params) {
@@ -378,7 +378,7 @@ struct PrintSettings {
 }
 
 fn print_settings_id() -> egui::Id {
-    egui::Id::new("pr_print_settings")
+    egui::Id::unique("pr_print_settings")
 }
 
 fn print_page(app: &mut DesignApp, ui: &mut Ui) {
@@ -441,7 +441,7 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
             heading(ui, "Printer");
             let (names, default) = s.printers.clone().unwrap_or_default();
             let shown = s.printer.clone().unwrap_or_else(|| "No printer found".into());
-            egui::ComboBox::from_id_salt("pr_printer").width(290.0).selected_text(shown).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("pr_printer").width(290.0).selected_text(shown).show_ui(ui, |ui| {
                 for n in &names {
                     let label = if Some(n) == default.as_ref() { format!("{n} (default)") } else { n.clone() };
                     ui.selectable_value(&mut s.printer, Some(n.clone()), label);
@@ -450,7 +450,7 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
             ui.add_space(14.0);
             heading(ui, "Settings");
             let which = ["Print All Pages", "Print Current Page", "Custom Print"];
-            egui::ComboBox::from_id_salt("pr_which").width(290.0).selected_text(which[usize::from(s.which.min(2))]).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("pr_which").width(290.0).selected_text(which[usize::from(s.which.min(2))]).show_ui(ui, |ui| {
                 for (k, label) in which.iter().enumerate() {
                     ui.selectable_value(&mut s.which, k as u8, *label);
                 }
@@ -463,7 +463,7 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
             }
             ui.add_space(6.0);
             let layout = if s.booklet { "Booklet, side-fold" } else { "One page per sheet" };
-            egui::ComboBox::from_id_salt("pr_layout").width(290.0).selected_text(layout).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("pr_layout").width(290.0).selected_text(layout).show_ui(ui, |ui| {
                 if ui.selectable_label(!s.booklet, "One page per sheet").clicked() {
                     s.booklet = false;
                     s.preview = 0;
@@ -481,16 +481,19 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
                 ("shortEdge", "Print on Both Sides (flip sheets on short edge)"),
             ];
             let cur = sides.iter().find(|(k, _)| *k == s.sides).map_or("Print One Sided", |(_, l)| *l);
-            egui::ComboBox::from_id_salt("pr_sides").width(290.0).selected_text(cur).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("pr_sides").width(290.0).selected_text(cur).show_ui(ui, |ui| {
                 for (k, label) in sides {
                     ui.selectable_value(&mut s.sides, k, label);
                 }
             });
             ui.add_space(6.0);
-            egui::ComboBox::from_id_salt("pr_color").width(290.0).selected_text(if s.grayscale { "Grayscale" } else { "Color" }).show_ui(ui, |ui| {
-                ui.selectable_value(&mut s.grayscale, false, "Color");
-                ui.selectable_value(&mut s.grayscale, true, "Grayscale");
-            });
+            craft_ui::ComboBox::from_id_salt("pr_color").width(290.0).selected_text(if s.grayscale { "Grayscale" } else { "Color" }).show_ui(
+                ui,
+                |ui| {
+                    ui.selectable_value(&mut s.grayscale, false, "Color");
+                    ui.selectable_value(&mut s.grayscale, true, "Grayscale");
+                },
+            );
             if s.booklet {
                 ui.add_space(10.0);
                 ui.label(egui::RichText::new("Each sheet holds two pages; fold the printed stack in half.").color(PR::GROUP_LABEL));
@@ -541,7 +544,7 @@ fn print_preview(app: &mut DesignApp, ui: &mut Ui, s: &mut PrintSettings, n: usi
     ui.painter().rect_filled(r, 0.0, Color32::from_gray(225));
     let pages: Vec<Option<usize>> = if s.booklet {
         let i = s.preview;
-        let (l, rt) = if i % 2 == 0 { (padded - 1 - i, i) } else { (i, padded - 1 - i) };
+        let (l, rt) = if i.is_multiple_of(2) { (padded - 1 - i, i) } else { (i, padded - 1 - i) };
         vec![(l < n).then_some(l), (rt < n).then_some(rt)]
     } else {
         vec![Some(s.preview)]
@@ -571,7 +574,7 @@ fn print_preview(app: &mut DesignApp, ui: &mut Ui, s: &mut PrintSettings, n: usi
             s.preview -= 1;
         }
         let what = if s.booklet {
-            format!("Sheet {} {} of {}", s.preview / 2 + 1, if s.preview % 2 == 0 { "front" } else { "back" }, count.div_ceil(2))
+            format!("Sheet {} {} of {}", s.preview / 2 + 1, if s.preview.is_multiple_of(2) { "front" } else { "back" }, count.div_ceil(2))
         } else {
             format!("{} of {}", s.preview + 1, count)
         };

@@ -11,6 +11,8 @@ mod nav;
 pub mod pubimport;
 mod ribbon;
 mod templates;
+#[cfg(test)]
+mod tests;
 
 use designcraft_doc::Content;
 use egui::{Color32, FontId, Rect, Sense, Stroke, Ui, pos2, vec2};
@@ -104,7 +106,7 @@ struct State {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("pressroom_state")
+    egui::Id::unique("pressroom_state")
 }
 
 fn state(ctx: &egui::Context) -> State {
@@ -451,7 +453,7 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
     if let Some(name) = pubimport::busy() {
         let r = ui.max_rect();
         let card = Rect::from_center_size(r.center(), vec2(420.0, 90.0));
-        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("pr_pubimport")));
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("pr_pubimport")));
         painter.rect(card, 4.0, Color32::WHITE, Stroke::new(1.0, PR::RIBBON_EDGE), egui::StrokeKind::Inside);
         painter.text(
             card.center() - vec2(0.0, 14.0),
@@ -494,7 +496,7 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         let caption_w = if app.custom_titlebar { CAPTION_W * 3.0 } else { 0.0 };
         if app.custom_titlebar {
             let drag = Rect::from_min_max(full.min, pos2(full.max.x - caption_w, full.max.y));
-            let resp = ui.interact(drag, egui::Id::new("pr_title_drag"), Sense::click_and_drag());
+            let resp = ui.interact(drag, egui::Id::unique("pr_title_drag"), Sense::click_and_drag());
             if resp.double_clicked() {
                 let on = !ui.input(|i| i.viewport().maximized.unwrap_or(false));
                 let _ = app.run("window.maximize", json!({"on": on}));
@@ -527,7 +529,7 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         {
             let r = Rect::from_min_size(pos2(x, full.min.y + 3.0), vec2(26.0, TITLE_H - 6.0));
             let enabled = doc && ribbon::on(app, cmd);
-            let resp = ui.interact(r, egui::Id::new(("pr_qat", cmd)), if enabled { Sense::click() } else { Sense::hover() });
+            let resp = ui.interact(r, egui::Id::unique(("pr_qat", cmd)), if enabled { Sense::click() } else { Sense::hover() });
             if resp.hovered() && enabled {
                 ui.painter().rect_filled(r, 0.0, PR::TEAL_HOVER);
             }
@@ -545,7 +547,7 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         ui.painter().text(full.center(), egui::Align2::CENTER_CENTER, title, FontId::proportional(12.0), Color32::WHITE);
         // The contextual tab's tool name sits over its tab.
         if s.context != Context::None && s.backstage.is_none() {
-            let tab_x: Option<(f32, f32)> = ui.data(|d| d.get_temp(egui::Id::new("pr_format_tab_x")));
+            let tab_x: Option<(f32, f32)> = ui.data(|d| d.get_temp(egui::Id::unique("pr_format_tab_x")));
             if let Some((x0, x1)) = tab_x {
                 let r = Rect::from_min_max(pos2(x0, full.min.y + 4.0), pos2(x1.max(x0 + 100.0), full.max.y));
                 ui.painter().rect_filled(r, 0.0, PR::TEAL_DARK);
@@ -573,7 +575,7 @@ fn caption_buttons(app: &mut DesignApp, ui: &mut Ui, area: Rect) {
             .enumerate()
     {
         let r = Rect::from_min_size(pos2(area.min.x + k as f32 * CAPTION_W, area.min.y), vec2(CAPTION_W, area.height()));
-        let resp = ui.interact(r, egui::Id::new(("pr_caption", command)), Sense::click());
+        let resp = ui.interact(r, egui::Id::unique(("pr_caption", command)), Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(r, 0.0, if command == "window.close" { Color32::from_rgb(232, 17, 35) } else { PR::TEAL_HOVER });
         }
@@ -630,8 +632,10 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         for (tab, name) in tabs {
             let w = ui.painter().layout_no_wrap(name.to_string(), font.clone(), Color32::WHITE).size().x + if tab == Tab::File { 34.0 } else { 22.0 };
             let r = Rect::from_min_size(pos2(x, strip.min.y), vec2(w, TABS_H));
-            let resp = ui.interact(r, egui::Id::new(("pr_tab", name)), Sense::click());
+            let resp = ui.interact(r, egui::Id::unique(("pr_tab", name)), Sense::click());
             let current = s.tab == tab && !s.collapsed;
+            // Named for screen readers (and tests): a tab, selected while its ribbon shows.
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, current, name));
             if tab == Tab::File {
                 ui.painter().rect_filled(r, 0.0, if resp.hovered() { PR::TEAL_HOVER } else { PR::TEAL_DARK });
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, name, font.clone(), Color32::WHITE);
@@ -645,7 +649,7 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
                 ui.painter().text(r.center() + vec2(0.0, 1.0), egui::Align2::CENTER_CENTER, name, font.clone(), Color32::WHITE);
             }
             if tab == Tab::Format {
-                ui.data_mut(|d| d.insert_temp(egui::Id::new("pr_format_tab_x"), (r.min.x, r.max.x)));
+                ui.data_mut(|d| d.insert_temp(egui::Id::unique("pr_format_tab_x"), (r.min.x, r.max.x)));
                 ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(2.0, PR::CONTEXT));
             }
             if resp.double_clicked() && tab != Tab::File {
@@ -686,7 +690,7 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         );
         // Collapse the Ribbon (Ctrl+F1).
         let cr = Rect::from_min_size(pos2(full.max.x - 24.0, full.max.y - 20.0), vec2(18.0, 16.0));
-        let resp = ui.interact(cr, egui::Id::new("pr_collapse"), Sense::click());
+        let resp = ui.interact(cr, egui::Id::unique("pr_collapse"), Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(cr, 0.0, PR::HOVER);
         }
@@ -711,7 +715,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let cur = crate::canvas::current_page(app).unwrap_or(0);
         // Page: 1 of 4
         let pr = Rect::from_min_size(pos2(full.min.x + 8.0, full.min.y + 2.0), vec2(96.0, STATUS_H - 4.0));
-        let resp = ui.interact(pr, egui::Id::new("pr_status_page"), Sense::click());
+        let resp = ui.interact(pr, egui::Id::unique("pr_status_page"), Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(pr, 0.0, PR::HOVER);
         }
@@ -733,7 +737,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         // Right: view buttons, zoom slider, percentage.
         let zoom = app.view().map(|v| v.zoom).unwrap_or(1.0);
         let pct_r = Rect::from_min_size(pos2(full.max.x - 52.0, full.min.y + 2.0), vec2(46.0, STATUS_H - 4.0));
-        let resp = ui.interact(pct_r, egui::Id::new("pr_zoom_pct"), Sense::click());
+        let resp = ui.interact(pct_r, egui::Id::unique("pr_zoom_pct"), Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(pct_r, 0.0, PR::HOVER);
         }
@@ -758,7 +762,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         ui.painter().rect_filled(track, 0.0, PR::GROUP_LABEL);
         ui.painter()
             .line_segment([pos2(sr.center().x, sr.center().y - 4.0), pos2(sr.center().x, sr.center().y + 4.0)], Stroke::new(1.0, PR::GROUP_LABEL));
-        let resp = ui.interact(sr, egui::Id::new("pr_zoom_slider"), Sense::click_and_drag());
+        let resp = ui.interact(sr, egui::Id::unique("pr_zoom_slider"), Sense::click_and_drag());
         let t = to_t(zoom);
         let knob = Rect::from_center_size(pos2(sr.min.x + t * sr.width(), sr.center().y), vec2(4.0, 12.0));
         ui.painter().rect_filled(knob, 0.0, PR::TEXT);
@@ -773,7 +777,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         for (dx, minus) in [(-12.0, true), (sr.width() + 12.0, false)] {
             let c = pos2(sr.min.x + dx, sr.center().y);
             let br = Rect::from_center_size(c, vec2(16.0, 16.0));
-            let b = ui.interact(br, egui::Id::new(("pr_zoom_step", minus)), Sense::click());
+            let b = ui.interact(br, egui::Id::unique(("pr_zoom_step", minus)), Sense::click());
             if b.hovered() {
                 ui.painter().rect_filled(br, 0.0, PR::HOVER);
             }
@@ -789,7 +793,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let spread = two_page(ui.ctx());
         for (k, (icon, tip, on)) in [("single-page", "Single Page", !spread), ("two-page", "Two-Page Spread", spread)].into_iter().enumerate() {
             let r = Rect::from_min_size(pos2(sr.min.x - 76.0 + k as f32 * 26.0, full.min.y + 2.0), vec2(24.0, STATUS_H - 4.0));
-            let b = ui.interact(r, egui::Id::new(("pr_viewbtn", icon)), Sense::click());
+            let b = ui.interact(r, egui::Id::unique(("pr_viewbtn", icon)), Sense::click());
             if on {
                 ui.painter().rect_filled(r, 0.0, PR::CHECKED);
             } else if b.hovered() {

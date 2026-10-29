@@ -27,7 +27,7 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                 ui.painter().text(head.left_center() + vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, "Pages", FontId::proportional(12.5), PR::TEXT);
             }
             let cr = Rect::from_min_size(pos2(head.max.x - 24.0, head.min.y + 5.0), vec2(18.0, 16.0));
-            let resp = ui.interact(cr, egui::Id::new("pr_nav_collapse"), Sense::click());
+            let resp = ui.interact(cr, egui::Id::unique("pr_nav_collapse"), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(cr, 0.0, PR::HOVER);
             }
@@ -81,7 +81,7 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                         let th = (tw / (w / h.max(1.0)) as f32).min(THUMB_H);
                         let r = Rect::from_min_size(pos2(x, row.min.y + 4.0 + (THUMB_H - th)), vec2(tw, th));
                         x += tw;
-                        let id = egui::Id::new(("pr_nav_page", abs));
+                        let id = egui::Id::unique(("pr_nav_page", abs));
                         let resp = ui.interact(r.expand(3.0), id, Sense::click());
                         let selected = abs == cur;
                         if selected {

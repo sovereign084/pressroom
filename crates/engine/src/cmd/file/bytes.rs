@@ -14,12 +14,13 @@ fn save_bytes(d: &Document, preview: Option<&[u8]>) -> Result<Vec<u8>> {
     designcraft_format::save_with_preview(d, preview).map_err(|e| EngineError::Other(format!("could not write the document: {e}")))
 }
 
-/// `path` ending in `.designcraft`: the extension is added when it is missing or another one, so
-/// the file opens from the file manager. A path without a file name is left for the write to fail.
+/// `path` ending in a document extension: `.pressroom` is added when it is missing or not a
+/// document's (a `.designcraft` path stays as it is), so the file opens from the file manager. A
+/// path without a file name is left for the write to fail.
 pub fn with_document_extension(path: &str) -> String {
     let p = std::path::Path::new(path);
     let ext = p.extension().and_then(std::ffi::OsStr::to_str);
-    if p.file_name().is_none() || ext.is_some_and(|e| e.eq_ignore_ascii_case(designcraft_format::EXTENSION)) {
+    if p.file_name().is_none() || ext.is_some_and(designcraft_format::is_document_extension) {
         return path.to_string();
     }
     format!("{path}.{}", designcraft_format::EXTENSION)
@@ -109,9 +110,11 @@ mod extension_tests {
 
     #[test]
     fn the_document_extension_is_added_when_missing_or_different() {
-        assert_eq!(with_document_extension("/a/Brochure"), "/a/Brochure.designcraft");
-        assert_eq!(with_document_extension("/a/Brochure.idml"), "/a/Brochure.idml.designcraft");
-        assert_eq!(with_document_extension("/a/v1.2 Brochure"), "/a/v1.2 Brochure.designcraft");
+        assert_eq!(with_document_extension("/a/Brochure"), "/a/Brochure.pressroom");
+        assert_eq!(with_document_extension("/a/Brochure.idml"), "/a/Brochure.idml.pressroom");
+        assert_eq!(with_document_extension("/a/v1.2 Brochure"), "/a/v1.2 Brochure.pressroom");
+        assert_eq!(with_document_extension("/a/Brochure.PressRoom"), "/a/Brochure.PressRoom");
+        // DesignCraft's documents keep their name: never "Brochure.designcraft.pressroom".
         assert_eq!(with_document_extension("/a/Brochure.DesignCraft"), "/a/Brochure.DesignCraft");
         assert_eq!(with_document_extension("/a/.."), "/a/..");
     }
@@ -125,13 +128,18 @@ mod extension_tests {
         s.execute("file.new", &json!({})).unwrap();
 
         let bare = dir.join("Brochure");
-        let written = dir.join("Brochure.designcraft");
+        let written = dir.join("Brochure.pressroom");
         let r = s.execute("file.saveAs", &json!({"path": bare.to_string_lossy()})).unwrap();
         assert_eq!(r["path"], json!(written.to_string_lossy()), "{r}");
         assert!(written.is_file() && !bare.exists());
         assert_eq!(s.doc().unwrap().path.as_deref(), written.to_str());
         let r = s.execute("file.saveACopy", &json!({"path": dir.join("Copy").to_string_lossy()})).unwrap();
-        assert_eq!(r["path"], json!(dir.join("Copy.designcraft").to_string_lossy()), "{r}");
+        assert_eq!(r["path"], json!(dir.join("Copy.pressroom").to_string_lossy()), "{r}");
+        // A DesignCraft document saves under its own name.
+        let old = dir.join("Old.designcraft");
+        let r = s.execute("file.saveACopy", &json!({"path": old.to_string_lossy()})).unwrap();
+        assert_eq!(r["path"], json!(old.to_string_lossy()), "{r}");
+        assert!(old.is_file());
 
         // A native file without the extension opens, and Save writes back to that same file.
         std::fs::rename(&written, &bare).unwrap();

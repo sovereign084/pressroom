@@ -127,8 +127,17 @@ fn save_with_large_entries_from(doc: &Document, preview: Option<&[u8]>, large_en
     Ok(buf.into_inner())
 }
 
-/// The file name extension of a DesignCraft document.
+/// The file name extension of a PressRoom publication: what new saves are given.
 pub const EXTENSION: &str = "pressroom";
+
+/// Every file name extension of a document: PressRoom's own, then DesignCraft's, whose files open
+/// and save as they are.
+pub const EXTENSIONS: &[&str] = &[EXTENSION, "designcraft"];
+
+/// Is `ext` (without its dot) one of the document [`EXTENSIONS`], in any case?
+pub fn is_document_extension(ext: &str) -> bool {
+    EXTENSIONS.iter().any(|e| e.eq_ignore_ascii_case(ext))
+}
 
 /// Whether `bytes` are a DesignCraft document package: a zip holding `document.json`. Files
 /// without an extension are recognised by this (the legacy JSON form is too generic to sniff).
