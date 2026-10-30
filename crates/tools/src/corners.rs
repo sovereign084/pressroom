@@ -37,7 +37,8 @@ pub(crate) struct LiveFrame {
 /// The single selected, unlocked rectangle frame, when it is large enough on screen.
 pub(crate) fn live_frame(cx: &ToolContext) -> Option<LiveFrame> {
     let [id] = cx.selection.items.as_slice() else { return None };
-    if cx.selection.text.is_some() {
+    // Publisher has no live corners.
+    if cx.selection.text.is_some() || cx.publisher {
         return None;
     }
     let it = cx.doc.item(*id)?;

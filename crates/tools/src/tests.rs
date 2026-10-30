@@ -19,6 +19,7 @@ fn ctx<'a>(d: &'a Document, s: &'a Selection, c: &'a Cache, l: &'a CanvasLayout)
         snap: SnapView::OFF,
         unit: Unit::Points,
         stroke_in_front: false,
+        publisher: false,
     }
 }
 
@@ -1965,4 +1966,34 @@ fn loaded_text_cursor_threads_into_a_frame_inside_a_group() {
     let q = td2.at(650.0, 350.0);
     assert_eq!(cx2.hit_text_frame(q).map(|(_, i)| i), None, "no text frame in that group");
     assert_eq!(t2.cursor(&cx2, q, Mods::default()), Cursor::NotAllowed);
+}
+
+#[test]
+fn publisher_selection_has_a_rotate_handle_and_no_grabber_or_live_corners() {
+    let mut d = Document::new(&NewDocument::default());
+    let f = graphic_frame(&mut d);
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let frame = Selection::items(vec![f]);
+    let pub_cx = |s| ToolContext { publisher: true, ..ctx(&d, s, &c, &l) };
+    let b = pub_cx(&frame).selection_bounds().unwrap();
+    let handle = select::rotate_handle(b, 1.0);
+    assert!(near(handle, Point::new(b.center().x, b.y0 - select::ROTATE_HANDLE_PX)), "{handle:?}");
+    let mut t = create("selection");
+    // In PressRoom the handle above the box turns it, about its centre.
+    assert_eq!(t.cursor(&pub_cx(&frame), handle, Mods::default()), Cursor::Rotate);
+    assert_eq!(t.pointer(&pub_cx(&frame), &PointerEvent::new(PointerKind::Down, handle.x, handle.y)), vec![Action::Begin("Rotate".into())]);
+    let a = t.pointer(&pub_cx(&frame), &PointerEvent::new(PointerKind::Drag, b.x1 + 40.0, b.center().y));
+    assert!(a.iter().any(|x| matches!(x, Action::Preview(id, _) if id == "transform.rotate")), "{a:?}");
+    t.pointer(&pub_cx(&frame), &PointerEvent::new(PointerKind::Up, b.x1 + 40.0, b.center().y));
+    // InDesign has no such handle: the same press selects or marquees, as before.
+    let mut t = create("selection");
+    assert_ne!(t.cursor(&ctx(&d, &frame, &c, &l), handle, Mods::default()), Cursor::Rotate);
+    assert_ne!(t.pointer(&ctx(&d, &frame, &c, &l), &PointerEvent::new(PointerKind::Down, handle.x, handle.y)), vec![Action::Begin("Rotate".into())]);
+    // Publisher has no content grabber and no live-corner widget.
+    let centre = spread_pt(&l, 150.0, 150.0);
+    assert!(select::grabbers(&pub_cx(&frame), Some(centre)).is_empty());
+    assert!(!select::grabbers(&ctx(&d, &frame, &c, &l), Some(centre)).is_empty());
+    let t = create("selection");
+    assert!(!t.overlays(&pub_cx(&frame)).iter().any(|o| matches!(o, Overlay::LiveCornerWidget(_))));
+    assert!(t.overlays(&ctx(&d, &frame, &c, &l)).iter().any(|o| matches!(o, Overlay::LiveCornerWidget(_))));
 }

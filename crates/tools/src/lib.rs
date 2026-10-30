@@ -232,6 +232,9 @@ pub struct ToolContext<'a> {
     pub unit: Unit,
     /// The toolbox's Stroke box is in front: sampled colours go to strokes (the Eyedropper).
     pub stroke_in_front: bool,
+    /// PressRoom's selection, as Publisher's: a rotate handle above the selection, and no
+    /// content grabber or live-corner widget.
+    pub publisher: bool,
 }
 
 impl ToolContext<'_> {

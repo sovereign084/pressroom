@@ -338,6 +338,10 @@ pub fn grabber_center(cx: &ToolContext, id: ItemId) -> Option<Point> {
 
 /// Content grabbers on show: the single selected frame's and the hovered frame's.
 pub fn grabbers(cx: &ToolContext, hover: Option<Point>) -> Vec<(ItemId, Point)> {
+    // Publisher has no content grabber: a press in the middle of a picture moves the picture.
+    if cx.publisher {
+        return vec![];
+    }
     let mut ids = Vec::new();
     if let [one] = cx.selection.items.as_slice()
         && cx.selection.text.is_none()
@@ -456,9 +460,22 @@ fn fitting_axis(cx: &ToolContext, handle: usize) -> &'static str {
     if canvas_height == local_width_is_vertical { "width" } else { "height" }
 }
 
-/// Just outside a corner handle of the selection → rotate.
+/// How far above the selection Publisher's rotate handle sits, in screen points.
+pub const ROTATE_HANDLE_PX: f64 = 17.0;
+
+/// Where Publisher's rotate handle of the selection bounds `b` is: above the middle of its top.
+pub fn rotate_handle(b: Rect, zoom: f64) -> Point {
+    Point::new(b.center().x, b.y0 - ROTATE_HANDLE_PX / zoom.max(1e-9))
+}
+
+/// Just outside a corner handle of the selection → rotate; in PressRoom, on the rotate handle
+/// above the selection, as in Publisher. Gives the centre to rotate about.
 fn rotate_zone(cx: &ToolContext, p: Point) -> Option<Point> {
     let b = cx.selection_bounds()?;
+    if cx.publisher {
+        let on = cx.selection.text.is_none() && (rotate_handle(b, cx.zoom) - p).hypot() <= cx.tol(6.0);
+        return on.then(|| b.center());
+    }
     let inner = cx.tol(5.0);
     let outer = cx.tol(18.0);
     for c in [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)] {

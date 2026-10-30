@@ -154,10 +154,21 @@ fn heading(ui: &mut Ui, s: &str) {
 /// A large tile with an icon and a caption under it.
 fn tile(ui: &mut Ui, id: &str, size: egui::Vec2, caption: &str, draw: impl FnOnce(&egui::Painter, Rect)) -> bool {
     let (r, resp) = ui.allocate_exact_size(size + vec2(0.0, 36.0), Sense::click());
-    let card = Rect::from_min_size(r.min, size);
-    if resp.hovered() {
-        ui.painter().rect_filled(r.expand(4.0), 6.0, super::pal().checked);
-    }
+    // A rounded card that lifts when pointed at and settles back when pressed, as the cards on
+    // Office's start screen do.
+    let lift = ui.ctx().animate_bool_with_time(resp.id.with("lift"), resp.hovered(), 0.12);
+    let pressed = resp.is_pointer_button_down_on();
+    let card = Rect::from_min_size(r.min, size).translate(vec2(0.0, -3.0 * lift)).shrink(if pressed { 1.5 } else { 0.0 });
+    let p = super::pal();
+    let shadow = egui::epaint::Shadow {
+        offset: [0, (2.0 + 4.0 * lift) as i8],
+        blur: (6.0 + 12.0 * lift) as u8,
+        spread: 0,
+        color: Color32::from_black_alpha(((if p.dark { 90.0 } else { 18.0 }) + 30.0 * lift) as u8),
+    };
+    ui.painter().add(shadow.as_shape(card, 8.0));
+    let edge = p.card_edge.lerp_to_gamma(p.select, lift);
+    ui.painter().rect(card, 8.0, p.card, Stroke::new(1.0 + 0.5 * lift, edge), StrokeKind::Inside);
     draw(ui.painter(), card);
     for (i, line) in caption.split('\n').enumerate() {
         ui.painter().text(
@@ -177,8 +188,9 @@ fn paper(p: &egui::Painter, card: Rect, w: f64, h: f64) -> Rect {
     let s = (card.width() - 16.0).min(card.height() - 16.0);
     let (pw, ph) = if w >= h { (s, s * (h / w) as f32) } else { (s * (w / h) as f32, s) };
     let r = Rect::from_center_size(card.center(), vec2(pw, ph));
-    p.rect_filled(r.translate(vec2(2.0, 2.0)), 0.0, Color32::from_black_alpha(30));
-    p.rect(r, 0.0, Color32::WHITE, Stroke::new(1.0, Color32::from_gray(170)), StrokeKind::Inside);
+    // Paper with a soft shadow under it.
+    p.add(egui::epaint::Shadow { offset: [0, 1], blur: 6, spread: 0, color: Color32::from_black_alpha(45) }.as_shape(r, 2.0));
+    p.rect(r, 2.0, Color32::WHITE, Stroke::new(1.0, Color32::from_gray(205)), StrokeKind::Inside);
     r
 }
 
@@ -312,8 +324,9 @@ fn open_page(app: &mut DesignApp, ui: &mut Ui) {
         let path = f["path"].as_str().unwrap_or("");
         let exists = f["exists"].as_bool().unwrap_or(true);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width().min(640.0), 44.0), if exists { Sense::click() } else { Sense::hover() });
-        if resp.hovered() {
-            ui.painter().rect_filled(r, 6.0, super::pal().checked);
+        let hover = ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.1);
+        if hover > 0.0 {
+            ui.painter().rect_filled(r, 6.0, super::pal().checked.gamma_multiply(hover));
         }
         art::paint(ui.painter(), Rect::from_min_size(r.min + vec2(6.0, 8.0), vec2(28.0, 28.0)), "single-page", exists);
         ui.painter().text(

@@ -209,6 +209,29 @@ pub(super) fn scrollbars(app: &mut DesignApp, ui: &mut egui::Ui, outer: Rect, sc
     let painter = ui.painter_at(outer);
     let right = Rect::from_min_max(pos2(outer.max.x - SCROLLBAR, outer.min.y), outer.max);
     let bottom = Rect::from_min_max(pos2(outer.min.x, outer.max.y - SCROLLBAR), outer.max);
+    if app.ui.pressroom_shell {
+        // Windows 11's scroll bars: a slim line on the scratch area that widens, over a faint
+        // track, when pointed at or dragged.
+        let p = crate::pressroom::pal();
+        painter.rect_filled(right, 0.0, p.scratch);
+        painter.rect_filled(bottom, 0.0, p.scratch);
+        for (n, vertical) in [true, false].into_iter().enumerate() {
+            let (track, thumb, _) = scrollbar_rects(outer, screen, cb, vertical);
+            let hot = hot.get(n).copied().unwrap_or(false);
+            let wide = ui.ctx().animate_bool_with_time(egui::Id::unique(("canvas_scrollbar_wide", app.pane, vertical)), hot, 0.12);
+            if wide > 0.0 {
+                painter.rect_filled(track, 0.0, p.text.gamma_multiply(0.07 * wide));
+            }
+            let w = 3.0 + (SCROLLBAR - 5.0) * wide;
+            let thumb = if vertical {
+                Rect::from_min_max(pos2(thumb.max.x - 1.5 - w, thumb.min.y + 2.0), pos2(thumb.max.x - 1.5, thumb.max.y - 2.0))
+            } else {
+                Rect::from_min_max(pos2(thumb.min.x + 2.0, thumb.max.y - 1.5 - w), pos2(thumb.max.x - 2.0, thumb.max.y - 1.5))
+            };
+            painter.rect_filled(thumb, w / 2.0, p.text.gamma_multiply(0.38 + 0.22 * wide));
+        }
+        return;
+    }
     painter.rect_filled(right, 0.0, t.panel_darker);
     painter.rect_filled(bottom, 0.0, t.panel_darker);
     for (n, vertical) in [true, false].into_iter().enumerate() {

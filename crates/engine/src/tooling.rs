@@ -52,11 +52,13 @@ pub struct ViewInfo {
     pub unit: Unit,
     /// The toolbox's Stroke box is in front (X): colour tools apply to strokes.
     pub stroke_in_front: bool,
+    /// PressRoom's window: the selection handles act as Publisher's (see `ToolContext::publisher`).
+    pub publisher: bool,
 }
 
 impl ViewInfo {
     pub const fn at_zoom(zoom: f64) -> Self {
-        Self { zoom, snap: SnapView::FACTORY, unit: Unit::Points, stroke_in_front: false }
+        Self { zoom, snap: SnapView::FACTORY, unit: Unit::Points, stroke_in_front: false, publisher: false }
     }
 }
 
@@ -123,6 +125,7 @@ impl Session {
             snap: view.snap,
             unit: view.unit,
             stroke_in_front: view.stroke_in_front,
+            publisher: view.publisher,
         };
         Some(f(self, &cx))
     }

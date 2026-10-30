@@ -16,6 +16,7 @@ use crate::{DesignApp, ScreenMode, View, theme::Tokens};
 
 mod column_guides;
 mod frames;
+mod glide;
 mod guides;
 mod ime;
 mod input;
@@ -135,6 +136,14 @@ impl Xf {
 
 /// Lay out the canvas, scrollbars and rulers, presentation mode, fit/view state, input handling and painting.
 pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
+    // PressRoom: a zoom from a button, the slider or Fit glides to its new view.
+    let ctx = ui.ctx().clone();
+    let gliding = glide::begin(app, &ctx);
+    show_view(app, ui);
+    glide::end(app, &ctx, gliding);
+}
+
+fn show_view(app: &mut DesignApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let outer = ui.available_rect_before_wrap();
     let rot = app.view().map_or(0, |v| v.rotation % 4);

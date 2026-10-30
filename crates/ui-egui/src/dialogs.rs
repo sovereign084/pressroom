@@ -2182,6 +2182,67 @@ fn check(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
 }
 
 /// Draw the active localized dialog; open popups own Enter/Escape, and result handling drives confirm or cancel.
+/// PressRoom: the dialog's close button at the end of its title row `row` (the start, right to
+/// left), red under the pointer as Windows' is. Returns whether it was clicked.
+fn close_button(ui: &mut egui::Ui, row: egui::Rect, rtl: bool) -> bool {
+    let size = egui::vec2(30.0, 26.0);
+    let x = if rtl { row.left() + 4.0 + size.x / 2.0 } else { row.right() - 4.0 - size.x / 2.0 };
+    let r = egui::Rect::from_center_size(egui::pos2(x, row.center().y), size);
+    let resp = ui.interact(r, ui.scope_id().with("pr_dialog_close"), egui::Sense::click());
+    let hot = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.1);
+    let p = ui.painter();
+    if hot > 0.0 {
+        p.rect_filled(r, 4.0, egui::Color32::from_rgb(196, 43, 28).gamma_multiply(hot));
+    }
+    let c = crate::pressroom::pal().text.lerp_to_gamma(egui::Color32::WHITE, hot);
+    let k = 5.0;
+    let m = r.center();
+    p.line_segment([m + egui::vec2(-k, -k), m + egui::vec2(k, k)], egui::Stroke::new(1.2, c));
+    p.line_segment([m + egui::vec2(-k, k), m + egui::vec2(k, -k)], egui::Stroke::new(1.2, c));
+    resp.on_hover_text("Close").clicked()
+}
+
+/// PressRoom: the band the OK and Cancel buttons sit on, from just above them (`top`) to the
+/// dialog's rounded bottom edge, painted into the shape `slot` kept behind them.
+fn footer_band(ui: &egui::Ui, slot: egui::layers::ShapeIdx, top: f32) {
+    let frame = egui::Frame::popup(ui.style());
+    let (m, edge) = (frame.inner_margin, frame.stroke.width);
+    let r = egui::Rect::from_min_max(
+        egui::pos2(ui.max_rect().left() - m.leftf() + edge, top + 2.0),
+        egui::pos2(ui.max_rect().right() + m.rightf() - edge, ui.min_rect().bottom() + m.bottomf() - edge),
+    );
+    let p = crate::pressroom::pal();
+    let fill = if p.dark { p.card.lerp_to_gamma(egui::Color32::BLACK, 0.25) } else { egui::Color32::from_gray(243) };
+    let round = ui.visuals().menu_corner_radius.sw.saturating_sub(1);
+    let band = egui::CornerRadius { nw: 0, ne: 0, sw: round, se: round };
+    ui.painter().set(
+        slot,
+        egui::Shape::Vec(vec![
+            egui::Shape::rect_filled(r, band, fill),
+            egui::Shape::line_segment([r.left_top(), r.right_top()], egui::Stroke::new(1.0, p.card_edge)),
+        ]),
+    );
+}
+
+/// PressRoom: a dialog grows into place from just smaller as it opens, as Windows 11's do (egui
+/// fades it in meanwhile).
+fn grow_in(ctx: &egui::Context, instance: egui::Id, layer: egui::LayerId, rect: egui::Rect) {
+    let id = instance.with("pr_grow_in");
+    let pass = ctx.cumulative_pass_nr();
+    let now = ctx.input(|i| i.time);
+    let (start, last) = ctx.data(|d| d.get_temp::<(f64, u64)>(id)).unwrap_or((now, 0));
+    // Not shown in the pass before: it has just opened.
+    let start = if last.saturating_add(1) < pass { now } else { start };
+    ctx.data_mut(|d| d.insert_temp(id, (start, pass)));
+    let t = ((now - start) / 0.16).clamp(0.0, 1.0) as f32;
+    let s = 0.96 + 0.04 * (1.0 - (1.0 - t).powi(3));
+    // About the dialog's centre.
+    ctx.set_transform_layer(layer, egui::emath::TSTransform::new(rect.center().to_vec2() * (1.0 - s), s));
+    if t < 1.0 {
+        ctx.request_repaint();
+    }
+}
+
 pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
     let shortcuts = app.ui.dialog.as_ref().is_some_and(|d| d.id == crate::shortcuts_dialog::DIALOG_ID);
     if shortcuts {
@@ -2267,7 +2328,11 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
     // No dimmed backdrop: the page behind a dialog is what its settings and colours are judged against.
     let host = egui::Id::unique("dialog");
     let instance = host.with(&d.id);
-    crate::modal_drag::modal(ctx, host, instance).backdrop_color(egui::Color32::TRANSPARENT).show(ctx, |ui| {
+    // PressRoom's dialogs are Windows 11's: a close button, the buttons on a footer band, and a
+    // short grow into place as they open.
+    let pressroom = app.ui.pressroom_shell;
+    let rtl = crate::i18n::is_rtl(&app.ui.language);
+    let shown = crate::modal_drag::modal(ctx, host, instance).backdrop_color(egui::Color32::TRANSPARENT).show(ctx, |ui| {
         let frame_margin = egui::Frame::popup(ui.style()).total_margin().sum();
         let available = (ctx.content_rect().size() - frame_margin - egui::vec2(16.0, 16.0)).max(egui::Vec2::splat(1.0));
         let preferred_width: f32 = match d.id.as_str() {
@@ -2298,6 +2363,9 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             egui::pos2(ui.max_rect().right() + margin.rightf(), ui.min_rect().bottom()),
         );
         crate::modal_drag::title_drag(ui, instance, title_row);
+        if pressroom && close_button(ui, title_row, rtl) {
+            result = Some(false);
+        }
         ui.add_space(10.0);
         // Keep the title and action buttons outside the scrollable body. Oversized
         // forms remain reachable at large UI scales, without shrinking their text.
@@ -3011,6 +3079,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         if side_actions {
             return;
         }
+        let band = pressroom.then(|| (ui.painter().add(egui::Shape::Noop), ui.cursor().top()));
         ui.add_space(12.0);
         let ok_label = match d.id.as_str() {
             "colorTheme" => crate::i18n::tr(&app.ui.language, "Add to Swatches").to_string(),
@@ -3061,7 +3130,13 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                 }
             });
         });
+        if let Some((slot, top)) = band {
+            footer_band(ui, slot, top);
+        }
     });
+    if pressroom {
+        grow_in(ctx, instance, shown.response.layer_id, shown.response.rect);
+    }
     // Preferences › General › Interface Language takes effect at once, like any other app setting.
     if let Some(lang) = d.fields.remove("applyLanguage")
         && let Err(e) = app.run("app.language", json!({"lang": lang}))

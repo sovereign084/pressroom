@@ -141,6 +141,30 @@ pub(super) fn layer_color(doc: &Document, it: &Item) -> Color32 {
     doc.layer(it.layer).map(|l| c32(l.color)).unwrap_or(Color32::from_rgb(79, 153, 255))
 }
 
+/// The outline and handles of a selection in PressRoom, as current Publisher draws them.
+const PUBLISHER_SELECTION: Color32 = Color32::from_rgb(77, 115, 153);
+
+/// Publisher's selection handles round the screen bounds `u` (canvas bounds `cu`): white circles
+/// at the corners, small white squares on the sides, and the rotate handle on its stem above.
+fn publisher_handles(painter: &egui::Painter, xf: &Xf, u: Rect, cu: DRect, color: Color32) {
+    let edge = Stroke::new(1.0, color);
+    let rotate = xf.to_screen(designcraft_tools::select::rotate_handle(cu, xf.zoom));
+    let top = xf.to_screen(Point::new(cu.center().x, cu.y0));
+    let away = (rotate - top).normalized();
+    painter.line_segment([top + away * 3.5, rotate - away * 4.0], Stroke::new(1.0, Color32::from_gray(38)));
+    painter.circle(rotate, 4.0, Color32::WHITE, Stroke::new(1.0, Color32::from_rgb(90, 96, 104)));
+    for (i, h) in
+        designcraft_tools::select::handles(DRect::new(u.min.x as f64, u.min.y as f64, u.max.x as f64, u.max.y as f64)).into_iter().enumerate()
+    {
+        let c = pos2(h.x as f32, h.y as f32);
+        if i % 2 == 0 {
+            painter.circle(c, 4.0, Color32::WHITE, edge);
+        } else {
+            painter.rect(Rect::from_center_size(c, vec2(6.0, 6.0)), 0.0, Color32::WHITE, edge, StrokeKind::Inside);
+        }
+    }
+}
+
 /// Draw selection chrome; returns the selection's screen bounds (for the Contextual Task Bar).
 pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout) -> Option<Rect> {
     let st = app.session.active()?;
@@ -160,10 +184,14 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
         }
     }
     let mut union: Option<Rect> = None;
+    // The same bounds on the canvas, for Publisher's rotate handle.
+    let mut canvas_union: Option<DRect> = None;
+    let publisher = app.ui.pressroom_shell;
     let mut color = Color32::from_rgb(79, 153, 255);
     for id in &sel.items {
         let (Some(it), Some((a, _))) = (doc.item(*id), item_canvas_xf(doc, layout, *id)) else { continue };
-        color = layer_color(doc, it);
+        // PressRoom outlines every selection in Publisher's steel blue, whatever its layer.
+        color = if publisher { PUBLISHER_SELECTION } else { layer_color(doc, it) };
         for poly in path_screen(it, xf, a) {
             painter.add(egui::Shape::line(poly, Stroke::new(1.0, color)));
         }
@@ -174,7 +202,9 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
             // The key object for Align: a thicker bounding box, as in InDesign.
             painter.rect_stroke(xf.rect(a.transform_rect_bbox(it.bounds())), 0.0, Stroke::new(3.0, color), StrokeKind::Middle);
         }
-        let b = xf.rect(a.transform_rect_bbox(it.bounds()));
+        let cb = a.transform_rect_bbox(it.bounds());
+        canvas_union = Some(canvas_union.map_or(cb, |u| u.union(cb)));
+        let b = xf.rect(cb);
         union = Some(union.map_or(b, |u| u.union(b)));
         // Text frame ports, also of the frames inside a selected group (so an overset frame in a
         // group shows its red mark).
@@ -229,19 +259,25 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
         if sel.items.len() > 1 {
             painter.rect_stroke(u, 0.0, Stroke::new(1.0, color), StrokeKind::Middle);
         }
-        let hs = 6.5;
-        // Centre point. The Selection tool draws the live-corner widget as an overlay.
-        painter.rect_filled(Rect::from_center_size(u.center(), vec2(3.5, 3.5)), 0.0, color);
-        // A selected placed graphic has its own handles instead of the frame's.
         let graphic_selected =
             sel.content && sel.items.len() == 1 && doc.item(sel.items[0]).is_some_and(|i| matches!(i.content, Content::Graphic(_)));
-        for h in designcraft_tools::select::handles(DRect::new(u.min.x as f64, u.min.y as f64, u.max.x as f64, u.max.y as f64))
-            .into_iter()
-            .filter(|_| !graphic_selected)
-        {
-            let r = Rect::from_center_size(pos2(h.x as f32, h.y as f32), vec2(hs, hs));
-            painter.rect_filled(r, 0.0, Color32::WHITE);
-            painter.rect_stroke(r, 0.0, Stroke::new(hair(painter), color), StrokeKind::Inside);
+        if publisher {
+            if !graphic_selected && let Some(cu) = canvas_union {
+                publisher_handles(painter, xf, u, cu, color);
+            }
+        } else {
+            let hs = 6.5;
+            // Centre point. The Selection tool draws the live-corner widget as an overlay.
+            painter.rect_filled(Rect::from_center_size(u.center(), vec2(3.5, 3.5)), 0.0, color);
+            // A selected placed graphic has its own handles instead of the frame's.
+            for h in designcraft_tools::select::handles(DRect::new(u.min.x as f64, u.min.y as f64, u.max.x as f64, u.max.y as f64))
+                .into_iter()
+                .filter(|_| !graphic_selected)
+            {
+                let r = Rect::from_center_size(pos2(h.x as f32, h.y as f32), vec2(hs, hs));
+                painter.rect_filled(r, 0.0, Color32::WHITE);
+                painter.rect_stroke(r, 0.0, Stroke::new(hair(painter), color), StrokeKind::Inside);
+            }
         }
     }
     // Threads.

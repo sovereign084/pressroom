@@ -204,6 +204,8 @@ pub struct DesignApp {
     pub integrated_titlebar: bool,
     /// The desktop host uses our caption controls and window drag/resize regions (Windows).
     pub custom_titlebar: bool,
+    /// PressRoom's start-up splash is showing (the desktop app turns it on as it starts).
+    pub splash: bool,
     pub(crate) window_maximized: bool,
     pub(crate) pending_window_commands: Vec<egui::ViewportCommand>,
     /// The host installed a native menu bar (macOS): don't draw menus in the window.

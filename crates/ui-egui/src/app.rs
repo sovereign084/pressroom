@@ -83,6 +83,7 @@ impl DesignApp {
             os_documents: Vec::new(),
             integrated_titlebar: false,
             custom_titlebar: false,
+            splash: false,
             window_maximized: false,
             pending_window_commands: vec![],
             native_menu: false,

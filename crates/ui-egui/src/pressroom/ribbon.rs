@@ -5,7 +5,7 @@
 use egui::{Color32, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
-use super::{Context, PR, Tab, art};
+use super::{Context, PR, Tab, art, tips};
 use crate::DesignApp;
 
 /// Height of the ribbon body: the groups and their labels on a rounded panel, with its margins.
@@ -98,7 +98,7 @@ fn big_inner(ui: &mut Ui, icon: &str, label: &str, enabled: bool, arrow: bool, o
     }
     let tip = label.replace('\n', " ");
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &tip));
-    resp.on_hover_text(tip)
+    tips::screentip(resp, label)
 }
 
 pub(super) fn big(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
@@ -128,7 +128,7 @@ fn small_inner(ui: &mut Ui, icon: &str, label: &str, enabled: bool, arrow: bool,
         ui.painter().text(pos2(r.min.x + 29.0, r.center().y), egui::Align2::LEFT_CENTER, &shown, font, text_color(enabled));
     }
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-    resp.on_hover_text(label)
+    tips::screentip(resp, label)
 }
 
 fn small(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
@@ -151,7 +151,7 @@ fn tool(ui: &mut Ui, icon: &str, tip: &str, enabled: bool, on: bool) -> Response
     paint_button_bg(ui, r, &resp, on && enabled);
     art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(SMALL_ICON, SMALL_ICON)), icon, enabled);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, tip));
-    resp.on_hover_text(tip)
+    tips::screentip(resp, tip)
 }
 
 /// A letter toggle: Bold, Italic, Underline.
@@ -178,7 +178,7 @@ fn letter(ui: &mut Ui, text: &str, tip: &str, enabled: bool, on: bool) -> Respon
         }
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, tip));
-    resp.on_hover_text(tip)
+    tips::screentip(resp, tip)
 }
 
 /// A group: its controls, its name below, an optional dialog launcher at the bottom right, and the
@@ -213,7 +213,7 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
             ui.painter().line_segment([br.min + vec2(3.0, 3.0), br.max - vec2(3.0, 3.0)], s);
             ui.painter().line_segment([pos2(br.min.x + 5.0, br.max.y - 3.0), br.max - vec2(3.0, 3.0)], s);
             ui.painter().line_segment([pos2(br.max.x - 3.0, br.min.y + 5.0), br.max - vec2(3.0, 3.0)], s);
-            clicked = resp.on_hover_text(format!("{name} Settings")).clicked();
+            clicked = tips::screentip(resp, &format!("{name} Settings")).clicked();
         }
         clicked
     });

@@ -11,9 +11,11 @@ mod mica;
 mod nav;
 pub mod pubimport;
 mod ribbon;
+mod splash;
 mod templates;
 #[cfg(test)]
 mod tests;
+mod tips;
 pub mod update;
 
 use designcraft_doc::Content;
@@ -236,6 +238,22 @@ pub fn style(ctx: &egui::Context) {
         s.spacing.item_spacing = vec2(8.0, 4.0);
         // Gentle motion: highlights and panels ease in rather than snap.
         s.animation_time = 0.12;
+        // Windows 11's scroll bars: a slim line over the edge that widens when pointed at.
+        s.spacing.scroll = egui::style::ScrollStyle {
+            bar_width: 8.0,
+            floating_width: 3.0,
+            bar_inner_margin: 2.0,
+            bar_outer_margin: 1.0,
+            handle_min_length: 20.0,
+            dormant_handle_opacity: 0.45,
+            active_handle_opacity: 0.6,
+            interact_handle_opacity: 0.9,
+            dormant_background_opacity: 0.0,
+            active_background_opacity: 0.0,
+            interact_background_opacity: 0.35,
+            foreground_color: false,
+            ..egui::style::ScrollStyle::floating()
+        };
     });
 }
 
@@ -685,6 +703,7 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     if s.backstage.is_none() {
         status_bar(app, ui);
     }
+    splash::show(app, &ctx);
 }
 
 /// The area below the ribbon: the File screen, or the Page Navigation pane and the canvas.

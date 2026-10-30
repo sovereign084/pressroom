@@ -44,6 +44,7 @@ impl DesignApp {
             // as its Control and Properties fields do.
             unit: self.session.active().map_or(self.ui.units, |st| st.doc.settings.horizontal_units),
             stroke_in_front: self.ui.stroke_front,
+            publisher: self.ui.pressroom_shell,
         }
     }
 

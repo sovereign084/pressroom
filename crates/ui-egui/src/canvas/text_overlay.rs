@@ -111,20 +111,14 @@ pub(super) fn draw_text_selection(
         let m = a * doc.text_xf(it);
         // Type on a path: the caret stands across the path where it is along it.
         let on = |p: Point| compose::PathTextMap::new(it, ft).map_or(p, |map| map.to_path(p));
-        let p0 = xf.to_screen(m * on(Point::new(x, bl - asc)));
-        let p1 = xf.to_screen(m * on(Point::new(x, bl + desc)));
-        let blink = (painter.ctx().input(|i| i.time) * 1.6) as i64 % 2 == 0;
-        if blink {
-            painter.line_segment([p0, p1], Stroke::new(1.0, Color32::BLACK));
-        }
-        painter.ctx().request_repaint_after(std::time::Duration::from_millis(330));
+        draw_caret(app, painter, xf, [m * on(Point::new(x, bl - asc)), m * on(Point::new(x, bl + desc))]);
     }
 }
 
 /// Caret / text highlight inside a table cell (the cell's lines are offset by the cell origin).
 #[allow(clippy::too_many_arguments)]
 fn draw_cell_selection(
-    _app: &DesignApp,
+    app: &DesignApp,
     painter: &egui::Painter,
     xf: &Xf,
     doc: &Document,
@@ -166,12 +160,82 @@ fn draw_cell_selection(
         }
     {
         let m = a * doc.text_xf(it);
-        let (p0, p1) = (xf.to_screen(m * Point::new(x, bl - asc)), xf.to_screen(m * Point::new(x, bl + desc)));
-        let blink = (painter.ctx().input(|i| i.time) * 1.6) as i64 % 2 == 0;
-        if blink {
-            painter.line_segment([p0, p1], Stroke::new(1.0, Color32::BLACK));
+        draw_caret(app, painter, xf, [m * Point::new(x, bl - asc), m * Point::new(x, bl + desc)]);
+    }
+}
+
+/// How long the caret takes to glide to where typing or the arrow keys put it, in seconds.
+const CARET_GLIDE: f64 = 0.09;
+
+/// Where the caret is drawn (its top and bottom on the canvas) and where it's going.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CaretGlide {
+    from: [Point; 2],
+    to: [Point; 2],
+    /// When it set off for `to`: it blinks from then on, lit first.
+    start: f64,
+    /// When it was last drawn: a caret that comes back after a while appears where it is.
+    seen: f64,
+}
+
+impl CaretGlide {
+    fn still(at: [Point; 2], now: f64) -> Self {
+        Self { from: at, to: at, start: now, seen: now }
+    }
+
+    /// The caret at `now`: eased from `from` to `to`.
+    fn at(&self, now: f64) -> [Point; 2] {
+        let t = ((now - self.start) / CARET_GLIDE).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - t).powi(3);
+        [0, 1].map(|i| {
+            let (a, b) = (self.from[i], self.to[i]);
+            Point::new(a.x + (b.x - a.x) * e, a.y + (b.y - a.y) * e)
+        })
+    }
+
+    /// Head for `to` from wherever the caret is now; a jump of more than `far` (canvas points), or
+    /// back from being hidden, lands at once.
+    fn retarget(self, to: [Point; 2], now: f64, far: f64) -> Self {
+        if to == self.to {
+            return Self { seen: now, ..self };
         }
-        painter.ctx().request_repaint_after(std::time::Duration::from_millis(330));
+        let shown = self.at(now);
+        let gone = now - self.seen > 0.25;
+        let from = if gone || (shown[0] - to[0]).hypot() > far { to } else { shown };
+        Self { from, to, start: now, seen: now }
+    }
+
+    fn moving(&self, now: f64) -> bool {
+        now - self.start < CARET_GLIDE
+    }
+
+    /// Blinking, lit as soon as it moves (so it never vanishes mid-typing).
+    fn lit(&self, now: f64) -> bool {
+        ((now - self.start).max(0.0) * 1.6) as i64 % 2 == 0
+    }
+}
+
+/// The text caret from `ends[0]` to `ends[1]` (canvas points). In PressRoom it glides to each new
+/// place as Office's does while you type, rather than jumping there.
+fn draw_caret(app: &DesignApp, painter: &egui::Painter, xf: &Xf, ends: [Point; 2]) {
+    let ctx = painter.ctx();
+    let now = ctx.input(|i| i.time);
+    let (line, moving) = if app.ui.pressroom_shell {
+        let id = egui::Id::unique(("pr_caret", app.pane));
+        let far = 400.0 / xf.zoom.max(1e-6);
+        let g = ctx.data(|d| d.get_temp::<CaretGlide>(id)).map_or(CaretGlide::still(ends, now), |g| g.retarget(ends, now, far));
+        ctx.data_mut(|d| d.insert_temp(id, g));
+        (g.lit(now).then(|| g.at(now)), g.moving(now))
+    } else {
+        (((now * 1.6) as i64 % 2 == 0).then_some(ends), false)
+    };
+    if let Some([a, b]) = line {
+        painter.line_segment([xf.to_screen(a), xf.to_screen(b)], Stroke::new(1.0, Color32::BLACK));
+    }
+    if moving {
+        ctx.request_repaint();
+    } else {
+        ctx.request_repaint_after(std::time::Duration::from_millis(330));
     }
 }
 
@@ -367,4 +431,30 @@ pub fn selected_text(app: &DesignApp) -> Option<String> {
         return None;
     }
     Some(s.replace(designcraft_doc::story::FORCED_LINE_BREAK, "\n"))
+}
+
+#[cfg(test)]
+mod caret_tests {
+    use super::*;
+
+    fn at(x: f64) -> [Point; 2] {
+        [Point::new(x, 0.0), Point::new(x, 12.0)]
+    }
+
+    #[test]
+    fn the_caret_glides_to_its_new_place_and_stays_lit_while_it_moves() {
+        let g = CaretGlide::still(at(0.0), 10.0).retarget(at(8.0), 10.0, 100.0);
+        assert_eq!(g.at(10.0), at(0.0));
+        let mid = g.at(10.0 + CARET_GLIDE / 2.0)[0].x;
+        assert!(mid > 4.0 && mid < 8.0, "eases out: {mid}");
+        assert_eq!(g.at(10.0 + CARET_GLIDE), at(8.0));
+        assert!(g.moving(10.01) && !g.moving(10.0 + CARET_GLIDE + 0.001));
+        assert!(g.lit(10.0) && g.lit(10.3) && !g.lit(10.0 + 0.7), "lit first, then blinks");
+        // Typing on mid-glide: it sets off from where it is drawn.
+        let on = g.retarget(at(16.0), 10.0 + CARET_GLIDE / 2.0, 100.0);
+        assert_eq!(on.from[0].x, mid);
+        // A far jump (another frame, another page) and a caret back from hiding land at once.
+        assert_eq!(g.retarget(at(500.0), 10.2, 100.0).at(10.2), at(500.0));
+        assert_eq!(g.retarget(at(16.0), 12.0, 100.0).at(12.0), at(16.0));
+    }
 }
