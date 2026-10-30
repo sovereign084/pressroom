@@ -582,7 +582,82 @@ function Emit-Text($shape, $spread, [double]$x) {
             }
         }
     }
+    # Direction marks, inserted from the end so the offsets before them still hold.
+    $marks = Bidi-Marks $range $trim
+    for ($m = $marks.Count - 1; $m -ge 0; $m--) {
+        $at = ByteOffset $text $marks[$m][0]
+        [void](Add-Step 'text.select' @{ story = (Ref $k 'story'); anchor = $at; focus = $at })
+        [void](Add-Step 'text.insert' @{ text = [string]$marks[$m][1]; raw = $true })
+    }
     [void](Add-Step 'edit.deselectAll' @{})
+}
+
+# Publisher lays out mixed right-to-left and left-to-right text by its own rules, not Unicode's:
+# punctuation reads in the direction of the language it was typed in, and a space in the direction
+# of the character before it. "PEH — פ — THE" (dash and spaces typed in Hebrew) shows as
+# "PEH —  — פTHE", and "פ + ז = פז" (plus and equals typed in Spanish) as " פ+  ז= זפ". PressRoom
+# follows Unicode, so invisible direction marks (U+200F right to left, U+200E left to right) go
+# where the two differ: in left-to-right paragraphs that hold right-to-left letters. Returns
+# (character offset, mark) pairs in text order.
+$rtlLanguages = @(0x01, 0x0D, 0x20, 0x29, 0x3D, 0x59, 0x5A, 0x63, 0x65, 0x80, 0x8C, 0x92)
+$rtlLetters = [regex]('[{0}-{1}{2}-{3}{4}-{5}]' -f [char]0x0590, [char]0x08FF, [char]0xFB1D, [char]0xFDFF, [char]0xFE70, [char]0xFEFE)
+function Bidi-Marks($range, [string]$text) {
+    $marks = New-Object System.Collections.Generic.List[object]
+    if (-not $rtlLetters.IsMatch($text)) { return ,$marks }
+    $start = 0
+    while ($start -lt $text.Length) {
+        $end = $text.IndexOf("`r", $start)
+        if ($end -lt 0) { $end = $text.Length }
+        $ltr = $true
+        try { $ltr = [int]$range.Characters($start + 1, 1).ParagraphFormat.TextDirection -ne 2 } catch {}
+        if ($ltr -and $rtlLetters.IsMatch($text.Substring($start, $end - $start))) {
+            # Letters (R, L), digits (D), and runs of spaces and punctuation (N) with Publisher's direction.
+            $tokens = New-Object System.Collections.Generic.List[object]
+            $prev = 'L'
+            for ($i = $start; $i -lt $end; $i++) {
+                $c = $text[$i]
+                $cat = [int][Globalization.CharUnicodeInfo]::GetUnicodeCategory($c)
+                $kind = $null; $dir = $null
+                if ([int]$c -eq 0x200F -or (-not [char]::IsDigit($c) -and $rtlLetters.IsMatch([string]$c))) { $kind = 'R' }
+                elseif ($cat -eq 8) { $kind = 'D' }
+                elseif ($cat -eq 11 -or [int]$c -eq 9 -or [int]$c -eq 11) { $dir = $prev }
+                elseif ($cat -ge 18 -and $cat -le 28) {
+                    $id = 0
+                    try { $id = [int]$range.Characters($i + 1, 1).LanguageID } catch {}
+                    $dir = if ($rtlLanguages -contains ($id -band 0x3FF)) { 'R' } else { 'L' }
+                }
+                elseif ($cat -le 4 -or $cat -eq 9 -or $cat -eq 17 -or [int]$c -eq 0x200E) { $kind = 'L' }
+                else { continue }
+                if ($dir) {
+                    $last = if ($tokens.Count -gt 0) { $tokens[$tokens.Count - 1] } else { $null }
+                    if ($last -and $last.Kind -eq 'N' -and $last.Dir -eq $dir -and $last.End -eq $i) { $last.End = $i + 1 }
+                    else { $tokens.Add([pscustomobject]@{ Kind = 'N'; Dir = $dir; Start = $i; End = $i + 1 }) }
+                    $prev = $dir
+                } else {
+                    $tokens.Add([pscustomobject]@{ Kind = $kind; Start = $i; End = $i + 1 })
+                    $prev = if ($kind -eq 'R') { 'R' } else { 'L' }
+                }
+            }
+            # Unicode gives a run of spaces and punctuation the direction of the letters on both
+            # sides, or left to right when they differ.
+            $last = 'L'
+            for ($t = 0; $t -lt $tokens.Count; $t++) {
+                $tok = $tokens[$t]
+                if ($tok.Kind -ne 'N') { if ($tok.Kind -ne 'D') { $last = $tok.Kind }; continue }
+                $next = if ($t + 1 -lt $tokens.Count) { $tokens[$t + 1].Kind } else { 'End' }
+                if ($tok.Dir -eq 'R') {
+                    if ($last -ne 'R') { $marks.Add(@($tok.Start, [char]0x200F)) }
+                    if ($next -ne 'R') { $marks.Add(@($tok.End, [char]0x200F)) }
+                    $last = 'R'
+                } elseif ($last -eq 'R' -and $next -ne 'L' -and $next -ne 'End') {
+                    $marks.Add(@($tok.End, [char]0x200E))
+                    $last = 'L'
+                }
+            }
+        }
+        $start = $end + 1
+    }
+    return ,$marks
 }
 
 # Publisher's arrowheads (MsoArrowheadStyle) → PressRoom's line ends.
