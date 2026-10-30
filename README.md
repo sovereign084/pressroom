@@ -33,7 +33,9 @@ installed on the same computer, so convert your files while you have it.
   booklet printing.
 - Text boxes, pictures, shapes, tables and calendars you can edit, with text that flows from box to box.
 - Opens `.pub` files with their layout, fonts, colours (spot inks too), tables and Hebrew text.
-- Free fonts that look like Microsoft 365's online-only fonts come with it.
+- About 80 free font families come with it: the free fonts in Microsoft 365's online font list
+  (Montserrat, Lobster, Pacifico, Playfair Display, Bebas Neue, Amatic SC and more) under the same
+  names, and free look-alikes for some Microsoft-only ones.
 - No account, no subscription, nothing sent anywhere.
 
 ## For developers
