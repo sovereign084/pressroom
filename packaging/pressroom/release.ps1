@@ -10,9 +10,10 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if (git -C $root status --porcelain --untracked-files=no) { throw 'Commit your changes first: the release is built from the committed code.' }
 $repo = (gh repo view (git -C $root remote get-url origin) --json nameWithOwner --jq .nameWithOwner)
 if (-not $repo) { throw "No GitHub repository at the 'origin' remote." }
-if (gh release view "v$Version" --repo $repo --json tagName 2>$null) { throw "Version $Version is already released." }
+if (@(gh release list --repo $repo --limit 1000 --json tagName --jq '.[].tagName') -contains "v$Version") { throw "Version $Version is already released." }
 
-git -C $root push origin HEAD:main
+# Pushes with the GitHub CLI's sign-in, leaving git's own credential settings alone.
+git -C $root -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin HEAD:main
 if ($LASTEXITCODE -ne 0) { throw 'git push failed' }
 
 $msi = Join-Path $root "target-pkg\PressRoom-Setup-$Version.msi"
