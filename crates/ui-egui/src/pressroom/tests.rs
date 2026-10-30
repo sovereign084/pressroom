@@ -220,3 +220,27 @@ fn file_account_shows_the_version_and_checks_for_updates() {
     let version = crate::pressroom::update::VERSION.map_or_else(|| "Development build".to_string(), |v| format!("Version {v}"));
     assert!(h.query_by_label(&version).is_some(), "{version}");
 }
+
+#[test]
+fn the_ribbon_is_current_publishers_help_tab_and_objects_order() {
+    let mut h = window();
+    run(&mut h, "frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "Hi"}));
+    // Home's Objects group, in Publisher's order: Draw Text Box, Pictures, Table, Shapes.
+    let x = |h: &Harness<'static, Window>, label: &str| h.get_by_label(label).rect().center().x;
+    let order = [x(&h, "Draw Text Box"), x(&h, "Pictures"), x(&h, "Table"), x(&h, "Shapes")];
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
+    // The Help tab, after View, with Check for Updates.
+    assert!(x(&h, "View") < x(&h, "Help"));
+    h.get_by_label("Help").click();
+    h.run_steps(4);
+    assert!(h.query_by_label("Check for Updates").is_some());
+}
+
+#[test]
+fn the_office_theme_is_saved_with_the_settings() {
+    let mut ui = crate::state::UiState::default();
+    assert_eq!(ui.pressroom_theme, "white");
+    ui.pressroom_theme = "colorful".into();
+    let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&ui).unwrap()).unwrap();
+    assert_eq!(back.pressroom_theme, "colorful");
+}

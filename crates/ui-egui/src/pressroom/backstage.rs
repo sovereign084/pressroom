@@ -659,6 +659,18 @@ fn account(app: &mut DesignApp, ui: &mut Ui) {
     heading(ui, "PressRoom");
     ui.label("Free desktop publishing for bulletins, newsletters, flyers and cards.");
     ui.label(egui::RichText::new("Built on DesignCraft (Apache-2.0 / MIT). No account or subscription needed.").color(PR::GROUP_LABEL));
+    // Office Theme, as in Publisher's Account page: White (Office's default on a light Windows) or
+    // Colorful (the top of the window in Publisher's teal).
+    ui.add_space(18.0);
+    ui.label(egui::RichText::new("Office Theme").size(15.0).color(PR::TEXT));
+    let shown = if app.ui.pressroom_theme == "colorful" { "Colorful" } else { "White" };
+    craft_ui::ComboBox::from_id_salt("pr_office_theme").selected_text(shown).width(160.0).show_ui(ui, |ui| {
+        for (value, label) in [("white", "White"), ("colorful", "Colorful")] {
+            if ui.selectable_label(app.ui.pressroom_theme == value, label).clicked() {
+                app.ui.pressroom_theme = value.into();
+            }
+        }
+    });
     // Update Options, as in Publisher's Account page.
     ui.add_space(18.0);
     ui.label(egui::RichText::new("Product Information").size(15.0).color(PR::TEXT));

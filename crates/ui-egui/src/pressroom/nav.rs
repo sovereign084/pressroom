@@ -22,14 +22,14 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
         .show(ui, |ui| {
             let full = ui.max_rect();
             // Header: "Page Navigation" and the collapse chevron.
-            let head = Rect::from_min_size(full.min, vec2(full.width(), 26.0));
+            let head = Rect::from_min_size(full.min, vec2(full.width(), 36.0));
             if !narrow {
-                ui.painter().text(head.left_center() + vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, "Pages", FontId::proportional(12.5), PR::TEXT);
+                ui.painter().text(head.left_center() + vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, "Pages", FontId::proportional(16.0), PR::TEXT);
             }
-            let cr = Rect::from_min_size(pos2(head.max.x - 24.0, head.min.y + 5.0), vec2(18.0, 16.0));
+            let cr = Rect::from_min_size(pos2(head.max.x - 26.0, head.center().y - 9.0), vec2(20.0, 18.0));
             let resp = ui.interact(cr, egui::Id::unique("pr_nav_collapse"), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(cr, 0.0, PR::HOVER);
+                ui.painter().rect_filled(cr, PR::ROUND, PR::HOVER);
             }
             let c = cr.center();
             let d = if narrow { 1.0 } else { -1.0 };
@@ -85,12 +85,13 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                         let resp = ui.interact(r.expand(3.0), id, Sense::click());
                         let selected = abs == cur;
                         if selected {
-                            ui.painter().rect_filled(r.expand(4.0), 0.0, Color32::from_rgb(253, 231, 196));
-                            ui.painter().rect_stroke(r.expand(4.0), 0.0, Stroke::new(1.5, PR::SELECT), StrokeKind::Inside);
+                            // The page shown: a rounded frame in the accent colour on its light tint.
+                            ui.painter().rect_filled(r.expand(5.0), 6.0, PR::CHECKED);
+                            ui.painter().rect_stroke(r.expand(5.0), 6.0, Stroke::new(2.0, PR::SELECT), StrokeKind::Inside);
                         } else if resp.hovered() {
-                            ui.painter().rect_filled(r.expand(4.0), 0.0, PR::HOVER);
+                            ui.painter().rect_filled(r.expand(5.0), 6.0, PR::HOVER);
                         }
-                        ui.painter().rect_filled(r.translate(vec2(2.0, 2.0)), 0.0, Color32::from_black_alpha(40));
+                        ui.painter().rect_filled(r.translate(vec2(1.0, 1.5)), 1.0, Color32::from_black_alpha(28));
                         match thumb(app, &ctx, ThumbOf::Page(abs), th) {
                             Some(tex) => {
                                 ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -99,7 +100,7 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                                 ui.painter().rect_filled(r, 0.0, Color32::WHITE);
                             }
                         }
-                        ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_gray(150)), StrokeKind::Outside);
+                        ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_gray(200)), StrokeKind::Outside);
                         let label = labels.get(abs).cloned().unwrap_or_else(|| (abs + 1).to_string());
                         ui.painter().text(
                             pos2(r.center().x, row.max.y - 10.0),

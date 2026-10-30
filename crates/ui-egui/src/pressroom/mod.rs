@@ -24,32 +24,59 @@ use crate::DesignApp;
 pub use backstage::Backstage;
 pub use keys::shortcuts;
 
-/// The window's colours: Publisher's family teal on the bars, light grey ribbon, mid-grey scratch
-/// area.
+/// The window's colours, as Publisher's current (Microsoft 365) look: a flat light top, the ribbon
+/// on a white rounded panel, light panes and scratch area, and Publisher's teal as the accent (the
+/// selected tab's underline, selections; the whole top in the Colorful theme).
 #[allow(non_snake_case)]
 pub mod PR {
     use egui::Color32;
     pub const TEAL: Color32 = Color32::from_rgb(7, 117, 104);
     pub const TEAL_DARK: Color32 = Color32::from_rgb(5, 92, 82);
     pub const TEAL_HOVER: Color32 = Color32::from_rgb(38, 138, 125);
+    /// The top, the ribbon's surround, the panes and the status bar.
     pub const RIBBON: Color32 = Color32::from_rgb(243, 243, 243);
-    pub const RIBBON_EDGE: Color32 = Color32::from_rgb(213, 213, 213);
-    pub const GROUP_SEP: Color32 = Color32::from_rgb(218, 218, 218);
-    pub const GROUP_LABEL: Color32 = Color32::from_rgb(96, 96, 96);
-    pub const TEXT: Color32 = Color32::from_rgb(38, 38, 38);
-    pub const DISABLED: Color32 = Color32::from_rgb(166, 166, 166);
-    pub const HOVER: Color32 = Color32::from_rgb(220, 220, 220);
-    pub const HOVER_BORDER: Color32 = Color32::from_rgb(198, 198, 198);
-    pub const PRESSED: Color32 = Color32::from_rgb(196, 196, 196);
-    pub const CHECKED: Color32 = Color32::from_rgb(206, 206, 206);
-    pub const SCRATCH: Color32 = Color32::from_rgb(171, 171, 171);
+    /// The ribbon's rounded panel.
+    pub const CARD: Color32 = Color32::WHITE;
+    pub const CARD_EDGE: Color32 = Color32::from_rgb(226, 226, 226);
+    pub const RIBBON_EDGE: Color32 = Color32::from_rgb(224, 224, 224);
+    pub const GROUP_SEP: Color32 = Color32::from_rgb(225, 225, 225);
+    pub const GROUP_LABEL: Color32 = Color32::from_rgb(97, 97, 97);
+    pub const TEXT: Color32 = Color32::from_rgb(36, 36, 36);
+    pub const DISABLED: Color32 = Color32::from_rgb(168, 168, 168);
+    pub const HOVER: Color32 = Color32::from_rgb(235, 235, 235);
+    pub const HOVER_BORDER: Color32 = Color32::from_rgb(209, 209, 209);
+    pub const PRESSED: Color32 = Color32::from_rgb(220, 220, 220);
+    /// A button that's on (Bold, the alignment in force): a light tint of the accent.
+    pub const CHECKED: Color32 = Color32::from_rgb(220, 236, 233);
+    pub const SCRATCH: Color32 = Color32::from_rgb(224, 224, 224);
     pub const PANE: Color32 = Color32::from_rgb(243, 243, 243);
     pub const CONTEXT: Color32 = Color32::from_rgb(232, 184, 76);
-    pub const SELECT: Color32 = Color32::from_rgb(242, 164, 64);
+    pub const SELECT: Color32 = TEAL;
+    /// Rounding of buttons' hover and pressed highlights.
+    pub const ROUND: f32 = 4.0;
+}
+
+/// The top of the window (title bar and tabs) in the chosen Office Theme (File › Account).
+#[derive(Clone, Copy)]
+struct Top {
+    bg: Color32,
+    text: Color32,
+    hover: Color32,
+    /// The selected tab's underline.
+    accent: Color32,
+    colorful: bool,
+}
+
+fn top(app: &DesignApp) -> Top {
+    if app.ui.pressroom_theme == "colorful" {
+        Top { bg: PR::TEAL, text: Color32::WHITE, hover: PR::TEAL_HOVER, accent: Color32::WHITE, colorful: true }
+    } else {
+        Top { bg: PR::RIBBON, text: PR::TEXT, hover: Color32::from_rgb(229, 229, 229), accent: PR::TEAL, colorful: false }
+    }
 }
 
 const TITLE_H: f32 = 31.0;
-const TABS_H: f32 = 25.0;
+const TABS_H: f32 = 30.0;
 const STATUS_H: f32 = 23.0;
 const CAPTION_W: f32 = 46.0;
 
@@ -63,6 +90,7 @@ pub enum Tab {
     Mailings,
     Review,
     View,
+    Help,
     Format,
 }
 
@@ -508,7 +536,8 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
 }
 
 fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
-    egui::Panel::top("pr_title").exact_size(TITLE_H).frame(egui::Frame::NONE.fill(PR::TEAL)).show(ui, |ui| {
+    let top = top(app);
+    egui::Panel::top("pr_title").exact_size(TITLE_H).frame(egui::Frame::NONE.fill(top.bg)).show(ui, |ui| {
         let full = ui.max_rect();
         let caption_w = if app.custom_titlebar { CAPTION_W * 3.0 } else { 0.0 };
         if app.custom_titlebar {
@@ -523,68 +552,56 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
             app.flush_window_commands(ui.ctx());
         }
         // App mark and the Quick Access Toolbar.
-        let mut x = full.min.x + 8.0;
-        // PressRoom's mark: an open booklet.
+        let mut x = full.min.x + 10.0;
+        // PressRoom's mark: an open booklet on a rounded tile (teal, or white on the Colorful top).
         let mark = Rect::from_min_size(pos2(x, full.center().y - 9.0), vec2(18.0, 18.0));
-        let (c, l, r) = (mark.center().x, mark.min.x + 1.0, mark.max.x - 1.0);
-        let (t, b) = (mark.min.y + 3.0, mark.max.y - 2.0);
+        let (tile, page, leaf) =
+            if top.colorful { (Color32::WHITE, PR::TEAL, PR::TEAL_DARK) } else { (PR::TEAL, Color32::WHITE, Color32::from_rgb(214, 232, 228)) };
+        ui.painter().rect_filled(mark, 4.0, tile);
+        let (c, l, r) = (mark.center().x, mark.min.x + 3.0, mark.max.x - 3.0);
+        let (t, b) = (mark.min.y + 4.5, mark.max.y - 4.0);
         ui.painter().add(egui::Shape::convex_polygon(
-            vec![pos2(l, t), pos2(c - 0.5, t + 1.5), pos2(c - 0.5, b), pos2(l, b - 1.5)],
-            Color32::from_rgb(226, 236, 240),
+            vec![pos2(l, t), pos2(c - 0.5, t + 1.2), pos2(c - 0.5, b), pos2(l, b - 1.2)],
+            leaf,
             Stroke::NONE,
         ));
         ui.painter().add(egui::Shape::convex_polygon(
-            vec![pos2(c + 0.5, t + 1.5), pos2(r, t), pos2(r, b - 1.5), pos2(c + 0.5, b)],
-            Color32::WHITE,
+            vec![pos2(c + 0.5, t + 1.2), pos2(r, t), pos2(r, b - 1.2), pos2(c + 0.5, b)],
+            page,
             Stroke::NONE,
         ));
-        ui.painter().line_segment([pos2(c + 2.0, t + 4.0), pos2(r - 2.0, t + 3.2)], Stroke::new(1.5, Color32::from_rgb(238, 176, 58)));
         x += 30.0;
         let doc = app.session.active().is_some();
-        for (icon, tip, cmd) in
-            [("save", "Save (Ctrl+S)", "app.save"), ("undo", "Undo (Ctrl+Z)", "edit.undo"), ("redo", "Redo (Ctrl+Y)", "edit.redo")]
+        let icons = if top.colorful { ["save", "undo", "redo"] } else { ["save-dark", "undo-ink", "redo-ink"] };
+        for (icon, (tip, cmd)) in
+            icons.into_iter().zip([("Save (Ctrl+S)", "app.save"), ("Undo (Ctrl+Z)", "edit.undo"), ("Redo (Ctrl+Y)", "edit.redo")])
         {
-            let r = Rect::from_min_size(pos2(x, full.min.y + 3.0), vec2(26.0, TITLE_H - 6.0));
+            let r = Rect::from_min_size(pos2(x, full.min.y + 3.0), vec2(28.0, TITLE_H - 6.0));
             let enabled = doc && ribbon::on(app, cmd);
             let resp = ui.interact(r, egui::Id::unique(("pr_qat", cmd)), if enabled { Sense::click() } else { Sense::hover() });
             if resp.hovered() && enabled {
-                ui.painter().rect_filled(r, 0.0, PR::TEAL_HOVER);
+                ui.painter().rect_filled(r, PR::ROUND, top.hover);
             }
             art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(16.0, 16.0)), icon, enabled);
             if resp.on_hover_text(tip).clicked() {
                 ribbon::act(app, cmd);
             }
-            x += 27.0;
+            x += 29.0;
         }
-        // Title, centred.
+        // Title, after the Quick Access Toolbar, as Publisher has it.
         let title = match app.session.active() {
             Some(d) => format!("{} - PressRoom", d.title()),
             None => "PressRoom".to_string(),
         };
-        ui.painter().text(full.center(), egui::Align2::CENTER_CENTER, title, FontId::proportional(12.0), Color32::WHITE);
-        // The contextual tab's tool name sits over its tab.
-        if s.context != Context::None && s.backstage.is_none() {
-            let tab_x: Option<(f32, f32)> = ui.data(|d| d.get_temp(egui::Id::unique("pr_format_tab_x")));
-            if let Some((x0, x1)) = tab_x {
-                let r = Rect::from_min_max(pos2(x0, full.min.y + 4.0), pos2(x1.max(x0 + 100.0), full.max.y));
-                ui.painter().rect_filled(r, 0.0, PR::TEAL_DARK);
-                ui.painter().rect_filled(Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + 3.0)), 0.0, PR::CONTEXT);
-                ui.painter().text(
-                    r.center() + vec2(0.0, 1.5),
-                    egui::Align2::CENTER_CENTER,
-                    s.context.title(),
-                    FontId::proportional(11.5),
-                    Color32::WHITE,
-                );
-            }
-        }
+        ui.painter().text(pos2(x + 14.0, full.center().y), egui::Align2::LEFT_CENTER, title, FontId::proportional(12.0), top.text);
+        let _ = s;
         if app.custom_titlebar {
-            caption_buttons(app, ui, Rect::from_min_max(pos2(full.max.x - caption_w, full.min.y), full.max));
+            caption_buttons(app, ui, Rect::from_min_max(pos2(full.max.x - caption_w, full.min.y), full.max), top);
         }
     });
 }
 
-fn caption_buttons(app: &mut DesignApp, ui: &mut Ui, area: Rect) {
+fn caption_buttons(app: &mut DesignApp, ui: &mut Ui, area: Rect, top: Top) {
     let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
     for (k, (command, label)) in
         [("window.minimize", "Minimize"), ("window.maximize", if maximized { "Restore Down" } else { "Maximize" }), ("window.close", "Close")]
@@ -593,10 +610,11 @@ fn caption_buttons(app: &mut DesignApp, ui: &mut Ui, area: Rect) {
     {
         let r = Rect::from_min_size(pos2(area.min.x + k as f32 * CAPTION_W, area.min.y), vec2(CAPTION_W, area.height()));
         let resp = ui.interact(r, egui::Id::unique(("pr_caption", command)), Sense::click());
+        let close_hot = resp.hovered() && command == "window.close";
         if resp.hovered() {
-            ui.painter().rect_filled(r, 0.0, if command == "window.close" { Color32::from_rgb(232, 17, 35) } else { PR::TEAL_HOVER });
+            ui.painter().rect_filled(r, 0.0, if close_hot { Color32::from_rgb(196, 43, 28) } else { top.hover });
         }
-        let s = Stroke::new(1.0, Color32::WHITE);
+        let s = Stroke::new(1.0, if close_hot { Color32::WHITE } else { top.text });
         let i = Rect::from_center_size(r.center(), vec2(10.0, 10.0));
         match command {
             "window.close" => {
@@ -625,11 +643,12 @@ fn caption_buttons(app: &mut DesignApp, ui: &mut Ui, area: Rect) {
 }
 
 fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
+    let top = top(app);
     let height = TABS_H + if s.collapsed { 0.0 } else { ribbon::BODY_H };
     egui::Panel::top("pr_ribbon").exact_size(height).frame(egui::Frame::NONE.fill(PR::RIBBON)).show(ui, |ui| {
         let full = ui.max_rect();
         let strip = Rect::from_min_max(full.min, pos2(full.max.x, full.min.y + TABS_H));
-        ui.painter().rect_filled(strip, 0.0, PR::TEAL);
+        ui.painter().rect_filled(strip, 0.0, top.bg);
         let mut tabs = vec![
             (Tab::File, "File"),
             (Tab::Home, "Home"),
@@ -638,45 +657,46 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
             (Tab::Mailings, "Mailings"),
             (Tab::Review, "Review"),
             (Tab::View, "View"),
+            (Tab::Help, "Help"),
         ];
         if s.context != Context::None {
             tabs.push((Tab::Format, if s.context == Context::Table { "Layout" } else { "Format" }));
         }
-        let font = FontId::proportional(12.0);
-        let mut x = strip.min.x + 2.0;
+        let font = FontId::proportional(13.0);
+        let mut x = strip.min.x + 6.0;
         let mut chosen = None;
         let mut toggle = false;
         for (tab, name) in tabs {
-            let w = ui.painter().layout_no_wrap(name.to_string(), font.clone(), Color32::WHITE).size().x + if tab == Tab::File { 34.0 } else { 22.0 };
-            let r = Rect::from_min_size(pos2(x, strip.min.y), vec2(w, TABS_H));
+            let tw = ui.painter().layout_no_wrap(name.to_string(), font.clone(), top.text).size().x;
+            let w = tw + 22.0;
+            let r = Rect::from_min_size(pos2(x, strip.min.y + 3.0), vec2(w, TABS_H - 6.0));
             let resp = ui.interact(r, egui::Id::unique(("pr_tab", name)), Sense::click());
-            let current = s.tab == tab && !s.collapsed;
+            let current = s.tab == tab && !s.collapsed && tab != Tab::File;
             // Named for screen readers (and tests): a tab, selected while its ribbon shows.
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, current, name));
-            if tab == Tab::File {
-                ui.painter().rect_filled(r, 0.0, if resp.hovered() { PR::TEAL_HOVER } else { PR::TEAL_DARK });
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, name, font.clone(), Color32::WHITE);
-            } else if current {
-                ui.painter().rect_filled(r.shrink2(vec2(0.0, 0.0)).with_min_y(r.min.y + 2.0), 0.0, PR::RIBBON);
-                ui.painter().text(r.center() + vec2(0.0, 1.0), egui::Align2::CENTER_CENTER, name, font.clone(), PR::TEAL);
-            } else {
-                if resp.hovered() {
-                    ui.painter().rect_filled(r.with_min_y(r.min.y + 2.0), 0.0, PR::TEAL_HOVER);
-                }
-                ui.painter().text(r.center() + vec2(0.0, 1.0), egui::Align2::CENTER_CENTER, name, font.clone(), Color32::WHITE);
+            if resp.hovered() {
+                ui.painter().rect_filled(r, PR::ROUND, top.hover);
+            }
+            // The contextual tab is in the accent colour, as Office shows it.
+            let color = if tab == Tab::Format && !top.colorful { PR::TEAL } else { top.text };
+            let tab_font = if current { crate::theme::semibold(13.0) } else { font.clone() };
+            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, name, tab_font, color);
+            let resp = if tab == Tab::Format { resp.on_hover_text(s.context.title()) } else { resp };
+            if current {
+                // The selected tab: an underline in the accent colour, under its name.
+                let u = Rect::from_center_size(pos2(r.center().x, r.max.y - 1.5), vec2(tw.max(16.0), 3.0));
+                ui.painter().rect_filled(u, 1.5, top.accent);
             }
             if tab == Tab::Format {
                 ui.data_mut(|d| d.insert_temp(egui::Id::unique("pr_format_tab_x"), (r.min.x, r.max.x)));
-                ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(2.0, PR::CONTEXT));
             }
             if resp.double_clicked() && tab != Tab::File {
                 toggle = true;
             } else if resp.clicked() {
                 chosen = Some(tab);
             }
-            x += w + 1.0;
+            x += w + 2.0;
         }
-        // "Tell me what you want to do" lives here in Publisher; PressRoom's search is the same idea.
         if let Some(tab) = chosen {
             if tab == Tab::File {
                 update(ui.ctx(), |st| st.backstage = Some(Backstage::Info));
@@ -693,11 +713,16 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         if s.collapsed {
             return;
         }
+        // The ribbon's groups on a white rounded panel with a soft shadow.
         let body = Rect::from_min_max(pos2(full.min.x, strip.max.y), full.max);
-        ui.painter().line_segment([body.left_bottom() - vec2(0.0, 0.5), body.right_bottom() - vec2(0.0, 0.5)], Stroke::new(1.0, PR::RIBBON_EDGE));
+        let card = Rect::from_min_max(body.min + vec2(6.0, 4.0), body.max - vec2(6.0, 5.0));
+        let shadow = egui::epaint::Shadow { offset: [0, 1], blur: 4, spread: 0, color: Color32::from_black_alpha(22) };
+        ui.painter().add(shadow.as_shape(card, 8.0));
+        ui.painter().rect(card, 8.0, PR::CARD, Stroke::new(1.0, PR::CARD_EDGE), egui::StrokeKind::Inside);
         let mut inner =
-            ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(vec2(0.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Min)));
+            ui.new_child(egui::UiBuilder::new().max_rect(card.shrink2(vec2(2.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Min)));
         inner.style_mut().visuals = egui::Visuals::light();
+        inner.set_clip_rect(card.shrink(1.0));
         egui::ScrollArea::horizontal().id_salt("pr_ribbon_scroll").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
             &mut inner,
             |ui| {
@@ -705,11 +730,11 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
                 ribbon::body(app, ui, tab, s.context);
             },
         );
-        // Collapse the Ribbon (Ctrl+F1).
-        let cr = Rect::from_min_size(pos2(full.max.x - 24.0, full.max.y - 20.0), vec2(18.0, 16.0));
+        // Collapse the Ribbon (Ctrl+F1), at the panel's bottom right.
+        let cr = Rect::from_min_size(pos2(card.max.x - 26.0, card.max.y - 22.0), vec2(20.0, 18.0));
         let resp = ui.interact(cr, egui::Id::unique("pr_collapse"), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(cr, 0.0, PR::HOVER);
+            ui.painter().rect_filled(cr, PR::ROUND, PR::HOVER);
         }
         let c = cr.center();
         ui.painter().line_segment([c + vec2(-4.0, 2.0), c + vec2(0.0, -2.0)], Stroke::new(1.2, PR::GROUP_LABEL));
@@ -734,7 +759,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let pr = Rect::from_min_size(pos2(full.min.x + 8.0, full.min.y + 2.0), vec2(96.0, STATUS_H - 4.0));
         let resp = ui.interact(pr, egui::Id::unique("pr_status_page"), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(pr, 0.0, PR::HOVER);
+            ui.painter().rect_filled(pr, PR::ROUND, PR::HOVER);
         }
         art::paint(ui.painter(), Rect::from_min_size(pr.min + vec2(2.0, 1.5), vec2(15.0, 15.0)), "single-page", true);
         ui.painter().text(
@@ -751,12 +776,23 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         if !app.ui.status.is_empty() {
             ui.painter().text(pos2(pr.max.x + 18.0, full.center().y), egui::Align2::LEFT_CENTER, &app.ui.status, font.clone(), PR::GROUP_LABEL);
         }
-        // Right: view buttons, zoom slider, percentage.
+        // Right: view buttons, zoom slider, percentage, and Fit Page to Window.
         let zoom = app.view().map(|v| v.zoom).unwrap_or(1.0);
-        let pct_r = Rect::from_min_size(pos2(full.max.x - 52.0, full.min.y + 2.0), vec2(46.0, STATUS_H - 4.0));
+        let fit_r = Rect::from_min_size(pos2(full.max.x - 32.0, full.min.y + 2.0), vec2(26.0, STATUS_H - 4.0));
+        let fit = ui.interact(fit_r, egui::Id::unique("pr_zoom_fit"), Sense::click());
+        if fit.hovered() {
+            ui.painter().rect_filled(fit_r, PR::ROUND, PR::HOVER);
+        }
+        let (fo, fi) = (Rect::from_center_size(fit_r.center(), vec2(14.0, 11.0)), Rect::from_center_size(fit_r.center(), vec2(6.0, 4.0)));
+        ui.painter().rect_stroke(fo, 1.5, Stroke::new(1.1, PR::TEXT), egui::StrokeKind::Inside);
+        ui.painter().rect_filled(fi, 1.0, PR::TEAL);
+        if fit.on_hover_text("Fit Page to Window").clicked() {
+            ribbon::act(app, "view.fitPage");
+        }
+        let pct_r = Rect::from_min_size(pos2(fit_r.min.x - 48.0, full.min.y + 2.0), vec2(46.0, STATUS_H - 4.0));
         let resp = ui.interact(pct_r, egui::Id::unique("pr_zoom_pct"), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(pct_r, 0.0, PR::HOVER);
+            ui.painter().rect_filled(pct_r, PR::ROUND, PR::HOVER);
         }
         ui.painter().text(pct_r.center(), egui::Align2::CENTER_CENTER, format!("{:.0}%", zoom * 100.0), font.clone(), PR::TEXT);
         egui::Popup::menu(&resp).show(|ui| {
@@ -776,13 +812,13 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let to_t = |z: f64| ((z.max(0.1).ln() - 0.1f64.ln()) / (4.0f64.ln() - 0.1f64.ln())).clamp(0.0, 1.0) as f32;
         let from_t = |t: f32| (0.1f64.ln() + f64::from(t) * (4.0f64.ln() - 0.1f64.ln())).exp();
         let track = Rect::from_min_max(pos2(sr.min.x, sr.center().y - 0.5), pos2(sr.max.x, sr.center().y + 0.5));
-        ui.painter().rect_filled(track, 0.0, PR::GROUP_LABEL);
+        ui.painter().rect_filled(track, 0.5, PR::GROUP_LABEL);
         ui.painter()
             .line_segment([pos2(sr.center().x, sr.center().y - 4.0), pos2(sr.center().x, sr.center().y + 4.0)], Stroke::new(1.0, PR::GROUP_LABEL));
         let resp = ui.interact(sr, egui::Id::unique("pr_zoom_slider"), Sense::click_and_drag());
         let t = to_t(zoom);
-        let knob = Rect::from_center_size(pos2(sr.min.x + t * sr.width(), sr.center().y), vec2(4.0, 12.0));
-        ui.painter().rect_filled(knob, 0.0, PR::TEXT);
+        let knob = Rect::from_center_size(pos2(sr.min.x + t * sr.width(), sr.center().y), vec2(5.0, 13.0));
+        ui.painter().rect_filled(knob, 2.5, PR::TEXT);
         if (resp.dragged() || resp.clicked())
             && let Some(p) = resp.interact_pointer_pos()
         {
@@ -796,7 +832,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
             let br = Rect::from_center_size(c, vec2(16.0, 16.0));
             let b = ui.interact(br, egui::Id::unique(("pr_zoom_step", minus)), Sense::click());
             if b.hovered() {
-                ui.painter().rect_filled(br, 0.0, PR::HOVER);
+                ui.painter().rect_filled(br, PR::ROUND, PR::HOVER);
             }
             ui.painter().line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], Stroke::new(1.2, PR::TEXT));
             if !minus {
@@ -812,9 +848,9 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
             let r = Rect::from_min_size(pos2(sr.min.x - 76.0 + k as f32 * 26.0, full.min.y + 2.0), vec2(24.0, STATUS_H - 4.0));
             let b = ui.interact(r, egui::Id::unique(("pr_viewbtn", icon)), Sense::click());
             if on {
-                ui.painter().rect_filled(r, 0.0, PR::CHECKED);
+                ui.painter().rect_filled(r, PR::ROUND, PR::CHECKED);
             } else if b.hovered() {
-                ui.painter().rect_filled(r, 0.0, PR::HOVER);
+                ui.painter().rect_filled(r, PR::ROUND, PR::HOVER);
             }
             art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(15.0, 15.0)), icon, true);
             if b.on_hover_text(tip).clicked() {

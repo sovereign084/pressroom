@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use super::{Context, PR, Tab, art};
 use crate::DesignApp;
 
-/// Height of the ribbon body (groups and their labels).
-pub const BODY_H: f32 = 94.0;
+/// Height of the ribbon body: the groups and their labels on a rounded panel, with its margins.
+pub const BODY_H: f32 = 100.0;
 /// Height of a group's controls; the label sits below.
 const CONTENT_H: f32 = 70.0;
 const LABEL_H: f32 = 18.0;
@@ -63,7 +63,9 @@ fn paint_button_bg(ui: &Ui, r: Rect, resp: &Response, on: bool) {
     } else {
         return;
     };
-    ui.painter().rect(r, 0.0, fill, Stroke::new(1.0, if on || resp.hovered() { PR::HOVER_BORDER } else { fill }), StrokeKind::Inside);
+    // Soft, rounded highlights, as current Office draws them; a button that's on keeps a hairline.
+    let edge = if on { Stroke::new(1.0, PR::HOVER_BORDER) } else { Stroke::NONE };
+    ui.painter().rect(r.shrink(0.5), PR::ROUND, fill, edge, StrokeKind::Inside);
 }
 
 fn text_color(enabled: bool) -> Color32 {
@@ -199,7 +201,7 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
             let br = Rect::from_min_size(pos2(lr.max.x - 15.0, lr.min.y + 3.0), vec2(12.0, 12.0));
             let resp = ui.interact(br, ui.scope_id().with(("launcher", name)), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(br, 0.0, PR::HOVER);
+                ui.painter().rect_filled(br, PR::ROUND, PR::HOVER);
             }
             let s = Stroke::new(1.0, PR::GROUP_LABEL);
             ui.painter().line_segment([br.min + vec2(3.0, 3.0), br.max - vec2(3.0, 3.0)], s);
@@ -211,7 +213,7 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
     });
     let right = inner.response.rect.max.x + 3.0;
     ui.add_space(6.0);
-    ui.painter().line_segment([pos2(right, top.y + 4.0), pos2(right, top.y + BODY_H - 8.0)], Stroke::new(1.0, PR::GROUP_SEP));
+    ui.painter().line_segment([pos2(right, top.y + 8.0), pos2(right, top.y + CONTENT_H + LABEL_H - 6.0)], Stroke::new(1.0, PR::GROUP_SEP));
     inner.inner
 }
 
@@ -252,6 +254,7 @@ pub(super) fn body(app: &mut DesignApp, ui: &mut Ui, tab: Tab, context: Context)
             Tab::Mailings => mailings(app, ui),
             Tab::Review => review(app, ui),
             Tab::View => view(app, ui),
+            Tab::Help => help(app, ui),
             Tab::Format => match context {
                 Context::Picture => picture_format(app, ui),
                 Context::Drawing => drawing_format(app, ui),
@@ -259,6 +262,27 @@ pub(super) fn body(app: &mut DesignApp, ui: &mut Ui, tab: Tab, context: Context)
                 _ => text_box_format(app, ui),
             },
             Tab::File => {}
+        }
+    });
+}
+
+// ───────────────────────────── Help ─────────────────────────────
+
+/// Help, Feedback, What's New and Check for Updates, as Publisher's Help tab offers them.
+fn help(app: &mut DesignApp, ui: &mut Ui) {
+    let repo = super::update::REPO;
+    group(ui, "Help", false, |ui| {
+        if big(ui, "help", "Help", true).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://github.com/{repo}#readme")));
+        }
+        if big(ui, "feedback", "Feedback", true).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://github.com/{repo}/issues/new")));
+        }
+        if big(ui, "whats-new", "What's\nNew", true).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://github.com/{repo}/releases")));
+        }
+        if big(ui, "update", "Check for\nUpdates", true).clicked() {
+            app.updates_rt.pressroom.check(ui.ctx(), true);
         }
     });
 }
@@ -524,12 +548,14 @@ fn objects_group(app: &mut DesignApp, ui: &mut Ui) {
         if big(ui, "textbox", "Draw Text\nBox", doc).clicked() {
             super::start_draw(app, "type");
         }
-        if big(ui, "draw-table", "Draw\nTable", doc).clicked() {
-            super::insert_table(app);
-        }
+        // Then Pictures, Table and Shapes, in Publisher's order.
         if big(ui, "picture", "Pictures", doc).clicked() {
             super::insert_picture(app);
         }
+        if big_inner(ui, "table", "Table", doc, true, false).clicked() {
+            super::insert_table(app);
+        }
+        big_menu(ui, "shapes", "Shapes", doc, |ui| shapes_menu(app, ui));
     });
 }
 

@@ -124,13 +124,16 @@ pub fn paint(p: &Painter, r: Rect, name: &str, enabled: bool) {
             g.boxed(13.5, 18.0, 18.5, 29.0, INK, INK);
         }
         // Undo / redo / save (Quick Access Toolbar)
-        "undo" => {
-            g.path(&[(8.0, 12.0), (20.0, 12.0), (25.0, 16.0), (25.0, 21.0), (20.0, 25.0), (12.0, 25.0)], PAPER, 2.6);
-            g.poly(&[(3.0, 12.0), (10.0, 6.0), (10.0, 18.0)], PAPER, None);
+        // White on Publisher's teal ("undo"), or in ink on a light title bar ("undo-ink").
+        "undo" | "undo-ink" => {
+            let c = if name == "undo" { PAPER } else { INK };
+            g.path(&[(8.0, 12.0), (20.0, 12.0), (25.0, 16.0), (25.0, 21.0), (20.0, 25.0), (12.0, 25.0)], c, 2.6);
+            g.poly(&[(3.0, 12.0), (10.0, 6.0), (10.0, 18.0)], c, None);
         }
-        "redo" => {
-            g.path(&[(24.0, 12.0), (12.0, 12.0), (7.0, 16.0), (7.0, 21.0), (12.0, 25.0), (20.0, 25.0)], PAPER, 2.6);
-            g.poly(&[(29.0, 12.0), (22.0, 6.0), (22.0, 18.0)], PAPER, None);
+        "redo" | "redo-ink" => {
+            let c = if name == "redo" { PAPER } else { INK };
+            g.path(&[(24.0, 12.0), (12.0, 12.0), (7.0, 16.0), (7.0, 21.0), (12.0, 25.0), (20.0, 25.0)], c, 2.6);
+            g.poly(&[(29.0, 12.0), (22.0, 6.0), (22.0, 18.0)], c, None);
         }
         "save" | "save-dark" => {
             let c = if name == "save" { PAPER } else { BLUE };
@@ -705,6 +708,29 @@ pub fn paint(p: &Painter, r: Rect, name: &str, enabled: bool) {
                 _ => 20.0,
             };
             g.lines(9.0, 23.0, y, 2, 3.5, BLUE);
+        }
+        // Help tab.
+        "help" => {
+            g.circle(16.0, 16.0, 12.0, TEAL, None);
+            g.text(16.0, 16.5, "?", 18.0, PAPER, true);
+        }
+        "feedback" => {
+            g.poly(&[(4.0, 6.0), (28.0, 6.0), (28.0, 22.0), (4.0, 22.0)], PAPER, Some(INK));
+            g.poly(&[(9.0, 21.5), (16.0, 21.5), (9.0, 28.0)], PAPER, Some(INK));
+            g.line((8.0, 11.0), (24.0, 11.0), BLUE, 1.6);
+            g.line((8.0, 16.0), (19.0, 16.0), BLUE, 1.6);
+        }
+        "whats-new" => {
+            // A four-point sparkle, as two diamonds (shapes are filled convex).
+            g.poly(&[(16.0, 3.0), (19.5, 16.0), (16.0, 29.0), (12.5, 16.0)], GOLD, None);
+            g.poly(&[(3.0, 16.0), (16.0, 12.5), (29.0, 16.0), (16.0, 19.5)], GOLD, None);
+            g.circle(25.0, 7.0, 2.2, TEAL, None);
+        }
+        "update" => {
+            g.path(&[(25.0, 11.0), (21.0, 6.5), (15.0, 5.5), (9.0, 8.0), (6.0, 13.0), (6.0, 18.0)], TEAL, 2.4);
+            g.poly(&[(27.5, 5.0), (27.5, 13.5), (19.5, 12.0)], TEAL, None);
+            g.path(&[(7.0, 21.0), (11.0, 25.5), (17.0, 26.5), (23.0, 24.0), (26.0, 19.0), (26.0, 14.0)], TEAL, 2.4);
+            g.poly(&[(4.5, 27.0), (4.5, 18.5), (12.5, 20.0)], TEAL, None);
         }
         _ => {
             g.outline(6.0, 6.0, 26.0, 26.0, GREY, 1.0);

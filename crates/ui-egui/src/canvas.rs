@@ -183,7 +183,14 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
     // other non-printing marks go, and only the shown area of each page keeps its content. They
     // differ in how much of the page shows, which `shown_area` gives.
     let preview = app.ui.screen_mode != ScreenMode::Normal;
-    let bg = if app.ui.screen_mode == ScreenMode::Presentation { Color32::BLACK } else { t.pasteboard };
+    let bg = if app.ui.screen_mode == ScreenMode::Presentation {
+        Color32::BLACK
+    } else if app.ui.pressroom_shell {
+        // PressRoom's light scratch area, as current Publisher's.
+        crate::pressroom::PR::SCRATCH
+    } else {
+        t.pasteboard
+    };
     painter.rect_filled(screen, 0.0, bg);
     // Page shadow: a hard 1.5 pt black offset on the right and bottom (InDesign 2026).
     for slot in &layout.slots {
