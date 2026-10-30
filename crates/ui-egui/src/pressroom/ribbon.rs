@@ -15,6 +15,10 @@ const CONTENT_H: f32 = 70.0;
 const LABEL_H: f32 = 18.0;
 /// One row of small buttons (three to a column).
 const ROW_H: f32 = 22.0;
+/// Icon sizes, as Publisher draws them: large buttons' and small buttons' (whose pictograms fill
+/// more of their box than the art's 32-unit grid leaves, hence 20 for Publisher's 16).
+const BIG_ICON: f32 = 36.0;
+const SMALL_ICON: f32 = 20.0;
 
 /// Font sizes offered in the Font Size box, as Publisher lists them.
 const SIZES: &[f64] = &[8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 36.0, 48.0, 72.0];
@@ -86,9 +90,9 @@ fn big_inner(ui: &mut Ui, icon: &str, label: &str, enabled: bool, arrow: bool, o
     let w = lines.iter().map(|l| text_w(ui, l, &font)).fold(0.0, f32::max).max(34.0) + 10.0;
     let (r, resp) = ui.allocate_exact_size(vec2(w, CONTENT_H), if enabled { Sense::click() } else { Sense::hover() });
     paint_button_bg(ui, r, &resp, on && enabled);
-    art::paint(ui.painter(), Rect::from_min_size(pos2(r.center().x - 16.0, r.min.y + 4.0), vec2(32.0, 32.0)), icon, enabled);
+    art::paint(ui.painter(), Rect::from_min_size(pos2(r.center().x - BIG_ICON / 2.0, r.min.y + 2.0), vec2(BIG_ICON, BIG_ICON)), icon, enabled);
     for (i, l) in lines.iter().enumerate() {
-        ui.painter().text(pos2(r.center().x, r.min.y + 46.0 + i as f32 * 13.0), egui::Align2::CENTER_CENTER, l, font.clone(), text_color(enabled));
+        ui.painter().text(pos2(r.center().x, r.min.y + 47.0 + i as f32 * 13.0), egui::Align2::CENTER_CENTER, l, font.clone(), text_color(enabled));
     }
     let tip = label.replace('\n', " ");
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &tip));
@@ -114,12 +118,12 @@ fn big_menu(ui: &mut Ui, icon: &str, label: &str, enabled: bool, contents: impl 
 fn small_inner(ui: &mut Ui, icon: &str, label: &str, enabled: bool, arrow: bool, on: bool) -> Response {
     let font = label_font();
     let shown = if arrow { format!("{label} ▾") } else { label.to_string() };
-    let w = if shown.is_empty() { 24.0 } else { text_w(ui, &shown, &font) + 30.0 };
+    let w = if shown.is_empty() { 28.0 } else { text_w(ui, &shown, &font) + 34.0 };
     let (r, resp) = ui.allocate_exact_size(vec2(w, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
     paint_button_bg(ui, r, &resp, on && enabled);
-    art::paint(ui.painter(), Rect::from_min_size(pos2(r.min.x + 4.0, r.center().y - 8.0), vec2(16.0, 16.0)), icon, enabled);
+    art::paint(ui.painter(), Rect::from_min_size(pos2(r.min.x + 4.0, r.center().y - SMALL_ICON / 2.0), vec2(SMALL_ICON, SMALL_ICON)), icon, enabled);
     if !shown.is_empty() {
-        ui.painter().text(pos2(r.min.x + 25.0, r.center().y), egui::Align2::LEFT_CENTER, &shown, font, text_color(enabled));
+        ui.painter().text(pos2(r.min.x + 29.0, r.center().y), egui::Align2::LEFT_CENTER, &shown, font, text_color(enabled));
     }
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     resp.on_hover_text(label)
@@ -141,34 +145,34 @@ fn small_menu(ui: &mut Ui, icon: &str, label: &str, enabled: bool, contents: imp
 
 /// An icon-only toggle (alignment, bullets…) with a tooltip.
 fn tool(ui: &mut Ui, icon: &str, tip: &str, enabled: bool, on: bool) -> Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(24.0, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
+    let (r, resp) = ui.allocate_exact_size(vec2(28.0, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
     paint_button_bg(ui, r, &resp, on && enabled);
-    art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(16.0, 16.0)), icon, enabled);
+    art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(SMALL_ICON, SMALL_ICON)), icon, enabled);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, tip));
     resp.on_hover_text(tip)
 }
 
 /// A letter toggle: Bold, Italic, Underline.
 fn letter(ui: &mut Ui, text: &str, tip: &str, enabled: bool, on: bool) -> Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(24.0, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
+    let (r, resp) = ui.allocate_exact_size(vec2(28.0, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
     paint_button_bg(ui, r, &resp, on && enabled);
     let c = text_color(enabled);
     let p = ui.painter();
     match text {
         "B" => {
-            p.text(r.center(), egui::Align2::CENTER_CENTER, "B", crate::theme::semibold(14.0), c);
+            p.text(r.center(), egui::Align2::CENTER_CENTER, "B", crate::theme::semibold(16.5), c);
         }
         "I" => {
             // An upright font slanted by hand: two strokes of a serif I.
             let cx = r.center().x;
-            let (top, bot) = (r.center().y - 6.0, r.center().y + 6.0);
-            p.line_segment([pos2(cx + 2.5, top), pos2(cx - 2.5, bot)], Stroke::new(1.6, c));
-            p.line_segment([pos2(cx, top), pos2(cx + 5.0, top)], Stroke::new(1.2, c));
-            p.line_segment([pos2(cx - 5.0, bot), pos2(cx, bot)], Stroke::new(1.2, c));
+            let (top, bot) = (r.center().y - 7.0, r.center().y + 7.0);
+            p.line_segment([pos2(cx + 3.0, top), pos2(cx - 3.0, bot)], Stroke::new(1.8, c));
+            p.line_segment([pos2(cx, top), pos2(cx + 6.0, top)], Stroke::new(1.3, c));
+            p.line_segment([pos2(cx - 6.0, bot), pos2(cx, bot)], Stroke::new(1.3, c));
         }
         _ => {
-            p.text(r.center() - vec2(0.0, 1.0), egui::Align2::CENTER_CENTER, "U", FontId::proportional(14.0), c);
-            p.line_segment([r.center() + vec2(-5.0, 7.0), r.center() + vec2(5.0, 7.0)], Stroke::new(1.2, c));
+            p.text(r.center() - vec2(0.0, 1.5), egui::Align2::CENTER_CENTER, "U", FontId::proportional(16.5), c);
+            p.line_segment([r.center() + vec2(-6.0, 8.0), r.center() + vec2(6.0, 8.0)], Stroke::new(1.3, c));
         }
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, tip));

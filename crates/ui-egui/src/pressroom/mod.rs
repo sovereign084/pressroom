@@ -582,7 +582,7 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
             if resp.hovered() && enabled {
                 ui.painter().rect_filled(r, PR::ROUND, top.hover);
             }
-            art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(16.0, 16.0)), icon, enabled);
+            art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), icon, enabled);
             if resp.on_hover_text(tip).clicked() {
                 ribbon::act(app, cmd);
             }

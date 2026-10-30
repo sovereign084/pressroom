@@ -31,7 +31,8 @@ impl Pen<'_> {
         Rect::from_min_max(self.at(x0, y0), self.at(x1, y1))
     }
     fn c(&self, c: Color32) -> Color32 {
-        if self.dim { c.gamma_multiply(0.35) } else { c }
+        // Greyed out about as far as Publisher greys a disabled button.
+        if self.dim { c.gamma_multiply(0.42) } else { c }
     }
     fn w(&self, w: f32) -> f32 {
         (w * self.k).max(1.0)
@@ -552,36 +553,37 @@ pub fn paint(p: &Painter, r: Rect, name: &str, enabled: bool) {
             g.circle(16.0, 16.0, 3.0, INK, None);
         }
         // Fonts and paragraphs (small)
+        // Letters fill the box, as Publisher's do.
         "grow-font" => {
-            g.text(12.0, 18.0, "A", 20.0, INK, false);
-            g.poly(&[(22.0, 10.0), (26.0, 4.0), (30.0, 10.0)], BLUE, None);
+            g.text(12.0, 17.0, "A", 27.0, INK, false);
+            g.poly(&[(22.0, 9.0), (26.5, 2.5), (31.0, 9.0)], BLUE, None);
         }
         "shrink-font" => {
-            g.text(12.0, 19.0, "A", 15.0, INK, false);
-            g.poly(&[(22.0, 4.0), (26.0, 10.0), (30.0, 4.0)], BLUE, None);
+            g.text(12.0, 18.0, "A", 21.0, INK, false);
+            g.poly(&[(22.0, 3.0), (26.5, 9.5), (31.0, 3.0)], BLUE, None);
         }
         "clear-format" => {
-            g.text(12.0, 15.0, "A", 18.0, INK, false);
-            g.poly(&[(16.0, 24.0), (23.0, 17.0), (29.0, 23.0), (22.0, 30.0)], Color32::from_rgb(235, 140, 160), Some(INK));
+            g.text(12.0, 14.0, "A", 24.0, INK, false);
+            g.poly(&[(16.0, 25.0), (23.0, 18.0), (30.0, 24.0), (23.0, 31.0)], Color32::from_rgb(235, 140, 160), Some(INK));
         }
         "font-color" => {
-            g.text(16.0, 13.0, "A", 18.0, INK, false);
-            g.fill(4.0, 25.0, 28.0, 30.0, RED);
+            g.text(16.0, 12.5, "A", 25.0, INK, false);
+            g.fill(3.0, 25.0, 29.0, 30.5, RED);
         }
-        "change-case" => g.text(16.0, 16.0, "Aa", 16.0, INK, false),
+        "change-case" => g.text(16.0, 16.0, "Aa", 22.0, INK, false),
         "char-spacing" => {
-            g.text(16.0, 13.0, "AV", 14.0, INK, false);
-            g.path(&[(4.0, 26.0), (28.0, 26.0)], BLUE, 1.5);
-            g.poly(&[(2.0, 26.0), (6.0, 23.0), (6.0, 29.0)], BLUE, None);
-            g.poly(&[(30.0, 26.0), (26.0, 23.0), (26.0, 29.0)], BLUE, None);
+            g.text(16.0, 12.0, "AV", 19.0, INK, false);
+            g.path(&[(4.0, 26.0), (28.0, 26.0)], BLUE, 1.8);
+            g.poly(&[(1.5, 26.0), (6.0, 22.5), (6.0, 29.5)], BLUE, None);
+            g.poly(&[(30.5, 26.0), (26.0, 22.5), (26.0, 29.5)], BLUE, None);
         }
         "subscript" => {
-            g.text(12.0, 14.0, "x", 18.0, INK, false);
-            g.text(24.0, 24.0, "2", 11.0, BLUE, false);
+            g.text(12.0, 13.0, "x", 25.0, INK, false);
+            g.text(25.0, 24.0, "2", 15.0, BLUE, false);
         }
         "superscript" => {
-            g.text(12.0, 18.0, "x", 18.0, INK, false);
-            g.text(24.0, 8.0, "2", 11.0, BLUE, false);
+            g.text(12.0, 19.0, "x", 25.0, INK, false);
+            g.text(25.0, 7.0, "2", 15.0, BLUE, false);
         }
         "bullets" => {
             for (i, y) in [7.0, 16.0, 25.0].into_iter().enumerate() {
