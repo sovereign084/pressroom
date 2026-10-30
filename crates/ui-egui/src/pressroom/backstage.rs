@@ -142,7 +142,7 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
         Backstage::Print => print_page(app, ui),
         Backstage::Share => share_page(app, ui),
         Backstage::Export => export_page(app, ui),
-        Backstage::Account => account(ui),
+        Backstage::Account => account(app, ui),
     });
 }
 
@@ -655,9 +655,18 @@ fn export_page(app: &mut DesignApp, ui: &mut Ui) {
     }
 }
 
-fn account(ui: &mut Ui) {
+fn account(app: &mut DesignApp, ui: &mut Ui) {
     heading(ui, "PressRoom");
     ui.label("Free desktop publishing for bulletins, newsletters, flyers and cards.");
     ui.label(egui::RichText::new("Built on DesignCraft (Apache-2.0 / MIT). No account or subscription needed.").color(PR::GROUP_LABEL));
+    // Update Options, as in Publisher's Account page.
+    ui.add_space(18.0);
+    ui.label(egui::RichText::new("Product Information").size(15.0).color(PR::TEXT));
+    let version = super::update::VERSION.map_or_else(|| "Development build".to_string(), |v| format!("Version {v}"));
+    ui.label(egui::RichText::new(version).color(PR::GROUP_LABEL));
+    ui.add_space(6.0);
+    if ui.button("Check for Updates").on_hover_text("Look for a newer version of PressRoom").clicked() {
+        app.updates_rt.pressroom.check(ui.ctx(), true);
+    }
     let _ = Value::Null;
 }

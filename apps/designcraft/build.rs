@@ -9,10 +9,15 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../packaging/pressroom/pressroom.ico");
     println!("cargo:rerun-if-env-changed=DESIGNCRAFT_REQUIRE_WINRES");
+    println!("cargo:rerun-if-env-changed=PRESSROOM_VERSION");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     let mut res = winresource::WindowsResource::new();
+    // The installer build's PressRoom version (build-installer.ps1), shown in the file's Properties.
+    if let Ok(version) = std::env::var("PRESSROOM_VERSION") {
+        res.set("ProductVersion", &version);
+    }
     res.set_icon("../../packaging/pressroom/pressroom.ico")
         .set("ProductName", "PressRoom")
         .set("FileDescription", "PressRoom")

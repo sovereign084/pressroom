@@ -20,6 +20,8 @@ pub(crate) struct Runtime {
     repaint: Option<egui::Context>,
     pub(crate) manual_window_open: bool,
     pub(crate) status_message: Option<String>,
+    /// PressRoom's own updates, from PressRoom's releases (`pressroom::update`).
+    pub(crate) pressroom: crate::pressroom::update::Updates,
 }
 
 impl Default for Runtime {
@@ -35,6 +37,7 @@ impl Default for Runtime {
             repaint: None,
             manual_window_open: false,
             status_message: None,
+            pressroom: Default::default(),
         }
     }
 }
@@ -68,11 +71,16 @@ pub(crate) fn tick(app: &mut DesignApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         // PressRoom never checks DesignCraft's releases: an update offer would install DesignCraft
-        // over it. PressRoom updates come as a new PressRoom installer.
+        // over it. It looks for PressRoom's own releases instead (`pressroom::update`), once at
+        // start and whenever Check for Updates asks.
         let rt = &mut app.updates_rt;
         rt.repaint = Some(ctx.clone());
-        rt.check_requested = false;
-        rt.startup_check = false;
+        if std::mem::take(&mut rt.startup_check) {
+            rt.pressroom.check(ctx, false);
+        }
+        if std::mem::take(&mut rt.check_requested) {
+            rt.pressroom.check(ctx, true);
+        }
         rt.updater.tick(ctx);
     }
     #[cfg(target_arch = "wasm32")]

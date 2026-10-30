@@ -130,7 +130,12 @@ fn the_class_filter_and_similar_fonts_narrow_the_list() {
         click_at(&mut h, at);
     }
     settle(&mut h);
-    assert!(h.query_by_label("JetBrains Mono").is_some(), "a monospaced family is listed");
+    // Whichever monospaced family comes first: with many installed (Fira Code, IBM Plex Mono, …),
+    // JetBrains Mono can be below the fold.
+    assert!(
+        h.query_all_by(|n| n.label().is_some_and(|l| l.ends_with(" Mono") || l.ends_with(" Code"))).next().is_some(),
+        "a monospaced family is listed"
+    );
     assert!(h.query_by_label(designcraft_fonts::DEFAULT_FAMILY).is_none(), "a serif isn't");
     // Back to all classes, then fonts like the serif: it leads, other serifs follow, no sans.
     {

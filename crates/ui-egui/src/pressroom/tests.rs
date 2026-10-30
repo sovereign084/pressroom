@@ -182,3 +182,41 @@ fn the_tabs_switch_the_ribbon() {
     h.run_steps(4);
     assert!(h.query_by_label("Bold (Ctrl+B)").is_some());
 }
+
+#[test]
+fn a_new_version_shows_in_a_bar_under_the_ribbon() {
+    let mut h = window();
+    h.state_mut().app.updates_rt.pressroom.offer("9.9.9");
+    h.run_steps(4);
+    let bar = test_window::panel_rect(&h, "pr_update_bar");
+    let ribbon = test_window::panel_rect(&h, "pr_ribbon");
+    assert!(bar.width() > 1000.0 && bar.min.y >= ribbon.max.y - 0.5, "{bar:?} under {ribbon:?}");
+    assert!(h.query_by_label("Update Now").is_some());
+    h.get_by_label("Close the update message").click();
+    h.run_steps(4);
+    assert!(!h.state().app.updates_rt.pressroom.showing());
+}
+
+#[test]
+fn restart_and_update_waits_for_unsaved_work() {
+    let mut h = window();
+    run(&mut h, "frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "text": "Unsaved"}));
+    let msi = std::path::PathBuf::from("pressroom-9.9.9-windows-x64.msi");
+    h.state_mut().app.updates_rt.pressroom.downloaded("9.9.9", msi);
+    h.run_steps(4);
+    h.get_by_label("Restart and Update").click();
+    h.run_steps(4);
+    // Nothing installs over unsaved work: the update stays ready and PressRoom says why.
+    assert!(matches!(h.state().app.updates_rt.pressroom.phase(), crate::pressroom::update::Phase::Ready { .. }));
+    assert!(h.state().app.ui.status.contains("Save your publications first"), "{}", h.state().app.ui.status);
+}
+
+#[test]
+fn file_account_shows_the_version_and_checks_for_updates() {
+    let mut h = window();
+    crate::pressroom::open_backstage(&h.ctx, crate::pressroom::Backstage::Account);
+    h.run_steps(4);
+    assert!(h.query_by_label("Check for Updates").is_some());
+    let version = crate::pressroom::update::VERSION.map_or_else(|| "Development build".to_string(), |v| format!("Version {v}"));
+    assert!(h.query_by_label(&version).is_some(), "{version}");
+}

@@ -1,6 +1,7 @@
 # Publishes a PressRoom version on GitHub: pushes the branch, builds the installer and makes a
 # release whose installer is always named PressRoom-Setup.msi, so
-# https://github.com/<owner>/pressroom/releases/latest/download/PressRoom-Setup.msi is always the newest.
+# https://github.com/<owner>/pressroom/releases/latest/download/PressRoom-Setup.msi is always the newest,
+# and also pressroom-<version>-windows-x64.msi, which PressRoom's own update check downloads.
 #   powershell -ExecutionPolicy Bypass -File packaging\pressroom\release.ps1 -Version 0.2.8 -Notes "What changed"
 # Needs the GitHub CLI signed in (gh auth login) and the repository as the 'origin' remote. Each
 # version must be higher than the last: the installer replaces an older PressRoom, never a newer one.
@@ -23,13 +24,16 @@ if (-not $SkipBuild -or -not (Test-Path $msi)) { & (Join-Path $PSScriptRoot 'bui
 if (-not (Test-Path $msi)) { throw "The installer was not built: $msi" }
 $asset = Join-Path $root 'target-pkg\PressRoom-Setup.msi'
 Copy-Item $msi $asset -Force -ErrorAction Stop
+# The same installer under the name PressRoom's update check looks for (pressroom/update.rs).
+$updaterAsset = Join-Path $root "target-pkg\pressroom-$Version-windows-x64.msi"
+Copy-Item $msi $updaterAsset -Force -ErrorAction Stop
 
 # Notes through a file: Windows PowerShell mangles quotes in a native program's arguments.
 $notesFile = Join-Path $root 'target-pkg\release-notes.md'
 $body = if ($Notes) { $Notes } else { "PressRoom $Version." }
 $body += "`n`n**Install or update:** download **PressRoom-Setup.msi** below and open it. If Windows says `"Windows protected your PC`", click **More info**, then **Run anyway**. A new version replaces the old one and keeps your publications and settings."
 [IO.File]::WriteAllText($notesFile, $body, (New-Object Text.UTF8Encoding $false))
-gh release create "v$Version" $asset --repo $repo --target main --title "PressRoom $Version" --notes-file $notesFile
+gh release create "v$Version" $asset $updaterAsset --repo $repo --target main --title "PressRoom $Version" --notes-file $notesFile
 if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
 "Released: https://github.com/$repo/releases/tag/v$Version"
 "Download link (always the newest): https://github.com/$repo/releases/latest/download/PressRoom-Setup.msi"

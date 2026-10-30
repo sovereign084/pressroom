@@ -13,6 +13,7 @@ mod ribbon;
 mod templates;
 #[cfg(test)]
 mod tests;
+pub mod update;
 
 use designcraft_doc::Content;
 use egui::{Color32, FontId, Rect, Sense, Stroke, Ui, pos2, vec2};
@@ -453,6 +454,10 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     title_bar(app, ui, &s);
     if s.backstage.is_none() {
         tabs_and_ribbon(app, ui, &s);
+    }
+    // An update to offer: under the ribbon, or under the title bar on the File screen.
+    update::bar(app, ui);
+    if s.backstage.is_none() {
         status_bar(app, ui);
     }
 }

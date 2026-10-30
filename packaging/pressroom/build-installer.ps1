@@ -75,6 +75,9 @@ $($licences -join "`n")
 }
 $env:Path += ";$env:USERPROFILE\.cargo\bin;$env:USERPROFILE\.dotnet\tools"
 $env:CARGO_TARGET_DIR = $TargetDir
+# PressRoom's own version, built into the app: it compares it with the newest release to offer
+# updates (crates/ui-egui/src/pressroom/update.rs) and shows it in File > Account.
+$env:PRESSROOM_VERSION = $Version
 Push-Location $root
 try {
     cargo build --release -p designcraft -p designcraft-cli 2>&1 | Select-Object -Last 2 | Out-Host
