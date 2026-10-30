@@ -1,6 +1,7 @@
-//! Help › About DesignCraft: tabs About · Contributors · Models. About is the splash with the
-//! ArtCraft mark, version, and community links (Discord first and largest), plus the other ArtCraft
-//! apps; Contributors and Models are the compiled-in credits (`crate::credits`).
+//! Help › About DesignCraft: tabs About · Contributors · Models. About is the splash with
+//! PressRoom's emblem, version, and community links (Discord first and largest), plus the other
+//! ArtCraft apps; Contributors and Models are the compiled-in credits (`crate::credits`).
+//! PressRoom is a modified version, so it carries none of the ArtCraft marks (`docs/brand/LICENSE-brand.txt`).
 
 use designcraft_engine::links;
 use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
@@ -9,13 +10,13 @@ use serde_json::json;
 use crate::DesignApp;
 use crate::theme::{Tokens, semibold};
 
-/// ArtCraft brand blue (from `docs/brand/artcraft-mark.svg`).
-pub const BRAND: Color32 = Color32::from_rgb(0x4e, 0x7b, 0xfb);
+/// PressRoom's blue-teal (its icon's tile, `packaging/pressroom/make-icon.ps1`).
+pub const BRAND: Color32 = Color32::from_rgb(0x12, 0x84, 0x96);
 /// Discord's brand colour, used for the "Join our Discord" buttons (colour only; no Discord artwork).
 pub const DISCORD: Color32 = Color32::from_rgb(0x58, 0x65, 0xf2);
 
-/// The ArtCraft mark outline (viewBox -10 -19.42 136.34 136.34), from `docs/brand/artcraft-mark.svg`.
-const MARK_PATH: &str = "M104.28,49.49L81.55,0h-31.23l-3.17,4.76L14.75,53.63,0,75.85l21.55,21.55,63.79-36.94,16.99,37.04,14.01-21.74-12.06-26.27ZM32.89,65.66l32.42-48.87,10.91,23.77-43.32,25.09Z";
+/// PressRoom's emblem, an open booklet (viewBox -10 -19.42 136.34 136.34), drawn here.
+const MARK_PATH: &str = "M8,10L56,20L56,88L8,78ZM60,20L108,10L108,78L60,88Z";
 
 /// The other ArtCraft apps (app-page slug, name, what it is) — same list as the README.
 pub const SIBLINGS: &[(&str, &str, &str)] = &[
@@ -30,13 +31,13 @@ pub const SIBLINGS: &[(&str, &str, &str)] = &[
 /// The About window's tabs, in `UiState::about_tab` order (`help.about {tab}` names them in lowercase).
 pub const ABOUT_TABS: [&str; 3] = ["About", "Contributors", "Models"];
 
-/// Paint the ArtCraft mark into `rect` (square), rasterised once per size and cached.
+/// Paint PressRoom's emblem into `rect` (square), rasterised once per size and cached.
 pub fn paint_mark(ui: &egui::Ui, rect: Rect, color: Color32) {
     use designcraft_render::vello_cpu::{self, kurbo, peniko};
     let ctx = ui.ctx();
     let ppp = ctx.pixels_per_point();
     let px = ((rect.width().min(rect.height()) * ppp).round() as u32).clamp(8, 1024);
-    let key = egui::Id::unique(("artcraft_mark", px, color.to_array()));
+    let key = egui::Id::unique(("brand_mark", px, color.to_array()));
     let tex: Option<egui::TextureHandle> = ctx.data(|d| d.get_temp(key));
     let tex = tex.unwrap_or_else(|| {
         let mut rc = vello_cpu::RenderContext::new_with(px as u16, px as u16, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
@@ -52,7 +53,7 @@ pub fn paint_mark(ui: &egui::Ui, rect: Rect, color: Color32) {
         let mut res = vello_cpu::Resources::new();
         rc.render(&mut pm, &mut res);
         let ci = egui::ColorImage::from_rgba_premultiplied([px as usize, px as usize], pm.data_as_u8_slice());
-        let t = crate::widgets::load_texture(ctx, "artcraft_mark", ci, egui::TextureOptions::LINEAR);
+        let t = crate::widgets::load_texture(ctx, "brand_mark", ci, egui::TextureOptions::LINEAR);
         ctx.data_mut(|d| d.insert_temp(key, t.clone()));
         t
     });
@@ -177,9 +178,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
             ));
             ui.label(crate::rtl::widget(
                 ui,
-                egui::RichText::new(crate::i18n::tr(&app.ui.language, "Part of the ArtCraft suite of open creative tools."))
-                    .size(12.0)
-                    .color(t.text_dim),
+                egui::RichText::new(crate::i18n::tr(&app.ui.language, "Based on DesignCraft by the ArtCraft team.")).size(12.0).color(t.text_dim),
             ));
             ui.add_space(16.0);
             if discord_button(ui, crate::i18n::tr(&app.ui.language, "Join the ArtCraft Discord"), vec2(300.0, 40.0)) {
