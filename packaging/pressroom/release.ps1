@@ -5,8 +5,10 @@
 # Needs the GitHub CLI signed in (gh auth login) and the repository as the 'origin' remote. Each
 # version must be higher than the last: the installer replaces an older PressRoom, never a newer one.
 param([Parameter(Mandatory)][string]$Version, [string]$Notes = '', [switch]$SkipBuild)
-$ErrorActionPreference = 'Stop'
-$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+# Exit codes, not 'Stop': git and gh report progress on stderr, which Windows PowerShell would
+# otherwise turn into errors whenever the output is redirected.
+$ErrorActionPreference = 'Continue'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..') -ErrorAction Stop).Path
 if (git -C $root status --porcelain --untracked-files=no) { throw 'Commit your changes first: the release is built from the committed code.' }
 $repo = (gh repo view (git -C $root remote get-url origin) --json nameWithOwner --jq .nameWithOwner)
 if (-not $repo) { throw "No GitHub repository at the 'origin' remote." }
@@ -20,7 +22,7 @@ $msi = Join-Path $root "target-pkg\PressRoom-Setup-$Version.msi"
 if (-not $SkipBuild -or -not (Test-Path $msi)) { & (Join-Path $PSScriptRoot 'build-installer.ps1') -Version $Version }
 if (-not (Test-Path $msi)) { throw "The installer was not built: $msi" }
 $asset = Join-Path $root 'target-pkg\PressRoom-Setup.msi'
-Copy-Item $msi $asset -Force
+Copy-Item $msi $asset -Force -ErrorAction Stop
 
 # Notes through a file: Windows PowerShell mangles quotes in a native program's arguments.
 $notesFile = Join-Path $root 'target-pkg\release-notes.md'
