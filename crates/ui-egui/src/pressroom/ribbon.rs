@@ -1206,8 +1206,10 @@ fn picture_format(app: &mut DesignApp, ui: &mut Ui) {
     });
     arrange_group(app, ui);
     group(ui, "Crop", false, |ui| {
-        if big(ui, "crop", "Crop", sel).clicked() {
-            let _ = app.run("tool.select", json!({"tool": "directSelection"}));
+        // Crop stays lit while cropping; a second click (or Esc, or a click away) ends it.
+        let cropping = app.session.tool_id() == "directSelection";
+        if big_inner(ui, "crop", "Crop", sel, false, cropping).clicked() {
+            let _ = app.run("tool.select", json!({"tool": if cropping { "selection" } else { "directSelection" }}));
         }
         column(ui, |ui| {
             if small(ui, "whole-page", "Fit", sel).clicked() {

@@ -105,10 +105,22 @@ fn take_keys(app: &mut DesignApp, input: &mut egui::InputState, typing: bool) ->
         !leave
     };
     let hits = app.key_dispatcher.dispatch_filtered(input, &app.keymap, &active, accept);
-    let escape = input.events.iter().any(
-        |e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, repeat: false, modifiers, .. } if !modifiers.command && !modifiers.alt),
-    );
-    Keys { presentation, hits, escape }
+    let escape_mods = input.events.iter().find_map(|e| match e {
+        egui::Event::Key { key: egui::Key::Escape, pressed: true, repeat: false, modifiers, .. } if !modifiers.command && !modifiers.alt => {
+            Some(*modifiers)
+        }
+        _ => None,
+    });
+    // Esc leaves PressRoom's Crop with the picture still selected, as in Publisher: the canvas
+    // must not also see the press and deselect.
+    if let Some(m) = escape_mods
+        && !typing
+        && app.ui.pressroom_shell
+        && app.session.tool_id() == "directSelection"
+    {
+        input.consume_key(m, egui::Key::Escape);
+    }
+    Keys { presentation, hits, escape: escape_mods.is_some() }
 }
 
 /// Runs what [`take_keys`] took, then Esc's return to the Selection tool.

@@ -170,6 +170,30 @@ fn publisher_handles(painter: &egui::Painter, xf: &Xf, b: HandleBox, color: Colo
     }
 }
 
+/// Publisher's crop handles on a picture's frame `b` (canvas): black angles at the corners and black
+/// bars on the sides, edged in white so they show on any picture.
+fn publisher_crop_handles(painter: &egui::Painter, xf: &Xf, b: HandleBox) {
+    let h = b.handles().map(|p| xf.to_screen(p));
+    let mark = |pts: Vec<Pos2>| {
+        painter.add(egui::Shape::line(pts.clone(), Stroke::new(5.5, Color32::WHITE)));
+        painter.add(egui::Shape::line(pts, Stroke::new(3.5, Color32::BLACK)));
+    };
+    for (k, &c) in h.iter().enumerate() {
+        let at = |i: usize| h.get(i % 8).copied().unwrap_or(c);
+        if k % 2 == 0 {
+            // Each arm runs along an edge, at most halfway to the next corner.
+            let arm = |i: usize| {
+                let v = at(i) - c;
+                v.normalized() * v.length().min(10.0)
+            };
+            mark(vec![c + arm(k + 1), c, c + arm(k + 7)]);
+        } else {
+            let along = (at(k + 1) - at(k + 7)).normalized();
+            mark(vec![c - along * 6.0, c + along * 6.0]);
+        }
+    }
+}
+
 /// Draw selection chrome; returns the selection's screen bounds (for the Contextual Task Bar).
 pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout) -> Option<Rect> {
     let st = app.session.active()?;
@@ -244,7 +268,13 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
         }
     }
     let direct = matches!(app.session.tool_id(), "directSelection" | "pen" | "addAnchor" | "deleteAnchor" | "convertDirection");
-    if direct {
+    // PressRoom's Crop (Direct Selection on one picture) shows crop handles instead of anchors.
+    let cropping = publisher
+        && app.session.tool_id() == "directSelection"
+        && matches!(sel.items.as_slice(), [id] if doc.item(*id).is_some_and(|i| matches!(i.content, Content::Graphic(_))));
+    if cropping && let Some(b) = turned.or(canvas_union.map(HandleBox::square)) {
+        publisher_crop_handles(painter, xf, b);
+    } else if direct {
         for id in &sel.items {
             let (Some(it), Some((a, _))) = (doc.item(*id), item_canvas_xf(doc, layout, *id)) else { continue };
             let m = a * it.xf;

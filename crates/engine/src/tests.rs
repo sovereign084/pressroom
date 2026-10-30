@@ -1849,3 +1849,29 @@ fn a_local_resize_stretches_a_turned_frame_along_its_own_sides() {
     let info = s.execute("transform.info", &json!({})).unwrap();
     assert!((info["rotation"].as_f64().unwrap() - 30.0).abs() < 1e-6, "{info}");
 }
+
+#[test]
+fn resizing_with_pictures_stretches_a_placed_picture_with_its_frame() {
+    let mut s = session();
+    let png = designcraft_render::Rendered { width: 40, height: 20, pixels: vec![200; 40 * 20 * 4] }.to_png();
+    let b64 = cmd::base64_encode(&png);
+    let f = designcraft_doc::ItemId(
+        s.execute("frame.create", &json!({"rect": [100, 100, 300, 200], "content": "graphic"})).unwrap()["id"].as_u64().unwrap(),
+    );
+    s.execute("place.load", &json!({"base64": b64})).unwrap();
+    s.execute("place.drop", &json!({"frame": f.0})).unwrap();
+    s.execute("selection.set", &json!({"ids": [f.0]})).unwrap();
+    let picture = |s: &Session| match &s.doc().unwrap().doc.item(f).unwrap().content {
+        designcraft_doc::Content::Graphic(g) => g.xf.transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1)),
+        _ => panic!("not a graphic"),
+    };
+    let before = picture(&s);
+    // Twice as wide: the picture is too (Publisher), and the frame's border keeps its weight.
+    s.execute("transform.resize", &json!({"from": [100, 100, 300, 200], "to": [100, 100, 500, 200], "pictures": true})).unwrap();
+    let after = picture(&s);
+    assert!((after.width() - 2.0 * before.width()).abs() < 1e-6 && (after.height() - before.height()).abs() < 1e-6, "{before:?} → {after:?}");
+    // Without it the frame is trimmed or widened and the picture keeps its size (InDesign).
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("transform.resize", &json!({"from": [100, 100, 300, 200], "to": [100, 100, 500, 200]})).unwrap();
+    assert_eq!(picture(&s), before);
+}

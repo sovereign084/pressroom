@@ -2046,3 +2046,54 @@ fn publisher_handles_turn_with_a_turned_object_and_resize_it_along_its_own_sides
     let mut t = create("selection");
     assert_ne!(t.pointer(&ctx(&d, &sel, &c, &l), &PointerEvent::new(PointerKind::Down, right.x, right.y)), vec![Action::Begin("Resize".into())]);
 }
+
+#[test]
+fn publisher_pictures_stretch_with_their_handles_and_crop_trims_them() {
+    let mut d = Document::new(&NewDocument::default());
+    let f = graphic_frame(&mut d);
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let sel = Selection::items(vec![f]);
+    let pub_cx = || ToolContext { publisher: true, ..ctx(&d, &sel, &c, &l) };
+    let resize = |a: &[Action]| match a.first() {
+        Some(Action::Preview(id, p)) if id == "transform.resize" => p.clone(),
+        _ => panic!("{a:?}"),
+    };
+    let to = |p: &serde_json::Value| -> Vec<f64> { p["to"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect() };
+    let press = |t: &mut Box<dyn Tool>, cx: &ToolContext, q: Point| t.pointer(cx, &PointerEvent::new(PointerKind::Down, q.x, q.y));
+    let drag = |t: &mut Box<dyn Tool>, cx: &ToolContext, q: Point| t.pointer(cx, &PointerEvent::new(PointerKind::Drag, q.x, q.y));
+    // A side handle stretches the picture with the frame.
+    let mut t = create("selection");
+    assert_eq!(press(&mut t, &pub_cx(), spread_pt(&l, 200.0, 150.0)), vec![Action::Begin("Resize".into())]);
+    let p = resize(&drag(&mut t, &pub_cx(), spread_pt(&l, 260.0, 150.0)));
+    assert_eq!(p["pictures"], true);
+    assert_eq!(to(&p), vec![100.0, 100.0, 260.0, 200.0]);
+    t.pointer(&pub_cx(), &PointerEvent::new(PointerKind::Up, 0.0, 0.0));
+    // A corner handle keeps the picture's proportions, as Publisher's locked aspect ratio does.
+    assert_eq!(press(&mut t, &pub_cx(), spread_pt(&l, 200.0, 200.0)), vec![Action::Begin("Resize".into())]);
+    let r = to(&resize(&drag(&mut t, &pub_cx(), spread_pt(&l, 300.0, 220.0))));
+    assert!(((r[2] - r[0]) - (r[3] - r[1])).abs() < 1e-6, "{r:?}");
+    t.pointer(&pub_cx(), &PointerEvent::new(PointerKind::Up, 0.0, 0.0));
+    // InDesign trims the frame and lets a corner go free.
+    let mut t = create("selection");
+    press(&mut t, &ctx(&d, &sel, &c, &l), spread_pt(&l, 200.0, 200.0));
+    let p = resize(&drag(&mut t, &ctx(&d, &sel, &c, &l), spread_pt(&l, 300.0, 220.0)));
+    assert_eq!((p["pictures"].clone(), to(&p)), (serde_json::json!(false), vec![100.0, 100.0, 300.0, 220.0]));
+    // Crop (Direct Selection in PressRoom): the frame's handles trim it and the whole picture shows.
+    let mut t = create("directSelection");
+    assert!(matches!(t.cursor(&pub_cx(), spread_pt(&l, 200.0, 150.0), Mods::default()), Cursor::ResizeH));
+    assert_eq!(press(&mut t, &pub_cx(), spread_pt(&l, 200.0, 150.0)), vec![Action::Begin("Resize".into())]);
+    let p = resize(&drag(&mut t, &pub_cx(), spread_pt(&l, 180.0, 150.0)));
+    assert_eq!((p["pictures"].clone(), to(&p)), (serde_json::json!(false), vec![100.0, 100.0, 180.0, 200.0]));
+    assert!(t.overlays(&pub_cx()).contains(&Overlay::ContentGhost(f)));
+    assert_eq!(t.pointer(&pub_cx(), &PointerEvent::new(PointerKind::Up, 0.0, 0.0)), vec![Action::Commit]);
+    // Esc leaves crop with the picture still selected; so does a press away from it, which
+    // selects what is there.
+    assert_eq!(t.key(&pub_cx(), ToolKey::Escape, Mods::default()), vec![Action::SwitchTool("selection".into())]);
+    assert_eq!(
+        press(&mut t, &pub_cx(), spread_pt(&l, 500.0, 600.0)),
+        vec![Action::SwitchTool("selection".into()), Action::Exec("selection.set".into(), serde_json::json!({"ids": []}))]
+    );
+    // InDesign's Direct Selection has no crop handles.
+    let mut t = create("directSelection");
+    assert_ne!(press(&mut t, &ctx(&d, &sel, &c, &l), spread_pt(&l, 200.0, 150.0)), vec![Action::Begin("Resize".into())]);
+}

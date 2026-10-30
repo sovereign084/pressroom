@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Resize",
             [],
             None,
-            "{from: rect, to: rect, content?: bool (scale content), distribute?: bool (Live Distribute: objects keep their size, their centres spread with the bounds), local?: bool (from and to are in each object's own space: a turned object's handles resize it along its own sides), ids?}",
+            "{from: rect, to: rect, content?: bool (scale content), distribute?: bool (Live Distribute: objects keep their size, their centres spread with the bounds), local?: bool (from and to are in each object's own space: a turned object's handles resize it along its own sides), pictures?: bool (a placed picture stretches with its frame, as in Publisher; otherwise the frame is trimmed and the picture keeps its size), ids?}",
             has_selection,
             transform_resize
         ),
@@ -1224,6 +1224,7 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
     let scale_content = bool_or(p, "content", false);
     let distribute = bool_or(p, "distribute", false);
     let local = bool_or(p, "local", false);
+    let pictures = bool_or(p, "pictures", false);
     // A flat source (a horizontal or vertical line) has no size to scale on its flat axis: that axis only moves.
     let ratio = |new: f64, old: f64| if old.abs() < 1e-9 { 1.0 } else { new / old };
     let sx = ratio(to.width(), from.width());
@@ -1257,14 +1258,16 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
                 it.xf = m * it.xf;
             } else {
                 // Resize the frame's path (in inner space); content keeps its size (InDesign's
-                // default) unless the frame auto-fits it.
+                // default) unless the frame auto-fits it, or a picture stretches with it (Publisher's).
                 let inner = it.xf.inverse() * m * it.xf;
                 bake(it, inner);
                 let r = it.inner_bounds();
-                if let Content::Graphic(g) = &mut it.content
-                    && let Some(xf) = g.fitted(r, g.auto_fit)
-                {
-                    g.xf = xf;
+                if let Content::Graphic(g) = &mut it.content {
+                    if pictures {
+                        g.xf = inner * g.xf;
+                    } else if let Some(xf) = g.fitted(r, g.auto_fit) {
+                        g.xf = xf;
+                    }
                 }
             }
         }

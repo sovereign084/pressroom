@@ -42,11 +42,16 @@ enum Drag {
         exclude: Vec<ItemId>,
         content: bool,
     },
+    /// `stretch`: placed pictures stretch with their frames (PressRoom's Selection tool, as in
+    /// Publisher); otherwise the frames are trimmed and the pictures keep their size. `lock`: the
+    /// handle keeps the proportions, as a picture's corner handles do in Publisher.
     Resize {
         handle: usize,
         start: Point,
         from: Rect,
         spread: SpreadRef,
+        stretch: bool,
+        lock: bool,
     },
     /// Resizing one turned object by its own handles (PressRoom): `from` is its box in its own
     /// space and `to_canvas` puts that space on the canvas.
@@ -54,6 +59,8 @@ enum Drag {
         handle: usize,
         to_canvas: Affine,
         from: Rect,
+        stretch: bool,
+        lock: bool,
     },
     /// Resizing a selected placed graphic by its own bounding-box handles (`from`: its bounds on
     /// the spread at pointer down).
@@ -255,6 +262,24 @@ impl SelectionTool {
     }
 
     /// The frame in live-corner editing, while it is still the selection.
+    /// Starts resizing the selection by its handle `h` (canvas order). See [`Drag::Resize`].
+    fn begin_resize(&mut self, cx: &ToolContext, p: Point, h: usize, stretch: bool) -> Option<Vec<Action>> {
+        // Publisher locks a picture's proportions: its corner handles keep them.
+        let lock = stretch && h.is_multiple_of(2) && cx.selection.items.iter().all(|id| is_picture(cx.doc.item(*id)));
+        if let Some((_, b)) = turned_selection(cx) {
+            self.drag = Drag::TurnedResize { handle: h, to_canvas: b.m, from: b.r, stretch, lock };
+        } else {
+            let (b, first) = (cx.selection_bounds()?, cx.selection.items.first()?);
+            let loc = cx.doc.find(*first)?;
+            // On a turned spread the canvas handle is another one of the spread's.
+            let turns = cx.layout.slot(loc.spread).map_or(0, |s| s.rotation as usize);
+            let handle = (h + 8 - 2 * turns) % 8;
+            let from = cx.layout.xf(loc.spread).inverse().transform_rect_bbox(b);
+            self.drag = Drag::Resize { handle, start: p, from, spread: loc.spread, stretch, lock };
+        }
+        Some(vec![Action::Begin("Resize".into())])
+    }
+
     fn live_corners(&self, cx: &ToolContext) -> Option<LiveFrame> {
         let id = self.live?;
         corners::live_frame(cx).filter(|f| f.id == id)
@@ -546,6 +571,22 @@ fn handle_at(cx: &ToolContext, p: Point) -> Option<usize> {
     if selected_graphic(cx).is_some() {
         return None;
     }
+    frame_handle_at(cx, p)
+}
+
+/// A frame with a placed picture.
+fn is_picture(it: Option<&Item>) -> bool {
+    it.is_some_and(|i| matches!(i.content, Content::Graphic(_)))
+}
+
+/// PressRoom's crop: Direct Selection (the Crop button) on one picture shows Publisher's crop
+/// handles on its frame. They trim the frame and leave the picture its size.
+fn cropping(cx: &ToolContext, direct: bool) -> bool {
+    direct && cx.publisher && matches!(cx.selection.items.as_slice(), [id] if is_picture(cx.doc.item(*id)))
+}
+
+/// A handle of the selection's box under `p`, the frame's even when its content is selected.
+fn frame_handle_at(cx: &ToolContext, p: Point) -> Option<usize> {
     let b = handle_box(cx)?;
     let tol = cx.tol(5.0);
     b.handles().iter().position(|h| (h.x - p.x).abs() <= tol && (h.y - p.y).abs() <= tol)
@@ -874,6 +915,25 @@ impl Tool for SelectionTool {
                     self.drag = Drag::Bracket { id, end };
                     return vec![Action::Begin("Move Bracket".into())];
                 }
+                // Crop (PressRoom): the crop handles trim the picture's frame.
+                if cropping(cx, self.direct)
+                    && let Some(h) = frame_handle_at(cx, p)
+                    && let Some(actions) = self.begin_resize(cx, p, h, false)
+                {
+                    return actions;
+                }
+                // A press away from the picture leaves crop, as in Publisher, and selects what is there.
+                if self.direct && cx.publisher {
+                    let on_picture = cropping(cx, true)
+                        && (content_handle_at(cx, p).is_some()
+                            || on_selected_content(cx, p)
+                            || cx.hit(p).is_some_and(|(_, id)| cx.selection.contains(cx.doc.top_level_of(id).unwrap_or(id))));
+                    if !on_picture {
+                        self.drag = Drag::None;
+                        let ids: Vec<u64> = cx.hit(p).map(|(_, id)| cx.doc.top_level_of(id).unwrap_or(id).0).into_iter().collect();
+                        return vec![Action::SwitchTool("selection".into()), Action::Exec("selection.set".into(), json!({"ids": ids}))];
+                    }
+                }
                 if self.direct
                     && let Some((id, si, ai, handle)) = anchor_at(cx, p)
                 {
@@ -913,23 +973,11 @@ impl Tool for SelectionTool {
                     self.drag = Drag::Rotate { center, start_angle: (p - center).atan2(), start_rotation: crate::snap::reference_rotation(cx) };
                     return vec![Action::Begin("Rotate".into())];
                 }
-                // A turned object's handles resize it along its own sides (PressRoom, as in Publisher).
+                // In PressRoom a picture stretches with its frame, as in Publisher (Crop trims it).
                 if let Some(h) = handle_at(cx, p).filter(|_| !self.direct)
-                    && let Some((_, b)) = turned_selection(cx)
+                    && let Some(actions) = self.begin_resize(cx, p, h, cx.publisher)
                 {
-                    self.drag = Drag::TurnedResize { handle: h, to_canvas: b.m, from: b.r };
-                    return vec![Action::Begin("Resize".into())];
-                }
-                if let Some(h) = handle_at(cx, p).filter(|_| !self.direct)
-                    && let (Some(b), Some(first)) = (cx.selection_bounds(), cx.selection.items.first())
-                    && let Some(loc) = cx.doc.find(*first)
-                {
-                    // On a turned spread the canvas handle is another one of the spread's.
-                    let turns = cx.layout.slot(loc.spread).map_or(0, |s| s.rotation as usize);
-                    let handle = (h + 8 - 2 * turns) % 8;
-                    self.drag =
-                        Drag::Resize { handle, start: p, from: cx.layout.xf(loc.spread).inverse().transform_rect_bbox(b), spread: loc.spread };
-                    return vec![Action::Begin("Resize".into())];
+                    return actions;
                 }
                 // The content grabber: select the frame's content; a drag moves it.
                 if !self.direct
@@ -1116,11 +1164,12 @@ impl Tool for SelectionTool {
                     }
                     vec![Action::Preview("transform.move".into(), params)]
                 }
-                Drag::Resize { handle, start, from, spread } => {
+                Drag::Resize { handle, start, from, spread, stretch, lock } => {
                     let _ = start;
+                    let mods = if lock { Mods { shift: true, ..ev.mods } } else { ev.mods };
                     let pointer = cx.layout.to_spread(spread, p);
                     let raw = resize_edges_rect(from, handle, pointer);
-                    let mut to = resize_rect(from, handle, pointer, ev.mods);
+                    let mut to = resize_rect(from, handle, pointer, mods);
                     // Space while dragging: Live Distribute (several objects keep their size).
                     let distribute = ev.mods.space && cx.selection.items.len() > 1;
                     self.guides.clear();
@@ -1128,7 +1177,7 @@ impl Tool for SelectionTool {
                     if !distribute && cx.snap.any() {
                         let (mut x_edges, mut y_edges) = resize_edge_flags(handle);
                         let driver_x = drives_x(handle, from, raw);
-                        if ev.mods.shift {
+                        if mods.shift {
                             if driver_x {
                                 y_edges = [false, false, false];
                             } else {
@@ -1155,21 +1204,22 @@ impl Tool for SelectionTool {
                                 pointer,
                             },
                         );
-                        to = finish_snapped_resize(from, handle, proposed, ev.mods, driver_x, (x_edges, y_edges), &hit);
+                        to = finish_snapped_resize(from, handle, proposed, mods, driver_x, (x_edges, y_edges), &hit);
                         crate::snap::lay_dimension_guides(&mut hit.guides, cx.layout.xf(spread), proposed, to, x_edges, y_edges, hit.length_delta);
                         self.guides = hit.guides;
                     }
                     vec![Action::Preview(
                         "transform.resize".into(),
-                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "distribute": distribute}),
+                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "distribute": distribute, "pictures": stretch}),
                     )]
                 }
-                Drag::TurnedResize { handle, to_canvas, from } => {
+                Drag::TurnedResize { handle, to_canvas, from, stretch, lock } => {
                     // No snapping: guides and other objects' edges lie square to the page.
-                    let to = resize_rect(from, handle, to_canvas.inverse() * p, ev.mods);
+                    let mods = if lock { Mods { shift: true, ..ev.mods } } else { ev.mods };
+                    let to = resize_rect(from, handle, to_canvas.inverse() * p, mods);
                     vec![Action::Preview(
                         "transform.resize".into(),
-                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "local": true}),
+                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "local": true, "pictures": stretch}),
                     )]
                 }
                 Drag::ContentResize { id, handle, from, spread } => {
@@ -1323,6 +1373,11 @@ impl Tool for SelectionTool {
     }
 
     fn key(&mut self, cx: &ToolContext, key: ToolKey, mods: Mods) -> Vec<Action> {
+        // Escape leaves crop (PressRoom); the picture stays selected.
+        if key == ToolKey::Escape && self.direct && cx.publisher {
+            self.drag = Drag::None;
+            return vec![Action::SwitchTool("selection".into())];
+        }
         if key == ToolKey::Escape && self.loaded.take().is_some() {
             // Unload; the selection stays. Cancel (no interaction runs) marks the key handled.
             self.drag = Drag::None;
@@ -1373,6 +1428,12 @@ impl Tool for SelectionTool {
                 v.extend(self.guides.iter().cloned());
                 v
             }
+            // Cropping shows the whole picture, the part being trimmed away too.
+            Drag::Resize { stretch: false, .. } | Drag::TurnedResize { stretch: false, .. } if cropping(cx, self.direct) => {
+                let mut v: Vec<Overlay> = cx.selection.items.iter().map(|id| Overlay::ContentGhost(*id)).collect();
+                v.extend(self.guides.iter().cloned());
+                v
+            }
             Drag::Move { .. } | Drag::Resize { .. } | Drag::TurnedResize { .. } | Drag::Rotate { .. } | Drag::Anchor { .. } => self.guides.clone(),
             // The whole graphic shows while it's resized, outside the frame too.
             Drag::ContentResize { id, .. } => vec![Overlay::ContentGhost(*id)],
@@ -1400,6 +1461,17 @@ impl Tool for SelectionTool {
         if let Drag::ContentResize { handle, .. } = self.drag {
             return handle_cursor(handle);
         }
+        match self.drag {
+            Drag::Resize { handle, .. } => return handle_cursor(handle),
+            Drag::TurnedResize { handle, to_canvas, from, .. } => return HandleBox { m: to_canvas, r: from }.cursor(handle),
+            _ => {}
+        }
+        if matches!(self.drag, Drag::None)
+            && cropping(cx, self.direct)
+            && let Some(h) = frame_handle_at(cx, p)
+        {
+            return handle_box(cx).map_or(handle_cursor(h), |b| b.cursor(h));
+        }
         if matches!(self.drag, Drag::None)
             && !(self.direct && anchor_at(cx, p).is_some())
             && let Some((_, h)) = content_handle_at(cx, p)
@@ -1417,8 +1489,6 @@ impl Tool for SelectionTool {
         }
         match self.drag {
             Drag::Move { .. } => return Cursor::Move,
-            Drag::Resize { handle, .. } => return handle_cursor(handle),
-            Drag::TurnedResize { handle, to_canvas, from } => return HandleBox { m: to_canvas, r: from }.cursor(handle),
             Drag::Rotate { .. } => return Cursor::Rotate,
             Drag::Corner { .. } => return Cursor::Arrow,
             _ => {}
