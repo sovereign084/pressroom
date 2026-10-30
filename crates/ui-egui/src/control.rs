@@ -243,8 +243,12 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
             ok(Value::Null)
         }
         "ui.move" => {
+            let k = match pointer_scale(p, ctx) {
+                Ok(k) => k,
+                Err(e) => return err(e),
+            };
             let pos = egui::pos2(p.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32, p.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32);
-            app.control_synthetic.push(egui::Event::PointerMoved(pos));
+            app.control_synthetic.push(egui::Event::PointerMoved(pos * k));
             ctx.request_repaint();
             ok(Value::Null)
         }
@@ -254,7 +258,11 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
                 Ok(counts) => counts,
                 Err(e) => return err(e),
             };
-            let f = |k: &str| p.get(k).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+            let scale = match pointer_scale(p, ctx) {
+                Ok(k) => k,
+                Err(e) => return err(e),
+            };
+            let f = |k: &str| p.get(k).and_then(Value::as_f64).unwrap_or(0.0) as f32 * scale;
             let button = match s("button") {
                 Some("right") | Some("secondary") => egui::PointerButton::Secondary,
                 Some("middle") => egui::PointerButton::Middle,
@@ -454,17 +462,34 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
     }
 }
 
-pub fn save_screenshot(app: &mut DesignApp, image: &egui::ColorImage, path: Option<&str>) -> Value {
+/// Pointer coordinates are egui points; `units: "pixels"` reads them as screenshot pixels
+/// (`ui.screenshot` is in physical pixels, so on a scaled display the two differ by its
+/// `pixelsPerPoint`). The factor that turns the request's coordinates into points.
+fn pointer_scale(p: &Value, ctx: &egui::Context) -> Result<f32, String> {
+    match p.get("units") {
+        None => Ok(1.0),
+        Some(Value::String(u)) if u == "points" => Ok(1.0),
+        Some(Value::String(u)) if u == "pixels" => {
+            let ppp = ctx.pixels_per_point();
+            if ppp.is_finite() && ppp > 0.0 { Ok(1.0 / ppp) } else { Err("the window's scale is unknown".into()) }
+        }
+        Some(other) => Err(format!("`units` must be \"points\" or \"pixels\", not {other}")),
+    }
+}
+
+/// `ppp`: the window's pixels per point, so a caller can turn the screenshot's pixels into the
+/// points `ui.click` takes (or click with `units: "pixels"`).
+pub fn save_screenshot(app: &mut DesignApp, image: &egui::ColorImage, path: Option<&str>, ppp: f32) -> Value {
     let [w, h] = image.size;
     let Some(path) = path else {
-        return json!({"ok": true, "result": {"width": w, "height": h}});
+        return json!({"ok": true, "result": {"width": w, "height": h, "pixelsPerPoint": ppp}});
     };
     let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
     let img = designcraft_render::Rendered { width: w as u32, height: h as u32, pixels: rgba };
     let png = img.to_png();
     match app.services.write.as_mut() {
         Some(wr) => match wr(path, &png) {
-            Ok(()) => json!({"ok": true, "result": {"path": path, "width": w, "height": h}}),
+            Ok(()) => json!({"ok": true, "result": {"path": path, "width": w, "height": h, "pixelsPerPoint": ppp}}),
             Err(e) => json!({"ok": false, "error": e}),
         },
         None => json!({"ok": false, "error": "no writer configured"}),
@@ -521,6 +546,56 @@ mod automation_contract_tests {
             Outcome::Done(v) => v,
             Outcome::Screenshot { .. } => panic!("unexpected screenshot"),
         }
+    }
+
+    /// On a scaled display a screenshot's pixels aren't points: clicking where a screenshot shows
+    /// a button missed it (at 115 %, by 15 %). `units: "pixels"` takes screenshot coordinates.
+    #[test]
+    fn pointer_input_takes_screenshot_pixels_on_a_scaled_display() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        // A window on a 125 % display: its frames report that scale.
+        let mut raw = egui::RawInput::default();
+        raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(1.25);
+        let mut output = ctx.run_ui(raw, |_| {});
+        output.textures_delta.clear();
+        assert!((ctx.pixels_per_point() - 1.25).abs() < 1e-6);
+        assert_eq!(call(&mut app, &ctx, "ui.click", json!({"x": 125, "y": 50, "units": "pixels"}))["ok"], true);
+        assert_eq!(app.control_synthetic.first(), Some(&egui::Event::PointerMoved(egui::pos2(100.0, 40.0))));
+        app.control_synthetic.clear();
+        assert_eq!(call(&mut app, &ctx, "ui.drag", json!({"x": 25, "y": 25, "toX": 250, "toY": 125, "steps": 1, "units": "pixels"}))["ok"], true);
+        let ends: Vec<egui::Pos2> =
+            app.control_synthetic.iter().filter_map(|e| if let egui::Event::PointerButton { pos, .. } = e { Some(*pos) } else { None }).collect();
+        assert_eq!(ends, [egui::pos2(20.0, 20.0), egui::pos2(200.0, 100.0)]);
+        app.control_synthetic.clear();
+        assert_eq!(call(&mut app, &ctx, "ui.move", json!({"x": 50, "y": 75, "units": "pixels"}))["ok"], true);
+        assert_eq!(app.control_synthetic, [egui::Event::PointerMoved(egui::pos2(40.0, 60.0))]);
+        // Points stay the default.
+        app.control_synthetic.clear();
+        assert_eq!(call(&mut app, &ctx, "ui.move", json!({"x": 50, "y": 75}))["ok"], true);
+        assert_eq!(app.control_synthetic, [egui::Event::PointerMoved(egui::pos2(50.0, 75.0))]);
+    }
+
+    #[test]
+    fn unknown_pointer_units_queue_nothing() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        for units in [json!("inches"), json!(2), json!(null)] {
+            for method in ["ui.click", "ui.drag", "ui.move"] {
+                let reply = call(&mut app, &ctx, method, json!({"x": 1, "y": 1, "units": units}));
+                assert_eq!(reply["ok"], false, "{method} {units}: {reply}");
+            }
+        }
+        assert!(app.control_synthetic.is_empty());
+    }
+
+    #[test]
+    fn screenshots_say_how_many_pixels_make_a_point() {
+        let mut app = app();
+        let image = egui::ColorImage::new([4, 2], vec![egui::Color32::WHITE; 8]);
+        let reply = save_screenshot(&mut app, &image, None, 1.15);
+        assert_eq!(reply["result"]["width"], 4);
+        assert!((reply["result"]["pixelsPerPoint"].as_f64().unwrap() - 1.15).abs() < 1e-6, "{reply}");
     }
     fn frame(app: &mut DesignApp, ctx: &egui::Context, events: Vec<egui::Event>) {
         let mut output = ctx.run_ui(

@@ -202,7 +202,7 @@ impl DesignApp {
                 let shot = self.pending_shots.remove(i);
                 self.queued_shots.retain(|(token, ..)| *token != shot.token);
                 let value = match result {
-                    Ok(image) => crate::control::save_screenshot(self, image.as_ref(), shot.path.as_deref()),
+                    Ok(image) => crate::control::save_screenshot(self, image.as_ref(), shot.path.as_deref(), ctx.pixels_per_point()),
                     Err(e) => json!({"ok": false, "error": e.to_string()}),
                 };
                 let _ = shot.reply.send(value);
