@@ -33,7 +33,7 @@ installed on the same computer, so convert your files while you have it.
   booklet printing.
 - Today's Office look: Windows' own font, rounded menus, the White, Colorful, Dark Gray and Black
   themes (or follow Windows), and on Windows 11 a faint tint from your wallpaper in the title bar.
-- Publisher's round selection handles with a rotate handle, Office-style ScreenTips on the ribbon, a
+- Publisher's round selection handles with a rotate handle (they turn with a turned object), Office-style ScreenTips on the ribbon, a
   text cursor and zoom that glide instead of jumping, and a start-up splash.
 - Text boxes, pictures, shapes, tables and calendars you can edit, with text that flows from box to box.
 - Opens `.pub` files with their layout, fonts, colours (spot inks too), tables and Hebrew text.

@@ -3,6 +3,7 @@ use super::render::c32;
 use super::rulers::hair;
 use super::text_overlay::draw_text_selection;
 use super::*;
+use designcraft_tools::select::HandleBox;
 
 /// Spread-space → canvas transform for an item at `loc`.
 pub(super) fn item_canvas_xf(doc: &Document, layout: &CanvasLayout, id: designcraft_doc::ItemId) -> Option<(Affine, &'static str)> {
@@ -144,21 +145,25 @@ pub(super) fn layer_color(doc: &Document, it: &Item) -> Color32 {
 /// The outline and handles of a selection in PressRoom, as current Publisher draws them.
 const PUBLISHER_SELECTION: Color32 = Color32::from_rgb(77, 115, 153);
 
-/// Publisher's selection handles round the screen bounds `u` (canvas bounds `cu`): white circles
-/// at the corners, small white squares on the sides, and the rotate handle on its stem above.
-fn publisher_handles(painter: &egui::Painter, xf: &Xf, u: Rect, cu: DRect, color: Color32) {
+/// Publisher's selection handles on the box `b` (canvas): white circles at the corners, small white
+/// squares on the sides, and the rotate handle on its stem above. A turned object's turn with it.
+fn publisher_handles(painter: &egui::Painter, xf: &Xf, b: HandleBox, color: Color32) {
     let edge = Stroke::new(1.0, color);
-    let rotate = xf.to_screen(designcraft_tools::select::rotate_handle(cu, xf.zoom));
-    let top = xf.to_screen(Point::new(cu.center().x, cu.y0));
+    let (top, rotate) = b.rotate_handle(xf.zoom);
+    let (top, rotate) = (xf.to_screen(top), xf.to_screen(rotate));
     let away = (rotate - top).normalized();
     painter.line_segment([top + away * 3.5, rotate - away * 4.0], Stroke::new(1.0, Color32::from_gray(38)));
     painter.circle(rotate, 4.0, Color32::WHITE, Stroke::new(1.0, Color32::from_rgb(90, 96, 104)));
-    for (i, h) in
-        designcraft_tools::select::handles(DRect::new(u.min.x as f64, u.min.y as f64, u.max.x as f64, u.max.y as f64)).into_iter().enumerate()
-    {
-        let c = pos2(h.x as f32, h.y as f32);
+    // The side squares lie along the box's own top edge.
+    let along = (xf.to_screen(b.m * Point::new(b.r.x1, b.r.y0)) - xf.to_screen(b.m * Point::new(b.r.x0, b.r.y0))).normalized();
+    let across = vec2(-along.y, along.x);
+    for (i, h) in b.handles().into_iter().enumerate() {
+        let c = xf.to_screen(h);
         if i % 2 == 0 {
             painter.circle(c, 4.0, Color32::WHITE, edge);
+        } else if b.turned() {
+            let (u, v) = (along * 2.5, across * 2.5);
+            painter.add(egui::Shape::convex_polygon(vec![c - u - v, c + u - v, c + u + v, c - u + v], Color32::WHITE, edge));
         } else {
             painter.rect(Rect::from_center_size(c, vec2(6.0, 6.0)), 0.0, Color32::WHITE, edge, StrokeKind::Inside);
         }
@@ -184,8 +189,10 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
         }
     }
     let mut union: Option<Rect> = None;
-    // The same bounds on the canvas, for Publisher's rotate handle.
+    // The same bounds on the canvas, for Publisher's handles.
     let mut canvas_union: Option<DRect> = None;
+    // One turned object's own box: PressRoom turns its outline and handles with it, as Publisher does.
+    let mut turned: Option<HandleBox> = None;
     let publisher = app.ui.pressroom_shell;
     let mut color = Color32::from_rgb(79, 153, 255);
     for id in &sel.items {
@@ -196,8 +203,15 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
             painter.add(egui::Shape::line(poly, Stroke::new(1.0, color)));
         }
         if sel.items.len() == 1 && sel.text.is_none() {
-            // InDesign draws a 1 pt bounding box around the selection.
-            painter.rect_stroke(xf.rect(a.transform_rect_bbox(it.bounds())), 0.0, Stroke::new(1.0, color), StrokeKind::Middle);
+            turned = if publisher { designcraft_tools::select::turned_box(it, a) } else { None };
+            if let Some(b) = turned {
+                let mut outline: Vec<Pos2> = b.corners().into_iter().map(|c| xf.to_screen(c)).collect();
+                outline.extend(outline.first().copied());
+                painter.add(egui::Shape::line(outline, Stroke::new(1.0, color)));
+            } else {
+                // InDesign draws a 1 pt bounding box around the selection.
+                painter.rect_stroke(xf.rect(a.transform_rect_bbox(it.bounds())), 0.0, Stroke::new(1.0, color), StrokeKind::Middle);
+            }
         } else if sel.key == Some(*id) {
             // The key object for Align: a thicker bounding box, as in InDesign.
             painter.rect_stroke(xf.rect(a.transform_rect_bbox(it.bounds())), 0.0, Stroke::new(3.0, color), StrokeKind::Middle);
@@ -262,8 +276,8 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
         let graphic_selected =
             sel.content && sel.items.len() == 1 && doc.item(sel.items[0]).is_some_and(|i| matches!(i.content, Content::Graphic(_)));
         if publisher {
-            if !graphic_selected && let Some(cu) = canvas_union {
-                publisher_handles(painter, xf, u, cu, color);
+            if !graphic_selected && let Some(b) = turned.or(canvas_union.map(HandleBox::square)) {
+                publisher_handles(painter, xf, b, color);
             }
         } else {
             let hs = 6.5;

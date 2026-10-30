@@ -1976,7 +1976,7 @@ fn publisher_selection_has_a_rotate_handle_and_no_grabber_or_live_corners() {
     let frame = Selection::items(vec![f]);
     let pub_cx = |s| ToolContext { publisher: true, ..ctx(&d, s, &c, &l) };
     let b = pub_cx(&frame).selection_bounds().unwrap();
-    let handle = select::rotate_handle(b, 1.0);
+    let handle = select::HandleBox::square(b).rotate_handle(1.0).1;
     assert!(near(handle, Point::new(b.center().x, b.y0 - select::ROTATE_HANDLE_PX)), "{handle:?}");
     let mut t = create("selection");
     // In PressRoom the handle above the box turns it, about its centre.
@@ -1996,4 +1996,53 @@ fn publisher_selection_has_a_rotate_handle_and_no_grabber_or_live_corners() {
     let t = create("selection");
     assert!(!t.overlays(&pub_cx(&frame)).iter().any(|o| matches!(o, Overlay::LiveCornerWidget(_))));
     assert!(t.overlays(&ctx(&d, &frame, &c, &l)).iter().any(|o| matches!(o, Overlay::LiveCornerWidget(_))));
+}
+
+#[test]
+fn publisher_handles_turn_with_a_turned_object_and_resize_it_along_its_own_sides() {
+    use designcraft_geom::Affine;
+    let mut d = Document::new(&NewDocument::default());
+    let f = add_rect(&mut d, Rect::new(100.0, 100.0, 300.0, 200.0));
+    let quarter = add_rect(&mut d, Rect::new(400.0, 100.0, 500.0, 200.0));
+    let plain = add_rect(&mut d, Rect::new(400.0, 300.0, 500.0, 400.0));
+    let about = |c: Point, a: Affine| Affine::translate(c.to_vec2()) * a * Affine::translate(-c.to_vec2());
+    // Turned 30° clockwise on the screen, about its centre; the other a quarter turn.
+    d.item_mut(f).unwrap().xf = about(Point::new(200.0, 150.0), Affine::rotate(30f64.to_radians()));
+    d.item_mut(quarter).unwrap().xf = about(Point::new(450.0, 150.0), Affine::rotate(90f64.to_radians()));
+    let (c, l) = (Cache::new(), CanvasLayout::new(&d, false));
+    let sel = Selection::items(vec![f]);
+    let pub_cx = || ToolContext { publisher: true, ..ctx(&d, &sel, &c, &l) };
+    let to_canvas = l.xf(SpreadRef::Doc(0));
+    let m = to_canvas * d.item(f).unwrap().xf;
+    // A quarter turn, or none, leaves the handles on the bounding box, which is the same box.
+    assert_eq!(select::turned_box(d.item(quarter).unwrap(), to_canvas), None);
+    assert_eq!(select::turned_box(d.item(plain).unwrap(), to_canvas), None);
+    let b = select::turned_box(d.item(f).unwrap(), to_canvas).unwrap();
+    // The handles sit on the frame's own corners and sides.
+    assert!(near(b.handles()[0], m * Point::new(100.0, 100.0)), "{:?}", b.handles());
+    assert!(near(b.handles()[3], m * Point::new(300.0, 150.0)), "{:?}", b.handles());
+    // The rotate handle stands off the middle of its own top edge.
+    let (top, rotate) = b.rotate_handle(1.0);
+    assert!(near(top, m * Point::new(200.0, 100.0)) && near(rotate, m * Point::new(200.0, 100.0 - select::ROTATE_HANDLE_PX)), "{rotate:?}");
+    let mut t = create("selection");
+    assert_eq!(t.cursor(&pub_cx(), rotate, Mods::default()), Cursor::Rotate);
+    // The right side now pulls down and to the right, the top up and to the right.
+    let right = b.handles()[3];
+    assert_eq!(t.cursor(&pub_cx(), right, Mods::default()), Cursor::ResizeNwSe);
+    assert_eq!(t.cursor(&pub_cx(), b.handles()[1], Mods::default()), Cursor::ResizeNeSw);
+    // Dragging it 50 pt further along the frame's width stretches the frame along its own side.
+    assert_eq!(t.pointer(&pub_cx(), &PointerEvent::new(PointerKind::Down, right.x, right.y)), vec![Action::Begin("Resize".into())]);
+    let to = m * Point::new(350.0, 150.0);
+    let a = t.pointer(&pub_cx(), &PointerEvent::new(PointerKind::Drag, to.x, to.y));
+    let Some(Action::Preview(id, p)) = a.first() else { panic!("{a:?}") };
+    assert_eq!(id, "transform.resize");
+    assert_eq!(p["local"], true);
+    let got: Vec<f64> = p["to"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    for (g, w) in got.iter().zip([100.0, 100.0, 350.0, 200.0]) {
+        assert!((g - w).abs() < 1e-6, "{got:?}");
+    }
+    assert_eq!(t.pointer(&pub_cx(), &PointerEvent::new(PointerKind::Up, to.x, to.y)), vec![Action::Commit]);
+    // InDesign keeps its handles on the bounding box: the turned side is no handle there.
+    let mut t = create("selection");
+    assert_ne!(t.pointer(&ctx(&d, &sel, &c, &l), &PointerEvent::new(PointerKind::Down, right.x, right.y)), vec![Action::Begin("Resize".into())]);
 }

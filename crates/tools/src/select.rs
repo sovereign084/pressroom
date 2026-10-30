@@ -48,6 +48,13 @@ enum Drag {
         from: Rect,
         spread: SpreadRef,
     },
+    /// Resizing one turned object by its own handles (PressRoom): `from` is its box in its own
+    /// space and `to_canvas` puts that space on the canvas.
+    TurnedResize {
+        handle: usize,
+        to_canvas: Affine,
+        from: Rect,
+    },
     /// Resizing a selected placed graphic by its own bounding-box handles (`from`: its bounds on
     /// the spread at pointer down).
     ContentResize {
@@ -414,6 +421,110 @@ pub fn handles(r: Rect) -> [Point; 8] {
     ]
 }
 
+/// The box a selection's handles sit on: `r`, put on the canvas by `m`. Usually the selection's
+/// bounding box on the canvas (`m` the identity); in PressRoom one turned or slanted object keeps
+/// its own box, turned with it, as Publisher draws it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HandleBox {
+    pub m: Affine,
+    pub r: Rect,
+}
+
+impl HandleBox {
+    /// The canvas bounding box `b`, square to the screen.
+    pub fn square(b: Rect) -> Self {
+        Self { m: Affine::IDENTITY, r: b }
+    }
+
+    /// Whether the box turns (or slants) with its object.
+    pub fn turned(&self) -> bool {
+        self.m != Affine::IDENTITY
+    }
+
+    pub fn center(&self) -> Point {
+        self.m * self.r.center()
+    }
+
+    /// The 8 handles on the canvas, in [`handles`]' order.
+    pub fn handles(&self) -> [Point; 8] {
+        handles(self.r).map(|h| self.m * h)
+    }
+
+    /// The box's outline on the canvas, clockwise from its top left.
+    pub fn corners(&self) -> [Point; 4] {
+        let [tl, _, tr, _, br, _, bl, _] = self.handles();
+        [tl, tr, br, bl]
+    }
+
+    /// Publisher's rotate handle, [`ROTATE_HANDLE_PX`] beyond the middle of the top edge, away
+    /// from the centre: (the middle of the top edge, the handle).
+    pub fn rotate_handle(&self, zoom: f64) -> (Point, Point) {
+        let top = self.m * Point::new(self.r.center().x, self.r.y0);
+        let away = top - self.center();
+        let len = away.hypot();
+        let dir = if len > 1e-9 { away / len } else { Vec2::new(0.0, -1.0) };
+        (top, top + dir * (ROTATE_HANDLE_PX / zoom.max(1e-9)))
+    }
+
+    /// The resize cursor of handle `h`, along the direction it pulls on the screen.
+    pub fn cursor(&self, h: usize) -> Cursor {
+        if !self.turned() {
+            return handle_cursor(h);
+        }
+        let [a, b, c, d, _, _] = self.m.as_coeffs();
+        let unit = |v: Vec2| v / v.hypot().max(1e-12);
+        let (ex, ey) = (unit(Vec2::new(a, b)), unit(Vec2::new(c, d)));
+        let (ux, uy) = match h {
+            0 => (-1.0, -1.0),
+            1 => (0.0, -1.0),
+            2 => (1.0, -1.0),
+            3 => (1.0, 0.0),
+            4 => (1.0, 1.0),
+            5 => (0.0, 1.0),
+            6 => (-1.0, 1.0),
+            _ => (-1.0, 0.0),
+        };
+        let v = ex * ux + ey * uy;
+        // The direction across the screen, folded into half a turn (y points down).
+        match v.y.atan2(v.x).to_degrees().rem_euclid(180.0) {
+            deg if !(22.5..157.5).contains(&deg) => Cursor::ResizeH,
+            deg if deg < 67.5 => Cursor::ResizeNwSe,
+            deg if deg < 112.5 => Cursor::ResizeV,
+            _ => Cursor::ResizeNeSw,
+        }
+    }
+}
+
+/// One object's own box on the canvas when the object is turned or slanted there (`to_canvas`:
+/// its container's space → canvas). None when it sits square to the screen (its bounding box is
+/// then the same box) or has no width or height to turn.
+pub fn turned_box(it: &Item, to_canvas: Affine) -> Option<HandleBox> {
+    let m = to_canvas * it.xf;
+    let [a, b, c, d, _, _] = m.as_coeffs();
+    let size = a.abs().max(b.abs()).max(c.abs()).max(d.abs());
+    let eps = size * 1e-9;
+    let square = (b.abs() <= eps && c.abs() <= eps) || (a.abs() <= eps && d.abs() <= eps);
+    if square || !m.is_finite() || (a * d - b * c).abs() <= size * size * 1e-12 {
+        return None;
+    }
+    let r = if it.is_group() { it.children().iter().map(|c| c.bounds()).reduce(|x, y| x.union(y))? } else { it.inner_bounds() };
+    (r.width() > 1e-9 && r.height() > 1e-9).then_some(HandleBox { m, r })
+}
+
+/// The one selected object and its own box, when PressRoom turns its handles with it.
+fn turned_selection(cx: &ToolContext) -> Option<(ItemId, HandleBox)> {
+    let [id] = cx.selection.items.as_slice() else { return None };
+    if !cx.publisher || cx.selection.text.is_some() {
+        return None;
+    }
+    Some((*id, turned_box(cx.doc.item(*id)?, cx.item_canvas_xf(*id)?)?))
+}
+
+/// The box the selection's handles sit on.
+fn handle_box(cx: &ToolContext) -> Option<HandleBox> {
+    turned_selection(cx).map(|(_, b)| b).or_else(|| cx.selection_bounds().map(HandleBox::square))
+}
+
 /// The selected placed graphic (content selection of one graphic frame) and its bounds on the canvas.
 fn selected_graphic(cx: &ToolContext) -> Option<(ItemId, Rect)> {
     let [id] = cx.selection.items.as_slice() else { return None };
@@ -435,15 +546,19 @@ fn handle_at(cx: &ToolContext, p: Point) -> Option<usize> {
     if selected_graphic(cx).is_some() {
         return None;
     }
-    let b = cx.selection_bounds()?;
+    let b = handle_box(cx)?;
     let tol = cx.tol(5.0);
-    handles(b).iter().position(|h| (h.x - p.x).abs() <= tol && (h.y - p.y).abs() <= tol)
+    b.handles().iter().position(|h| (h.x - p.x).abs() <= tol && (h.y - p.y).abs() <= tol)
 }
 
 /// Side handles are drawn on the canvas bounding box; fitting uses the frame's local axes.
 fn fitting_axis(cx: &ToolContext, handle: usize) -> &'static str {
     if handle.is_multiple_of(2) {
         return "both";
+    }
+    // A turned object's handles sit on its own sides.
+    if turned_selection(cx).is_some() {
+        return if matches!(handle, 1 | 5) { "height" } else { "width" };
     }
     let canvas_height = matches!(handle, 1 | 5);
     let local_width_is_vertical = cx
@@ -463,19 +578,15 @@ fn fitting_axis(cx: &ToolContext, handle: usize) -> &'static str {
 /// How far above the selection Publisher's rotate handle sits, in screen points.
 pub const ROTATE_HANDLE_PX: f64 = 17.0;
 
-/// Where Publisher's rotate handle of the selection bounds `b` is: above the middle of its top.
-pub fn rotate_handle(b: Rect, zoom: f64) -> Point {
-    Point::new(b.center().x, b.y0 - ROTATE_HANDLE_PX / zoom.max(1e-9))
-}
-
 /// Just outside a corner handle of the selection → rotate; in PressRoom, on the rotate handle
 /// above the selection, as in Publisher. Gives the centre to rotate about.
 fn rotate_zone(cx: &ToolContext, p: Point) -> Option<Point> {
-    let b = cx.selection_bounds()?;
     if cx.publisher {
-        let on = cx.selection.text.is_none() && (rotate_handle(b, cx.zoom) - p).hypot() <= cx.tol(6.0);
+        let b = handle_box(cx)?;
+        let on = cx.selection.text.is_none() && (b.rotate_handle(cx.zoom).1 - p).hypot() <= cx.tol(6.0);
         return on.then(|| b.center());
     }
+    let b = cx.selection_bounds()?;
     let inner = cx.tol(5.0);
     let outer = cx.tol(18.0);
     for c in [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)] {
@@ -802,6 +913,13 @@ impl Tool for SelectionTool {
                     self.drag = Drag::Rotate { center, start_angle: (p - center).atan2(), start_rotation: crate::snap::reference_rotation(cx) };
                     return vec![Action::Begin("Rotate".into())];
                 }
+                // A turned object's handles resize it along its own sides (PressRoom, as in Publisher).
+                if let Some(h) = handle_at(cx, p).filter(|_| !self.direct)
+                    && let Some((_, b)) = turned_selection(cx)
+                {
+                    self.drag = Drag::TurnedResize { handle: h, to_canvas: b.m, from: b.r };
+                    return vec![Action::Begin("Resize".into())];
+                }
                 if let Some(h) = handle_at(cx, p).filter(|_| !self.direct)
                     && let (Some(b), Some(first)) = (cx.selection_bounds(), cx.selection.items.first())
                     && let Some(loc) = cx.doc.find(*first)
@@ -1046,6 +1164,14 @@ impl Tool for SelectionTool {
                         json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "distribute": distribute}),
                     )]
                 }
+                Drag::TurnedResize { handle, to_canvas, from } => {
+                    // No snapping: guides and other objects' edges lie square to the page.
+                    let to = resize_rect(from, handle, to_canvas.inverse() * p, ev.mods);
+                    vec![Action::Preview(
+                        "transform.resize".into(),
+                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "local": true}),
+                    )]
+                }
                 Drag::ContentResize { id, handle, from, spread } => {
                     let to = resize_rect(from, handle, cx.layout.to_spread(spread, p), ev.mods);
                     vec![Action::Preview("transform.set".into(), json!({"ids": [id.0], "content": true, "bounds": rect_json(to)}))]
@@ -1155,6 +1281,7 @@ impl Tool for SelectionTool {
                 match d {
                     Drag::Move { .. }
                     | Drag::Resize { .. }
+                    | Drag::TurnedResize { .. }
                     | Drag::ContentResize { .. }
                     | Drag::Anchor { .. }
                     | Drag::Rotate { .. }
@@ -1246,7 +1373,7 @@ impl Tool for SelectionTool {
                 v.extend(self.guides.iter().cloned());
                 v
             }
-            Drag::Move { .. } | Drag::Resize { .. } | Drag::Rotate { .. } | Drag::Anchor { .. } => self.guides.clone(),
+            Drag::Move { .. } | Drag::Resize { .. } | Drag::TurnedResize { .. } | Drag::Rotate { .. } | Drag::Anchor { .. } => self.guides.clone(),
             // The whole graphic shows while it's resized, outside the frame too.
             Drag::ContentResize { id, .. } => vec![Overlay::ContentGhost(*id)],
             Drag::None | Drag::Bracket { .. } => brackets(cx),
@@ -1291,6 +1418,7 @@ impl Tool for SelectionTool {
         match self.drag {
             Drag::Move { .. } => return Cursor::Move,
             Drag::Resize { handle, .. } => return handle_cursor(handle),
+            Drag::TurnedResize { handle, to_canvas, from } => return HandleBox { m: to_canvas, r: from }.cursor(handle),
             Drag::Rotate { .. } => return Cursor::Rotate,
             Drag::Corner { .. } => return Cursor::Arrow,
             _ => {}
@@ -1299,7 +1427,7 @@ impl Tool for SelectionTool {
             return Cursor::Arrow;
         }
         match handle_at(cx, p) {
-            Some(h) => handle_cursor(h),
+            Some(h) => handle_box(cx).map_or(handle_cursor(h), |b| b.cursor(h)),
             None if rotate_zone(cx, p).is_some() => Cursor::Rotate,
             None if grabber_at(cx, p).is_some() || on_selected_content(cx, p) => Cursor::Hand,
             None => Cursor::Arrow,

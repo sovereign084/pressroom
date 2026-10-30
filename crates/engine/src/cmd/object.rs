@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Resize",
             [],
             None,
-            "{from: rect, to: rect, content?: bool (scale content), distribute?: bool (Live Distribute: objects keep their size, their centres spread with the bounds), ids?}",
+            "{from: rect, to: rect, content?: bool (scale content), distribute?: bool (Live Distribute: objects keep their size, their centres spread with the bounds), local?: bool (from and to are in each object's own space: a turned object's handles resize it along its own sides), ids?}",
             has_selection,
             transform_resize
         ),
@@ -1223,13 +1223,14 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
     let to = rect_param(p, "to").ok_or_else(|| bad("transform.resize", "missing to"))?;
     let scale_content = bool_or(p, "content", false);
     let distribute = bool_or(p, "distribute", false);
+    let local = bool_or(p, "local", false);
     // A flat source (a horizontal or vertical line) has no size to scale on its flat axis: that axis only moves.
     let ratio = |new: f64, old: f64| if old.abs() < 1e-9 { 1.0 } else { new / old };
     let sx = ratio(to.width(), from.width());
     let sy = ratio(to.height(), from.height());
     let sx = if sx.abs() < 1e-3 { 1e-3f64.copysign(sx) } else { sx };
     let sy = if sy.abs() < 1e-3 { 1e-3f64.copysign(sy) } else { sy };
-    let m = Affine::translate((to.x0, to.y0)) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-from.x0, -from.y0));
+    let scale = Affine::translate((to.x0, to.y0)) * Affine::scale_non_uniform(sx, sy) * Affine::translate((-from.x0, -from.y0));
     let strokes = s.prefs.scale_strokes;
     s.edit(|d, _| {
         for id in &ids {
@@ -1237,6 +1238,14 @@ fn transform_resize(s: &mut Session, p: &Value) -> Result<Value> {
             if it.locked {
                 continue;
             }
+            // In the object's own space, the same change seen from its container.
+            let m = if !local {
+                scale
+            } else if it.xf.determinant().abs() > 1e-12 {
+                it.xf * scale * it.xf.inverse()
+            } else {
+                continue;
+            };
             if distribute {
                 let c = it.bounds().center();
                 it.xf = Affine::translate(m * c - c) * it.xf;

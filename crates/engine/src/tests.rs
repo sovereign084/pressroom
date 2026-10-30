@@ -1833,3 +1833,19 @@ fn aligning_the_key_object_alone_takes_the_page() {
     let x0 = s.doc().unwrap().doc.item(designcraft_doc::ItemId(b)).unwrap().bounds().x0;
     assert!(x0.abs() < 1e-6, "the object is at {x0}, not at the page's left edge");
 }
+
+#[test]
+fn a_local_resize_stretches_a_turned_frame_along_its_own_sides() {
+    let mut s = session();
+    let id = designcraft_doc::ItemId(s.execute("frame.create", &json!({"rect": [100, 100, 300, 200]})).unwrap()["id"].as_u64().unwrap());
+    s.execute("selection.set", &json!({"ids": [id.0]})).unwrap();
+    s.execute("transform.rotate", &json!({"angle": 30})).unwrap();
+    let before = s.doc().unwrap().doc.item(id).unwrap().xf;
+    // Its right side pulled out 100 pt along the frame's own width.
+    s.execute("transform.resize", &json!({"from": [100, 100, 300, 200], "to": [100, 100, 400, 200], "local": true})).unwrap();
+    let it = s.doc().unwrap().doc.item(id).unwrap();
+    assert_eq!(it.inner_bounds(), designcraft_geom::Rect::new(100.0, 100.0, 400.0, 200.0));
+    assert_eq!(it.xf, before, "the frame keeps its turn and its left side stays put");
+    let info = s.execute("transform.info", &json!({})).unwrap();
+    assert!((info["rotation"].as_f64().unwrap() - 30.0).abs() < 1e-6, "{info}");
+}
