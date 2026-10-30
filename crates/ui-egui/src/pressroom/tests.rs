@@ -248,3 +248,16 @@ fn the_office_theme_is_saved_with_the_settings() {
     let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&ui).unwrap()).unwrap();
     assert_eq!(back.pressroom_theme, "colorful");
 }
+
+#[test]
+fn top_bar_hover_shades_match_the_palette() {
+    // Laid over the theme's own bar colour, the see-through hover gives the palette's hover.
+    for p in [&super::WHITE, &super::DARK_GRAY, &super::BLACK] {
+        let shade = super::shade(p.top, p.top_hover);
+        let over = |base: u8| {
+            let a = f32::from(shade.a()) / 255.0;
+            (f32::from(shade.r()) + f32::from(base) * (1.0 - a)).round() as i32
+        };
+        assert!((over(p.top.r()) - i32::from(p.top_hover.r())).abs() <= 1, "{shade:?}");
+    }
+}

@@ -13,6 +13,8 @@ const WIDE: f32 = 132.0;
 const NARROW: f32 = 34.0;
 /// Thumbnail height.
 const THUMB_H: f32 = 78.0;
+/// The thumbnails' corner rounding, as Windows 11 rounds its previews.
+const THUMB_ROUND: u8 = 3;
 
 pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
     egui::Panel::left("pr_nav")
@@ -81,35 +83,69 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                         .collect();
                     let row_w: f32 = widths.iter().sum();
                     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), THUMB_H + 26.0), Sense::hover());
+                    // The spread's pages, bottom-aligned side by side and centred in the row.
                     let mut x = row.center().x - row_w / 2.0;
+                    let mut sheets = Vec::with_capacity(pages.len());
                     for (k, &(abs, w, h)) in pages.iter().enumerate() {
                         let tw = widths.get(k).copied().unwrap_or(40.0);
                         let th = (tw / (w / h.max(1.0)) as f32).min(THUMB_H);
-                        let r = Rect::from_min_size(pos2(x, row.min.y + 4.0 + (THUMB_H - th)), vec2(tw, th));
+                        sheets.push((abs, th, Rect::from_min_size(pos2(x, row.min.y + 4.0 + (THUMB_H - th)), vec2(tw, th))));
                         x += tw;
-                        let id = egui::Id::unique(("pr_nav_page", abs));
-                        let resp = ui.interact(r.expand(3.0), id, Sense::click());
-                        let selected = abs == cur;
-                        if selected {
-                            // The page shown: a rounded frame in the accent colour on its light tint.
-                            ui.painter().rect_filled(r.expand(5.0), 6.0, super::pal().checked);
-                            ui.painter().rect_stroke(r.expand(5.0), 6.0, Stroke::new(2.0, super::pal().select), StrokeKind::Inside);
-                        } else if resp.hovered() {
-                            ui.painter().rect_filled(r.expand(5.0), 6.0, super::pal().hover);
-                        }
-                        ui.painter().rect_filled(r.translate(vec2(1.0, 1.5)), 1.0, Color32::from_black_alpha(28));
-                        match thumb(app, &ctx, ThumbOf::Page(abs), th) {
-                            Some(tex) => {
-                                ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                            }
-                            None => {
-                                ui.painter().rect_filled(r, 0.0, Color32::WHITE);
+                    }
+                    let Some(spread) = sheets.iter().map(|s| s.2).reduce(|a, b| a.union(b)) else {
+                        continue;
+                    };
+                    // Hovering lifts the spread a little off the pane, its shadow growing with it.
+                    let id = egui::Id::unique(("pr_nav_spread", sheets.first().map_or(0, |s| s.0)));
+                    let lift = ui.ctx().animate_bool_with_time(id, ui.rect_contains_pointer(spread.expand(3.0)), 0.12);
+                    let up = vec2(0.0, -2.0 * lift);
+                    let has_cur = sheets.iter().any(|s| s.0 == cur);
+                    if has_cur {
+                        // The page shown: a rounded frame in the accent colour on its light tint.
+                        for &(abs, _, r) in &sheets {
+                            if abs == cur {
+                                ui.painter().rect_filled(r.expand(5.0), 6.0, super::pal().checked);
+                                ui.painter().rect_stroke(r.expand(5.0), 6.0, Stroke::new(2.0, super::pal().select), StrokeKind::Inside);
                             }
                         }
-                        ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_gray(200)), StrokeKind::Outside);
+                    } else if lift > 0.0 {
+                        ui.painter().rect_filled(spread.expand(5.0), 6.0, super::pal().hover.gamma_multiply(lift));
+                    }
+                    let dark = super::pal().dark;
+                    let shadow = egui::epaint::Shadow {
+                        offset: [0, (1.0 + 3.0 * lift).round() as i8],
+                        blur: (4.0 + 8.0 * lift).round() as u8,
+                        spread: 0,
+                        color: Color32::from_black_alpha(if dark { 110 } else { 40 } + (30.0 * lift) as u8),
+                    };
+                    ui.painter().add(shadow.as_shape(spread.translate(up), THUMB_ROUND));
+                    let n = sheets.len();
+                    for (k, &(abs, th, base)) in sheets.iter().enumerate() {
+                        let resp = ui.interact(base.expand(3.0), egui::Id::unique(("pr_nav_page", abs)), Sense::click());
+                        let r = base.translate(up);
+                        // Facing pages read as one sheet: round only the spread's outer corners.
+                        let (first, last) = (k == 0, k + 1 == n);
+                        let round = egui::CornerRadius {
+                            nw: if first { THUMB_ROUND } else { 0 },
+                            sw: if first { THUMB_ROUND } else { 0 },
+                            ne: if last { THUMB_ROUND } else { 0 },
+                            se: if last { THUMB_ROUND } else { 0 },
+                        };
+                        let page = match thumb(app, &ctx, ThumbOf::Page(abs), th) {
+                            Some(tex) => egui::epaint::RectShape::filled(r, round, Color32::WHITE)
+                                .with_texture(tex.id(), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))),
+                            None => egui::epaint::RectShape::filled(r, round, Color32::WHITE),
+                        };
+                        ui.painter().add(page);
+                        ui.painter().rect_stroke(
+                            r,
+                            round,
+                            Stroke::new(1.0, Color32::from_black_alpha(if dark { 90 } else { 38 })),
+                            StrokeKind::Outside,
+                        );
                         let label = labels.get(abs).cloned().unwrap_or_else(|| (abs + 1).to_string());
                         ui.painter().text(
-                            pos2(r.center().x, row.max.y - 10.0),
+                            pos2(base.center().x, row.max.y - 10.0),
                             egui::Align2::CENTER_CENTER,
                             label,
                             FontId::proportional(11.5),

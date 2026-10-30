@@ -31,6 +31,8 @@ installed on the same computer, so convert your files while you have it.
 
 - The window you know: ribbon tabs, the Pages pane on the left, the File screen, Print with
   booklet printing.
+- Today's Office look: Windows' own font, rounded menus, the White, Colorful, Dark Gray and Black
+  themes (or follow Windows), and on Windows 11 a faint tint from your wallpaper in the title bar.
 - Text boxes, pictures, shapes, tables and calendars you can edit, with text that flows from box to box.
 - Opens `.pub` files with their layout, fonts, colours (spot inks too), tables and Hebrew text.
 - About 80 free font families come with it: the free fonts in Microsoft 365's online font list

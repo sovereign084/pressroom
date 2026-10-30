@@ -7,6 +7,7 @@
 mod art;
 mod backstage;
 mod keys;
+mod mica;
 mod nav;
 pub mod pubimport;
 mod ribbon;
@@ -251,7 +252,20 @@ struct Top {
 
 fn top(_app: &DesignApp) -> Top {
     let p = pal();
-    Top { bg: p.top, text: p.top_text, hover: p.top_hover, accent: p.top_accent, colorful: p.colorful }
+    // Hover as a see-through shade, so it darkens (or lightens) the Mica wash under it evenly.
+    let hover = if p.colorful { p.top_hover } else { shade(p.top, p.top_hover) };
+    Top { bg: p.top, text: p.top_text, hover, accent: p.top_accent, colorful: p.colorful }
+}
+
+/// The see-through black or white that turns `base` into `to` when laid over it.
+fn shade(base: Color32, to: Color32) -> Color32 {
+    let (b, t) = (f32::from(base.r()), f32::from(to.r()));
+    if t >= b {
+        let room = (255.0 - b).max(1.0);
+        Color32::from_white_alpha(((t - b) / room * 255.0).round().clamp(0.0, 255.0) as u8)
+    } else {
+        Color32::from_black_alpha(((b - t) / b.max(1.0) * 255.0).round().clamp(0.0, 255.0) as u8)
+    }
 }
 
 const TITLE_H: f32 = 31.0;
@@ -728,6 +742,7 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
     let top = top(app);
     egui::Panel::top("pr_title").exact_size(TITLE_H).frame(egui::Frame::NONE.fill(top.bg)).show(ui, |ui| {
         let full = ui.max_rect();
+        mica::paint(ui.ctx(), ui.painter(), full, top.bg);
         let caption_w = if app.custom_titlebar { CAPTION_W * 3.0 } else { 0.0 };
         if app.custom_titlebar {
             let drag = Rect::from_min_max(full.min, pos2(full.max.x - caption_w, full.max.y));
@@ -838,6 +853,12 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         let full = ui.max_rect();
         let strip = Rect::from_min_max(full.min, pos2(full.max.x, full.min.y + TABS_H));
         ui.painter().rect_filled(strip, 0.0, top.bg);
+        // Windows 11's Mica behind the tabs and round the ribbon, continuing the title bar's.
+        mica::paint(ui.ctx(), ui.painter(), strip, top.bg);
+        let band = Rect::from_min_max(pos2(full.min.x, strip.max.y), full.max);
+        if band.height() > 0.0 {
+            mica::paint(ui.ctx(), ui.painter(), band, pal().ribbon);
+        }
         let mut tabs = vec![
             (Tab::File, "File"),
             (Tab::Home, "Home"),
