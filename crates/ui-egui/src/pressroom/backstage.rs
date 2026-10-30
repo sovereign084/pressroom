@@ -49,7 +49,7 @@ const BUILT_IN: &[Kind] = &[
 
 pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
     let full = ui.max_rect();
-    ui.painter().rect_filled(full, 0.0, Color32::WHITE);
+    ui.painter().rect_filled(full, 0.0, super::pal().page);
     let column = Rect::from_min_max(full.min, pos2(full.min.x + COLUMN_W, full.max.y));
     ui.painter().rect_filled(column, 0.0, PR::TEAL);
     let has_doc = app.session.active().is_some();
@@ -123,7 +123,7 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
     // The page.
     let content = Rect::from_min_max(pos2(column.max.x + 40.0, full.min.y + 24.0), pos2(full.max.x - 40.0, full.max.y - 16.0));
     let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(content).layout(egui::Layout::top_down(egui::Align::Min)));
-    ui.style_mut().visuals = egui::Visuals::light();
+    ui.style_mut().visuals = ui.ctx().global_style().visuals.clone();
     let title = match page {
         Backstage::Info => "Info",
         Backstage::New => "New",
@@ -133,7 +133,7 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
         Backstage::Export => "Export",
         Backstage::Account => "Account",
     };
-    ui.label(egui::RichText::new(title).font(FontId::proportional(30.0)).color(PR::TEXT));
+    ui.label(egui::RichText::new(title).font(FontId::proportional(30.0)).color(super::pal().text));
     ui.add_space(18.0);
     egui::ScrollArea::vertical().id_salt("pr_bs_scroll").auto_shrink([false, false]).show(&mut ui, |ui| match page {
         Backstage::Info => info(app, ui),
@@ -156,7 +156,7 @@ fn tile(ui: &mut Ui, id: &str, size: egui::Vec2, caption: &str, draw: impl FnOnc
     let (r, resp) = ui.allocate_exact_size(size + vec2(0.0, 36.0), Sense::click());
     let card = Rect::from_min_size(r.min, size);
     if resp.hovered() {
-        ui.painter().rect_filled(r.expand(4.0), 0.0, Color32::from_rgb(222, 236, 233));
+        ui.painter().rect_filled(r.expand(4.0), 6.0, super::pal().checked);
     }
     draw(ui.painter(), card);
     for (i, line) in caption.split('\n').enumerate() {
@@ -165,7 +165,7 @@ fn tile(ui: &mut Ui, id: &str, size: egui::Vec2, caption: &str, draw: impl FnOnc
             egui::Align2::CENTER_CENTER,
             line,
             FontId::proportional(12.0),
-            PR::TEXT,
+            super::pal().text,
         );
     }
     let _ = id;
@@ -305,7 +305,7 @@ fn open_page(app: &mut DesignApp, ui: &mut Ui) {
     heading(ui, "Recent Publications");
     let recent = app.run("file.recentFiles", json!({})).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
     if recent.is_empty() {
-        ui.label(egui::RichText::new("Publications you open will show up here.").color(PR::GROUP_LABEL));
+        ui.label(egui::RichText::new("Publications you open will show up here.").color(super::pal().group_label));
     }
     for (i, f) in recent.iter().enumerate() {
         let name = f["name"].as_str().unwrap_or("");
@@ -313,7 +313,7 @@ fn open_page(app: &mut DesignApp, ui: &mut Ui) {
         let exists = f["exists"].as_bool().unwrap_or(true);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width().min(640.0), 44.0), if exists { Sense::click() } else { Sense::hover() });
         if resp.hovered() {
-            ui.painter().rect_filled(r, 0.0, Color32::from_rgb(222, 236, 233));
+            ui.painter().rect_filled(r, 6.0, super::pal().checked);
         }
         art::paint(ui.painter(), Rect::from_min_size(r.min + vec2(6.0, 8.0), vec2(28.0, 28.0)), "single-page", exists);
         ui.painter().text(
@@ -321,9 +321,9 @@ fn open_page(app: &mut DesignApp, ui: &mut Ui) {
             egui::Align2::LEFT_CENTER,
             name,
             FontId::proportional(13.5),
-            if exists { PR::TEXT } else { PR::DISABLED },
+            if exists { super::pal().text } else { super::pal().disabled },
         );
-        ui.painter().text(r.min + vec2(44.0, 31.0), egui::Align2::LEFT_CENTER, path, FontId::proportional(11.0), PR::GROUP_LABEL);
+        ui.painter().text(r.min + vec2(44.0, 31.0), egui::Align2::LEFT_CENTER, path, FontId::proportional(11.0), super::pal().group_label);
         if resp.on_hover_text(path).clicked() {
             super::close_backstage(ui.ctx());
             ribbon::act_with(app, "file.openRecent", json!({"index": i}));
@@ -338,7 +338,7 @@ fn info(app: &mut DesignApp, ui: &mut Ui) {
     let size = st.doc.page(0).map(|p| (p.width / 72.0, p.height / 72.0));
     let path = st.path.clone().unwrap_or_else(|| "Not saved yet".into());
     heading(ui, &title);
-    ui.label(egui::RichText::new(path).color(PR::GROUP_LABEL));
+    ui.label(egui::RichText::new(path).color(super::pal().group_label));
     ui.add_space(14.0);
     egui::Grid::new("pr_info").num_columns(2).spacing(vec2(24.0, 8.0)).show(ui, |ui| {
         ui.label("Pages");
@@ -358,13 +358,13 @@ fn info(app: &mut DesignApp, ui: &mut Ui) {
         ui.label(egui::RichText::new("Fonts not on this computer").strong());
         ui.label(
             egui::RichText::new("A similar font shows in their place. The publication keeps them, so they come back on a computer that has them.")
-                .color(PR::GROUP_LABEL),
+                .color(super::pal().group_label),
         );
         ui.add_space(4.0);
         egui::Grid::new("pr_missing_fonts").num_columns(2).spacing(vec2(24.0, 4.0)).show(ui, |ui| {
             for (family, shown_as) in &missing {
                 ui.label(family);
-                ui.label(egui::RichText::new(format!("shows as {shown_as}")).color(PR::GROUP_LABEL));
+                ui.label(egui::RichText::new(format!("shows as {shown_as}")).color(super::pal().group_label));
                 ui.end_row();
             }
         });
@@ -462,12 +462,12 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
                 ui.painter().rect(
                     r,
                     0.0,
-                    if resp.hovered() { Color32::from_rgb(222, 236, 233) } else { Color32::WHITE },
-                    Stroke::new(1.0, PR::RIBBON_EDGE),
+                    if resp.hovered() { super::pal().checked } else { super::pal().card },
+                    Stroke::new(1.0, super::pal().ribbon_edge),
                     StrokeKind::Inside,
                 );
                 art::paint(ui.painter(), Rect::from_center_size(r.center() - vec2(0.0, 10.0), vec2(40.0, 40.0)), "print", true);
-                ui.painter().text(r.center() + vec2(0.0, 28.0), egui::Align2::CENTER_CENTER, "Print", FontId::proportional(13.0), PR::TEXT);
+                ui.painter().text(r.center() + vec2(0.0, 28.0), egui::Align2::CENTER_CENTER, "Print", FontId::proportional(13.0), super::pal().text);
                 print_now = resp.clicked();
                 ui.add_space(12.0);
                 ui.vertical(|ui| {
@@ -535,10 +535,11 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
             );
             if s.booklet {
                 ui.add_space(10.0);
-                ui.label(egui::RichText::new("Each sheet holds two pages; fold the printed stack in half.").color(PR::GROUP_LABEL));
+                ui.label(egui::RichText::new("Each sheet holds two pages; fold the printed stack in half.").color(super::pal().group_label));
                 if n % 4 != 0 {
                     ui.label(
-                        egui::RichText::new(format!("{n} pages: blank pages fill the booklet out to {}.", n.div_ceil(4) * 4)).color(PR::GROUP_LABEL),
+                        egui::RichText::new(format!("{n} pages: blank pages fill the booklet out to {}.", n.div_ceil(4) * 4))
+                            .color(super::pal().group_label),
                     );
                 }
             }
@@ -643,11 +644,11 @@ fn export_page(app: &mut DesignApp, ui: &mut Ui) {
     ] {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width().min(560.0), 56.0), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(r, 0.0, Color32::from_rgb(222, 236, 233));
+            ui.painter().rect_filled(r, 6.0, super::pal().checked);
         }
         art::paint(ui.painter(), Rect::from_min_size(r.min + vec2(8.0, 12.0), vec2(32.0, 32.0)), "pdf", true);
-        ui.painter().text(r.min + vec2(52.0, 18.0), egui::Align2::LEFT_CENTER, label, FontId::proportional(14.0), PR::TEXT);
-        ui.painter().text(r.min + vec2(52.0, 38.0), egui::Align2::LEFT_CENTER, detail, FontId::proportional(11.5), PR::GROUP_LABEL);
+        ui.painter().text(r.min + vec2(52.0, 18.0), egui::Align2::LEFT_CENTER, label, FontId::proportional(14.0), super::pal().text);
+        ui.painter().text(r.min + vec2(52.0, 38.0), egui::Align2::LEFT_CENTER, detail, FontId::proportional(11.5), super::pal().group_label);
         if resp.clicked() {
             super::close_backstage(ui.ctx());
             ribbon::act(app, cmd);
@@ -658,14 +659,15 @@ fn export_page(app: &mut DesignApp, ui: &mut Ui) {
 fn account(app: &mut DesignApp, ui: &mut Ui) {
     heading(ui, "PressRoom");
     ui.label("Free desktop publishing for bulletins, newsletters, flyers and cards.");
-    ui.label(egui::RichText::new("Built on DesignCraft (Apache-2.0 / MIT). No account or subscription needed.").color(PR::GROUP_LABEL));
-    // Office Theme, as in Publisher's Account page: White (Office's default on a light Windows) or
-    // Colorful (the top of the window in Publisher's teal).
+    ui.label(egui::RichText::new("Built on DesignCraft (Apache-2.0 / MIT). No account or subscription needed.").color(super::pal().group_label));
+    // Office Theme, as in Publisher's Account page. "Use system setting" (Office's default) is White
+    // on a light Windows and Black on a dark one; Colorful has the top in Publisher's teal.
     ui.add_space(18.0);
-    ui.label(egui::RichText::new("Office Theme").size(15.0).color(PR::TEXT));
-    let shown = if app.ui.pressroom_theme == "colorful" { "Colorful" } else { "White" };
-    craft_ui::ComboBox::from_id_salt("pr_office_theme").selected_text(shown).width(160.0).show_ui(ui, |ui| {
-        for (value, label) in [("white", "White"), ("colorful", "Colorful")] {
+    ui.label(egui::RichText::new("Office Theme").size(15.0).color(super::pal().text));
+    let themes = [("system", "Use system setting"), ("white", "White"), ("colorful", "Colorful"), ("darkgray", "Dark Gray"), ("black", "Black")];
+    let shown = themes.iter().find(|(v, _)| *v == app.ui.pressroom_theme).map_or("Use system setting", |(_, l)| *l);
+    craft_ui::ComboBox::from_id_salt("pr_office_theme").selected_text(shown).width(180.0).show_ui(ui, |ui| {
+        for (value, label) in themes {
             if ui.selectable_label(app.ui.pressroom_theme == value, label).clicked() {
                 app.ui.pressroom_theme = value.into();
             }
@@ -673,9 +675,9 @@ fn account(app: &mut DesignApp, ui: &mut Ui) {
     });
     // Update Options, as in Publisher's Account page.
     ui.add_space(18.0);
-    ui.label(egui::RichText::new("Product Information").size(15.0).color(PR::TEXT));
+    ui.label(egui::RichText::new("Product Information").size(15.0).color(super::pal().text));
     let version = super::update::VERSION.map_or_else(|| "Development build".to_string(), |v| format!("Version {v}"));
-    ui.label(egui::RichText::new(version).color(PR::GROUP_LABEL));
+    ui.label(egui::RichText::new(version).color(super::pal().group_label));
     ui.add_space(6.0);
     if ui.button("Check for Updates").on_hover_text("Look for a newer version of PressRoom").clicked() {
         app.updates_rt.pressroom.check(ui.ctx(), true);

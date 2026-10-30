@@ -7,13 +7,13 @@ impl DesignApp {
             // The UI scale is a preference (applied above); egui's own Cmd+Plus/Minus/0 would rescale the
             // whole window instead of the canvas, only to be reset next frame.
             ctx.options_mut(|o| o.zoom_with_keyboard = false);
-            self.fonts_system = theme::install_fonts(ctx, &self.ui.language);
+            self.fonts_system = theme::install_fonts_for(ctx, &self.ui.language, self.ui.pressroom_shell);
             self.fonts_lang = self.ui.language.clone();
             self.styled = true;
             self.restyle = true;
         } else {
             if self.fonts_lang != self.ui.language || (!self.fonts_system && theme::system_fonts_ready()) {
-                self.fonts_system = theme::install_fonts(ctx, &self.ui.language);
+                self.fonts_system = theme::install_fonts_for(ctx, &self.ui.language, self.ui.pressroom_shell);
                 self.fonts_lang = self.ui.language.clone();
             }
             self.fonts_ready = true;
@@ -69,6 +69,9 @@ impl DesignApp {
         }
         if self.restyle {
             theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
+            if self.ui.pressroom_shell {
+                crate::pressroom::style(ctx);
+            }
             self.restyle = false;
         }
     }

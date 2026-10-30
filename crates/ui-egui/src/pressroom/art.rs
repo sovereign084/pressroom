@@ -12,6 +12,9 @@ pub const GREEN: Color32 = Color32::from_rgb(73, 150, 66);
 pub const PAPER: Color32 = Color32::WHITE;
 pub const SKY: Color32 = Color32::from_rgb(160, 205, 240);
 pub const GREY: Color32 = Color32::from_rgb(150, 150, 150);
+/// Ink and paper on the dark themes.
+const DARK_INK: Color32 = Color32::from_rgb(222, 222, 222);
+const DARK_PAPER: Color32 = Color32::from_rgb(58, 58, 58);
 
 /// A pen on a 32 × 32 grid laid over `r`.
 struct Pen<'a> {
@@ -21,6 +24,8 @@ struct Pen<'a> {
     k: f32,
     /// Fade everything for a disabled button.
     dim: bool,
+    /// Drawn on a dark theme: ink and paper swap to light outlines on dark fills.
+    dark: bool,
 }
 
 impl Pen<'_> {
@@ -31,6 +36,15 @@ impl Pen<'_> {
         Rect::from_min_max(self.at(x0, y0), self.at(x1, y1))
     }
     fn c(&self, c: Color32) -> Color32 {
+        let c = if !self.dark {
+            c
+        } else if c == INK {
+            DARK_INK
+        } else if c == PAPER {
+            DARK_PAPER
+        } else {
+            c
+        };
         // Greyed out about as far as Publisher greys a disabled button.
         if self.dim { c.gamma_multiply(0.42) } else { c }
     }
@@ -99,7 +113,7 @@ pub fn paint(p: &Painter, r: Rect, name: &str, enabled: bool) {
     let side = r.width().min(r.height());
     let r = Rect::from_center_size(r.center(), vec2(side, side));
     let k = side / 32.0;
-    let g = Pen { p, r, k, dim: !enabled };
+    let g = Pen { p, r, k, dim: !enabled, dark: super::pal().dark };
     match name {
         // Clipboard
         "paste" => {

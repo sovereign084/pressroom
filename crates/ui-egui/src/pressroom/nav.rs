@@ -18,24 +18,30 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
     egui::Panel::left("pr_nav")
         .exact_size(if narrow { NARROW } else { WIDE })
         .resizable(false)
-        .frame(egui::Frame::NONE.fill(PR::PANE).stroke(Stroke::new(1.0, PR::RIBBON_EDGE)))
+        .frame(egui::Frame::NONE.fill(super::pal().pane).stroke(Stroke::new(1.0, super::pal().ribbon_edge)))
         .show(ui, |ui| {
             let full = ui.max_rect();
             // Header: "Page Navigation" and the collapse chevron.
             let head = Rect::from_min_size(full.min, vec2(full.width(), 36.0));
             if !narrow {
-                ui.painter().text(head.left_center() + vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, "Pages", FontId::proportional(16.0), PR::TEXT);
+                ui.painter().text(
+                    head.left_center() + vec2(10.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    "Pages",
+                    FontId::proportional(16.0),
+                    super::pal().text,
+                );
             }
             let cr = Rect::from_min_size(pos2(head.max.x - 26.0, head.center().y - 9.0), vec2(20.0, 18.0));
             let resp = ui.interact(cr, egui::Id::unique("pr_nav_collapse"), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(cr, PR::ROUND, PR::HOVER);
+                ui.painter().rect_filled(cr, PR::ROUND, super::pal().hover);
             }
             let c = cr.center();
             let d = if narrow { 1.0 } else { -1.0 };
             for off in [-2.5, 2.5] {
-                ui.painter().line_segment([c + vec2(off + 2.0 * d, -4.0), c + vec2(off - 2.0 * d, 0.0)], Stroke::new(1.2, PR::GROUP_LABEL));
-                ui.painter().line_segment([c + vec2(off - 2.0 * d, 0.0), c + vec2(off + 2.0 * d, 4.0)], Stroke::new(1.2, PR::GROUP_LABEL));
+                ui.painter().line_segment([c + vec2(off + 2.0 * d, -4.0), c + vec2(off - 2.0 * d, 0.0)], Stroke::new(1.2, super::pal().group_label));
+                ui.painter().line_segment([c + vec2(off - 2.0 * d, 0.0), c + vec2(off + 2.0 * d, 4.0)], Stroke::new(1.2, super::pal().group_label));
             }
             if resp.on_hover_text(if narrow { "Expand Page Navigation Pane" } else { "Collapse Page Navigation Pane" }).clicked() {
                 super::update(ui.ctx(), |s| s.nav_narrow = !narrow);
@@ -86,10 +92,10 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                         let selected = abs == cur;
                         if selected {
                             // The page shown: a rounded frame in the accent colour on its light tint.
-                            ui.painter().rect_filled(r.expand(5.0), 6.0, PR::CHECKED);
-                            ui.painter().rect_stroke(r.expand(5.0), 6.0, Stroke::new(2.0, PR::SELECT), StrokeKind::Inside);
+                            ui.painter().rect_filled(r.expand(5.0), 6.0, super::pal().checked);
+                            ui.painter().rect_stroke(r.expand(5.0), 6.0, Stroke::new(2.0, super::pal().select), StrokeKind::Inside);
                         } else if resp.hovered() {
-                            ui.painter().rect_filled(r.expand(5.0), 6.0, PR::HOVER);
+                            ui.painter().rect_filled(r.expand(5.0), 6.0, super::pal().hover);
                         }
                         ui.painter().rect_filled(r.translate(vec2(1.0, 1.5)), 1.0, Color32::from_black_alpha(28));
                         match thumb(app, &ctx, ThumbOf::Page(abs), th) {
@@ -107,7 +113,7 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                             egui::Align2::CENTER_CENTER,
                             label,
                             FontId::proportional(11.5),
-                            PR::TEXT,
+                            super::pal().text,
                         );
                         if resp.clicked() {
                             crate::canvas::go_to_page(app, abs);

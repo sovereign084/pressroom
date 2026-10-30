@@ -78,6 +78,7 @@ impl DesignApp {
             fonts_lang: String::new(),
             fonts_system: false,
             restyle: false,
+            pressroom_styled: false,
             fonts_ready: false,
             os_documents: Vec::new(),
             integrated_titlebar: false,
@@ -241,7 +242,7 @@ impl DesignApp {
                 toolbar::show(self, ui);
             }
         }
-        let backdrop = if pressroom { crate::pressroom::PR::SCRATCH } else { t.pasteboard };
+        let backdrop = if pressroom { crate::pressroom::pal().scratch } else { t.pasteboard };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(backdrop)).show(ui, |ui| {
             if presenting || (!pressroom && self.ui.hidden_panels != 0) {
                 self.canvas_area(ui, presenting);

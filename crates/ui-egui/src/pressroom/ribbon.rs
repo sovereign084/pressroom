@@ -58,22 +58,24 @@ fn label_font() -> FontId {
 }
 
 fn paint_button_bg(ui: &Ui, r: Rect, resp: &Response, on: bool) {
+    // The hover highlight fades in and out rather than snapping.
+    let hover = ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.1);
     let fill = if resp.is_pointer_button_down_on() {
-        PR::PRESSED
+        super::pal().pressed
     } else if on {
-        PR::CHECKED
-    } else if resp.hovered() {
-        PR::HOVER
+        super::pal().checked
+    } else if hover > 0.0 {
+        super::pal().hover.gamma_multiply(hover)
     } else {
         return;
     };
     // Soft, rounded highlights, as current Office draws them; a button that's on keeps a hairline.
-    let edge = if on { Stroke::new(1.0, PR::HOVER_BORDER) } else { Stroke::NONE };
+    let edge = if on { Stroke::new(1.0, super::pal().hover_border) } else { Stroke::NONE };
     ui.painter().rect(r.shrink(0.5), PR::ROUND, fill, edge, StrokeKind::Inside);
 }
 
 fn text_color(enabled: bool) -> Color32 {
-    if enabled { PR::TEXT } else { PR::DISABLED }
+    if enabled { super::pal().text } else { super::pal().disabled }
 }
 
 /// A large button: 32 px icon over a one- or two-line label (`\n` breaks it), with ▾ when `arrow`.
@@ -198,16 +200,16 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
             egui::Align2::CENTER_CENTER,
             name,
             label_font(),
-            PR::GROUP_LABEL,
+            super::pal().group_label,
         );
         let mut clicked = false;
         if launcher {
             let br = Rect::from_min_size(pos2(lr.max.x - 15.0, lr.min.y + 3.0), vec2(12.0, 12.0));
             let resp = ui.interact(br, ui.scope_id().with(("launcher", name)), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(br, PR::ROUND, PR::HOVER);
+                ui.painter().rect_filled(br, PR::ROUND, super::pal().hover);
             }
-            let s = Stroke::new(1.0, PR::GROUP_LABEL);
+            let s = Stroke::new(1.0, super::pal().group_label);
             ui.painter().line_segment([br.min + vec2(3.0, 3.0), br.max - vec2(3.0, 3.0)], s);
             ui.painter().line_segment([pos2(br.min.x + 5.0, br.max.y - 3.0), br.max - vec2(3.0, 3.0)], s);
             ui.painter().line_segment([pos2(br.max.x - 3.0, br.min.y + 5.0), br.max - vec2(3.0, 3.0)], s);
@@ -217,7 +219,7 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
     });
     let right = inner.response.rect.max.x + 3.0;
     ui.add_space(6.0);
-    ui.painter().line_segment([pos2(right, top.y + 8.0), pos2(right, top.y + CONTENT_H + LABEL_H - 6.0)], Stroke::new(1.0, PR::GROUP_SEP));
+    ui.painter().line_segment([pos2(right, top.y + 8.0), pos2(right, top.y + CONTENT_H + LABEL_H - 6.0)], Stroke::new(1.0, super::pal().group_sep));
     inner.inner
 }
 
@@ -884,7 +886,7 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
         column(ui, |ui| {
             let mut snap = checked(app, "view.snapToGuides");
             ui.add_enabled_ui(doc, |ui| {
-                ui.label(egui::RichText::new("Align To").color(PR::TEXT).font(label_font()));
+                ui.label(egui::RichText::new("Align To").color(super::pal().text).font(label_font()));
                 if ui.checkbox(&mut snap, egui::RichText::new("Guides").font(label_font())).changed() {
                     act(app, "view.snapToGuides");
                 }

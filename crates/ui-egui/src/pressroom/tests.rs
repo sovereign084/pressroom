@@ -239,7 +239,11 @@ fn the_ribbon_is_current_publishers_help_tab_and_objects_order() {
 #[test]
 fn the_office_theme_is_saved_with_the_settings() {
     let mut ui = crate::state::UiState::default();
-    assert_eq!(ui.pressroom_theme, "white");
+    // Office's default: follow Windows.
+    assert_eq!(ui.pressroom_theme, "system");
+    assert_eq!(super::theme_index("system", false), 0);
+    assert_eq!(super::theme_index("system", true), 3);
+    assert_eq!(super::theme_index("darkgray", false), 2);
     ui.pressroom_theme = "colorful".into();
     let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&ui).unwrap()).unwrap();
     assert_eq!(back.pressroom_theme, "colorful");

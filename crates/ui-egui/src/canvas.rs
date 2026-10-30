@@ -187,15 +187,23 @@ pub fn show(app: &mut DesignApp, ui: &mut egui::Ui) {
         Color32::BLACK
     } else if app.ui.pressroom_shell {
         // PressRoom's light scratch area, as current Publisher's.
-        crate::pressroom::PR::SCRATCH
+        crate::pressroom::pal().scratch
     } else {
         t.pasteboard
     };
     painter.rect_filled(screen, 0.0, bg);
-    // Page shadow: a hard 1.5 pt black offset on the right and bottom (InDesign 2026).
+    // Page shadow: a hard 1.5 pt black offset on the right and bottom (InDesign 2026), or in
+    // PressRoom a soft one all round, paper on a desk as current Office shows its pages.
     for slot in &layout.slots {
         let r = xf.rect(slot.bounds);
-        painter.rect_filled(r.translate(vec2(1.5, 1.5)), 0.0, Color32::BLACK);
+        if app.ui.pressroom_shell {
+            let dark = crate::pressroom::pal().dark;
+            let soft = egui::epaint::Shadow { offset: [0, 3], blur: 14, spread: 0, color: Color32::from_black_alpha(if dark { 150 } else { 55 }) };
+            painter.add(soft.as_shape(r, 0.0));
+            painter.rect_stroke(r, 0.0, egui::Stroke::new(1.0, Color32::from_black_alpha(if dark { 90 } else { 28 })), egui::StrokeKind::Outside);
+        } else {
+            painter.rect_filled(r.translate(vec2(1.5, 1.5)), 0.0, Color32::BLACK);
+        }
     }
     // Paper under the rendered content: a page scrolled or jumped to shows its paper colour,
     // not the shadow's black, until its render arrives.

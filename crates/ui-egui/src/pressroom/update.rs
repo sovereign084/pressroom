@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use egui::{Color32, Sense, Stroke, Ui, vec2};
 
-use super::PR;
 use crate::DesignApp;
 
 /// PressRoom's version, stamped in by `packaging/pressroom/build-installer.ps1`. Developer builds
@@ -20,8 +19,14 @@ pub const VERSION: Option<&str> = option_env!("PRESSROOM_VERSION");
 pub const REPO: &str = "sovereign084/pressroom";
 
 const BAR_H: f32 = 34.0;
-const BAR_FILL: Color32 = Color32::from_rgb(255, 244, 206);
-const BAR_EDGE: Color32 = Color32::from_rgb(230, 214, 160);
+/// Office's message bar: pale yellow, or a dark olive in the dark themes.
+fn bar_colors() -> (Color32, Color32) {
+    if super::pal().dark {
+        (Color32::from_rgb(61, 56, 30), Color32::from_rgb(98, 90, 52))
+    } else {
+        (Color32::from_rgb(255, 244, 206), Color32::from_rgb(230, 214, 160))
+    }
+}
 
 /// Where an update stands.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -280,8 +285,8 @@ fn spawn_installer(_msi: &Path) -> Result<(), String> {
 
 /// A message-bar button: white, with a grey border, as in Office.
 fn button(ui: &mut Ui, label: &str) -> bool {
-    let text = egui::RichText::new(label).size(12.0).color(PR::TEXT);
-    ui.add(egui::Button::new(text).fill(Color32::WHITE).stroke(Stroke::new(1.0, PR::HOVER_BORDER)).min_size(vec2(0.0, 22.0))).clicked()
+    let text = egui::RichText::new(label).size(12.0).color(super::pal().text);
+    ui.add(egui::Button::new(text).fill(super::pal().card).stroke(Stroke::new(1.0, super::pal().hover_border)).min_size(vec2(0.0, 22.0))).clicked()
 }
 
 /// The message bar under the ribbon (under the title bar on the File screen), while there's an
@@ -306,15 +311,16 @@ pub fn bar(app: &mut DesignApp, ui: &mut Ui) {
         }
         Phase::Failed(e) => ("UPDATES", e.clone()),
     };
-    egui::Panel::top("pr_update_bar").exact_size(BAR_H).frame(egui::Frame::NONE.fill(BAR_FILL)).show(ui, |ui| {
+    let (bar_fill, bar_edge) = bar_colors();
+    egui::Panel::top("pr_update_bar").exact_size(BAR_H).frame(egui::Frame::NONE.fill(bar_fill)).show(ui, |ui| {
         let full = ui.max_rect();
-        ui.painter().line_segment([full.left_bottom(), full.right_bottom()], Stroke::new(1.0, BAR_EDGE));
-        ui.style_mut().visuals = egui::Visuals::light();
+        ui.painter().line_segment([full.left_bottom(), full.right_bottom()], Stroke::new(1.0, bar_edge));
+        ui.style_mut().visuals = ui.ctx().global_style().visuals.clone();
         ui.horizontal_centered(|ui| {
             ui.add_space(12.0);
-            ui.label(egui::RichText::new(title).size(12.0).strong().color(PR::TEXT));
+            ui.label(egui::RichText::new(title).size(12.0).strong().color(super::pal().text));
             ui.add_space(10.0);
-            ui.label(egui::RichText::new(message).size(12.0).color(PR::TEXT));
+            ui.label(egui::RichText::new(message).size(12.0).color(super::pal().text));
             ui.add_space(10.0);
             match &phase {
                 Phase::Available { notes_url, .. } => {
@@ -346,11 +352,11 @@ pub fn bar(app: &mut DesignApp, ui: &mut Ui) {
             let resp = ui.interact(x, egui::Id::unique("pr_update_close"), Sense::click()).on_hover_text("Close");
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close the update message"));
             if resp.hovered() {
-                ui.painter().rect_filled(x, 2.0, BAR_EDGE);
+                ui.painter().rect_filled(x, 2.0, bar_edge);
             }
             let (c, d) = (x.center(), 4.0);
-            ui.painter().line_segment([c + vec2(-d, -d), c + vec2(d, d)], Stroke::new(1.2, PR::TEXT));
-            ui.painter().line_segment([c + vec2(-d, d), c + vec2(d, -d)], Stroke::new(1.2, PR::TEXT));
+            ui.painter().line_segment([c + vec2(-d, -d), c + vec2(d, d)], Stroke::new(1.2, super::pal().text));
+            ui.painter().line_segment([c + vec2(-d, d), c + vec2(d, -d)], Stroke::new(1.2, super::pal().text));
             if resp.clicked() {
                 updates.dismiss();
             }

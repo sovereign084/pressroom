@@ -352,8 +352,9 @@ pub struct UiState {
     /// changes keep merging; PressRoom's have tests of their own (`pressroom::tests`).
     #[serde(skip, default = "pressroom_shell")]
     pub pressroom_shell: bool,
-    /// PressRoom's Office Theme (File › Account), as Publisher's: "white" (the default, as
-    /// Office's on a light Windows) or "colorful" (the top in Publisher's teal).
+    /// PressRoom's Office Theme (File › Account), as Publisher's: "system" (the default, as
+    /// Office's: White on a light Windows, Black on a dark one), "white", "colorful" (the top in
+    /// Publisher's teal), "darkgray" or "black".
     pub pressroom_theme: String,
     /// Where the Contextual Task Bar is pinned: its top-left, in points from the canvas's top-left
     /// (`None`: it follows the selection).
@@ -476,7 +477,7 @@ impl Default for UiState {
             formatting_affects_text: false,
             task_bar: true,
             pressroom_shell: pressroom_shell(),
-            pressroom_theme: "white".into(),
+            pressroom_theme: "system".into(),
             task_bar_pin: None,
             task_bar_at: None,
             about: false,

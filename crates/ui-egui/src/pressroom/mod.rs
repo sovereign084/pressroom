@@ -24,39 +24,221 @@ use crate::DesignApp;
 pub use backstage::Backstage;
 pub use keys::shortcuts;
 
-/// The window's colours, as Publisher's current (Microsoft 365) look: a flat light top, the ribbon
-/// on a white rounded panel, light panes and scratch area, and Publisher's teal as the accent (the
-/// selected tab's underline, selections; the whole top in the Colorful theme).
+/// Colours that are the same in every Office Theme: Publisher's teal accent and its shades.
 #[allow(non_snake_case)]
 pub mod PR {
     use egui::Color32;
     pub const TEAL: Color32 = Color32::from_rgb(7, 117, 104);
     pub const TEAL_DARK: Color32 = Color32::from_rgb(5, 92, 82);
     pub const TEAL_HOVER: Color32 = Color32::from_rgb(38, 138, 125);
-    /// The top, the ribbon's surround, the panes and the status bar.
-    pub const RIBBON: Color32 = Color32::from_rgb(243, 243, 243);
-    /// The ribbon's rounded panel.
-    pub const CARD: Color32 = Color32::WHITE;
-    pub const CARD_EDGE: Color32 = Color32::from_rgb(226, 226, 226);
-    pub const RIBBON_EDGE: Color32 = Color32::from_rgb(224, 224, 224);
-    pub const GROUP_SEP: Color32 = Color32::from_rgb(225, 225, 225);
-    pub const GROUP_LABEL: Color32 = Color32::from_rgb(97, 97, 97);
-    pub const TEXT: Color32 = Color32::from_rgb(36, 36, 36);
-    pub const DISABLED: Color32 = Color32::from_rgb(168, 168, 168);
-    pub const HOVER: Color32 = Color32::from_rgb(235, 235, 235);
-    pub const HOVER_BORDER: Color32 = Color32::from_rgb(209, 209, 209);
-    pub const PRESSED: Color32 = Color32::from_rgb(220, 220, 220);
-    /// A button that's on (Bold, the alignment in force): a light tint of the accent.
-    pub const CHECKED: Color32 = Color32::from_rgb(220, 236, 233);
-    pub const SCRATCH: Color32 = Color32::from_rgb(224, 224, 224);
-    pub const PANE: Color32 = Color32::from_rgb(243, 243, 243);
     pub const CONTEXT: Color32 = Color32::from_rgb(232, 184, 76);
-    pub const SELECT: Color32 = TEAL;
     /// Rounding of buttons' hover and pressed highlights.
     pub const ROUND: f32 = 4.0;
 }
 
-/// The top of the window (title bar and tabs) in the chosen Office Theme (File › Account).
+/// The window's colours in one Office Theme (File › Account), as Publisher's current (Microsoft
+/// 365) look: a flat top, the ribbon on a rounded panel, Publisher's teal as the accent. White and
+/// Colorful are light; Dark Gray and Black are Office's dark themes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pal {
+    pub dark: bool,
+    /// The top (title bar and tabs): its fill, text, hover and the selected tab's underline.
+    pub top: Color32,
+    pub top_text: Color32,
+    pub top_hover: Color32,
+    pub top_accent: Color32,
+    /// The top is Publisher's teal (the Colorful theme).
+    pub colorful: bool,
+    /// The ribbon's surround.
+    pub ribbon: Color32,
+    /// The ribbon's rounded panel and its edge.
+    pub card: Color32,
+    pub card_edge: Color32,
+    pub ribbon_edge: Color32,
+    pub group_sep: Color32,
+    pub group_label: Color32,
+    pub text: Color32,
+    pub disabled: Color32,
+    pub hover: Color32,
+    pub hover_border: Color32,
+    pub pressed: Color32,
+    /// A button that's on (Bold, the alignment in force): a tint of the accent.
+    pub checked: Color32,
+    /// Around the page.
+    pub scratch: Color32,
+    /// The Pages pane.
+    pub pane: Color32,
+    pub status: Color32,
+    /// The page shown in the Pages pane, and other selections.
+    pub select: Color32,
+    /// The File screen's page.
+    pub page: Color32,
+}
+
+const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
+    Color32::from_rgb(r, g, b)
+}
+
+pub const WHITE: Pal = Pal {
+    dark: false,
+    top: rgb(243, 243, 243),
+    top_text: rgb(36, 36, 36),
+    top_hover: rgb(229, 229, 229),
+    top_accent: PR::TEAL,
+    colorful: false,
+    ribbon: rgb(243, 243, 243),
+    card: Color32::WHITE,
+    card_edge: rgb(226, 226, 226),
+    ribbon_edge: rgb(224, 224, 224),
+    group_sep: rgb(225, 225, 225),
+    group_label: rgb(97, 97, 97),
+    text: rgb(36, 36, 36),
+    disabled: rgb(168, 168, 168),
+    hover: rgb(235, 235, 235),
+    hover_border: rgb(209, 209, 209),
+    pressed: rgb(220, 220, 220),
+    checked: rgb(220, 236, 233),
+    scratch: rgb(224, 224, 224),
+    pane: rgb(243, 243, 243),
+    status: rgb(243, 243, 243),
+    select: PR::TEAL,
+    page: Color32::WHITE,
+};
+
+pub const COLORFUL: Pal =
+    Pal { top: PR::TEAL, top_text: Color32::WHITE, top_hover: PR::TEAL_HOVER, top_accent: Color32::WHITE, colorful: true, ..WHITE };
+
+pub const DARK_GRAY: Pal = Pal {
+    dark: true,
+    top: rgb(51, 51, 51),
+    top_text: rgb(245, 245, 245),
+    top_hover: rgb(78, 78, 78),
+    top_accent: rgb(96, 190, 176),
+    colorful: false,
+    ribbon: rgb(51, 51, 51),
+    card: rgb(68, 68, 68),
+    card_edge: rgb(86, 86, 86),
+    ribbon_edge: rgb(75, 75, 75),
+    group_sep: rgb(90, 90, 90),
+    group_label: rgb(208, 208, 208),
+    text: rgb(245, 245, 245),
+    disabled: rgb(140, 140, 140),
+    hover: rgb(86, 86, 86),
+    hover_border: rgb(110, 110, 110),
+    pressed: rgb(100, 100, 100),
+    checked: rgb(40, 92, 84),
+    scratch: rgb(96, 96, 96),
+    pane: rgb(60, 60, 60),
+    status: rgb(45, 45, 45),
+    select: rgb(64, 160, 146),
+    page: rgb(58, 58, 58),
+};
+
+/// As Publisher's Black theme measures: a near-black top, the ribbon on a dark grey panel.
+pub const BLACK: Pal = Pal {
+    dark: true,
+    top: rgb(10, 12, 14),
+    top_text: Color32::WHITE,
+    top_hover: rgb(45, 45, 45),
+    top_accent: rgb(92, 184, 170),
+    colorful: false,
+    ribbon: rgb(10, 12, 14),
+    card: rgb(41, 41, 41),
+    card_edge: rgb(56, 56, 56),
+    ribbon_edge: rgb(50, 50, 50),
+    group_sep: rgb(64, 64, 64),
+    group_label: rgb(214, 214, 214),
+    text: Color32::WHITE,
+    disabled: rgb(120, 120, 120),
+    hover: rgb(61, 61, 61),
+    hover_border: rgb(90, 90, 90),
+    pressed: rgb(77, 77, 77),
+    checked: rgb(35, 72, 66),
+    scratch: rgb(38, 38, 38),
+    pane: rgb(38, 38, 38),
+    status: rgb(20, 20, 20),
+    select: rgb(53, 126, 117),
+    page: rgb(32, 32, 32),
+};
+
+/// The theme the window is drawn in this frame: 0 White, 1 Colorful, 2 Dark Gray, 3 Black.
+static THEME: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// The current Office Theme's colours.
+pub fn pal() -> &'static Pal {
+    match THEME.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => &COLORFUL,
+        2 => &DARK_GRAY,
+        3 => &BLACK,
+        _ => &WHITE,
+    }
+}
+
+/// The Office Theme setting ("system", "white", "colorful", "darkgray", "black") as the theme to
+/// draw: "Use system setting" (Office's default) is White on a light Windows and Black on a dark one.
+pub fn theme_index(setting: &str, system_dark: bool) -> u8 {
+    match setting {
+        "white" => 0,
+        "colorful" => 1,
+        "darkgray" => 2,
+        "black" => 3,
+        _ if system_dark => 3,
+        _ => 0,
+    }
+}
+
+/// Draw this frame in the chosen theme. Whether it changed (menus and dialogs are restyled then).
+fn set_theme(app: &DesignApp, ctx: &egui::Context) -> bool {
+    let i = theme_index(&app.ui.pressroom_theme, ctx.system_theme() == Some(egui::Theme::Dark));
+    THEME.swap(i, std::sync::atomic::Ordering::Relaxed) != i
+}
+
+/// Menus, dropdowns and dialogs as current Office draws them, on top of DesignCraft's theme
+/// (`theme::apply`, InDesign's look): rounded corners and soft shadows, roomier rows and larger
+/// text, filled highlights instead of outlines, plain bordered buttons, and the accent's tint for
+/// what's selected.
+pub fn style(ctx: &egui::Context) {
+    let p = *pal();
+    let mut v = ctx.global_style().visuals.clone();
+    let round = egui::CornerRadius::same(4);
+    v.window_corner_radius = egui::CornerRadius::same(8);
+    v.menu_corner_radius = egui::CornerRadius::same(8);
+    v.window_fill = p.card;
+    v.window_stroke = Stroke::new(1.0, p.card_edge);
+    v.popup_shadow = egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(if p.dark { 110 } else { 40 }) };
+    v.window_shadow = egui::epaint::Shadow { offset: [0, 10], blur: 32, spread: 0, color: Color32::from_black_alpha(if p.dark { 120 } else { 48 }) };
+    for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        w.corner_radius = round;
+    }
+    let button = if p.dark { rgb(58, 58, 58) } else { rgb(253, 253, 253) };
+    v.widgets.inactive.weak_bg_fill = button;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, p.hover_border);
+    v.widgets.hovered.weak_bg_fill = p.hover;
+    v.widgets.hovered.bg_fill = p.hover;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.hover_border);
+    v.widgets.active.weak_bg_fill = p.pressed;
+    v.widgets.active.bg_fill = p.pressed;
+    v.widgets.open.weak_bg_fill = p.hover;
+    v.extreme_bg_color = if p.dark { rgb(30, 30, 30) } else { Color32::WHITE };
+    v.selection.bg_fill = p.checked;
+    v.selection.stroke = Stroke::new(1.0, p.text);
+    v.override_text_color = Some(p.text);
+    v.hyperlink_color = if p.dark { p.top_accent } else { PR::TEAL };
+    ctx.set_visuals(v);
+    ctx.global_style_mut(|s| {
+        s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(12.0));
+        s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(12.0));
+        s.text_styles.insert(egui::TextStyle::Small, FontId::proportional(10.5));
+        s.spacing.button_padding = vec2(10.0, 4.0);
+        s.spacing.interact_size = vec2(24.0, 24.0);
+        s.spacing.menu_margin = egui::Margin::same(6);
+        s.spacing.item_spacing = vec2(8.0, 4.0);
+        // Gentle motion: highlights and panels ease in rather than snap.
+        s.animation_time = 0.12;
+    });
+}
+
+/// The top of the window (title bar and tabs) in the chosen Office Theme.
 #[derive(Clone, Copy)]
 struct Top {
     bg: Color32,
@@ -67,12 +249,9 @@ struct Top {
     colorful: bool,
 }
 
-fn top(app: &DesignApp) -> Top {
-    if app.ui.pressroom_theme == "colorful" {
-        Top { bg: PR::TEAL, text: Color32::WHITE, hover: PR::TEAL_HOVER, accent: Color32::WHITE, colorful: true }
-    } else {
-        Top { bg: PR::RIBBON, text: PR::TEXT, hover: Color32::from_rgb(229, 229, 229), accent: PR::TEAL, colorful: false }
-    }
+fn top(_app: &DesignApp) -> Top {
+    let p = pal();
+    Top { bg: p.top, text: p.top_text, hover: p.top_hover, accent: p.top_accent, colorful: p.colorful }
 }
 
 const TITLE_H: f32 = 31.0;
@@ -445,10 +624,14 @@ fn fit_page_width(app: &mut DesignApp) {
 /// The bars around the document area: title bar, tabs and ribbon on top, status bar below.
 pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
-    // Publisher's light look: dialogs, menus and the canvas chrome follow it.
-    if app.ui.brightness != crate::theme::Brightness::Light {
-        app.ui.brightness = crate::theme::Brightness::Light;
+    let changed = set_theme(app, &ctx);
+    // Dialogs, menus and the canvas chrome follow the Office Theme: light, or dark for Dark Gray
+    // and Black.
+    let brightness = if pal().dark { crate::theme::Brightness::Dark } else { crate::theme::Brightness::Light };
+    if app.ui.brightness != brightness || changed || !app.pressroom_styled {
+        app.ui.brightness = brightness;
         app.restyle = true;
+        app.pressroom_styled = true;
     }
     // Publisher has no floating bar over the selection: the ribbon's Format tab is where its
     // controls live.
@@ -499,30 +682,36 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
         let r = ui.max_rect();
         let card = Rect::from_center_size(r.center(), vec2(420.0, 90.0));
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("pr_pubimport")));
-        painter.rect(card, 4.0, Color32::WHITE, Stroke::new(1.0, PR::RIBBON_EDGE), egui::StrokeKind::Inside);
+        painter.add(egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(50) }.as_shape(card, 8.0));
+        painter.rect(card, 8.0, pal().card, Stroke::new(1.0, pal().card_edge), egui::StrokeKind::Inside);
         painter.text(
             card.center() - vec2(0.0, 14.0),
             egui::Align2::CENTER_CENTER,
             format!("Bringing in \u{201c}{name}\u{201d}"),
             FontId::proportional(15.0),
-            PR::TEXT,
+            pal().text,
         );
         painter.text(
             card.center() + vec2(0.0, 14.0),
             egui::Align2::CENTER_CENTER,
             "Publisher is reading the file. This can take a minute.",
             FontId::proportional(12.0),
-            PR::GROUP_LABEL,
+            pal().group_label,
         );
     }
-    if let Some(page) = s.backstage {
-        backstage::show(app, ui, page);
+    let shown = s.backstage.or(app.session.active().is_none().then_some(Backstage::New));
+    let opened = egui::Id::unique("pr_backstage_in");
+    if let Some(page) = shown {
+        // The File screen glides in from the left and fades up, as Office's does.
+        let t = ctx.animate_bool_with_time(opened, true, 0.16);
+        let rect = ui.max_rect().translate(vec2(-(1.0 - t) * 36.0, 0.0));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        child.multiply_opacity(0.4 + 0.6 * t);
+        backstage::show(app, &mut child, page);
         return;
     }
-    if app.session.active().is_none() {
-        backstage::show(app, ui, Backstage::New);
-        return;
-    }
+    // Closed: the next opening glides in again.
+    ctx.animate_bool_with_time(opened, false, 0.0);
     if !s.nav_hidden {
         nav::pane(app, ui, s.nav_narrow);
     }
@@ -530,7 +719,7 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
     if (w - s.canvas_w).abs() > 0.5 {
         update(&ctx, |s| s.canvas_w = w);
     }
-    egui::Frame::NONE.fill(PR::SCRATCH).show(ui, |ui| {
+    egui::Frame::NONE.fill(pal().scratch).show(ui, |ui| {
         app.canvas_area(ui, false);
     });
 }
@@ -645,7 +834,7 @@ fn caption_buttons(app: &mut DesignApp, ui: &mut Ui, area: Rect, top: Top) {
 fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
     let top = top(app);
     let height = TABS_H + if s.collapsed { 0.0 } else { ribbon::BODY_H };
-    egui::Panel::top("pr_ribbon").exact_size(height).frame(egui::Frame::NONE.fill(PR::RIBBON)).show(ui, |ui| {
+    egui::Panel::top("pr_ribbon").exact_size(height).frame(egui::Frame::NONE.fill(pal().ribbon)).show(ui, |ui| {
         let full = ui.max_rect();
         let strip = Rect::from_min_max(full.min, pos2(full.max.x, full.min.y + TABS_H));
         ui.painter().rect_filled(strip, 0.0, top.bg);
@@ -666,6 +855,7 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         let mut x = strip.min.x + 6.0;
         let mut chosen = None;
         let mut toggle = false;
+        let mut underline = None;
         for (tab, name) in tabs {
             let tw = ui.painter().layout_no_wrap(name.to_string(), font.clone(), top.text).size().x;
             let w = tw + 22.0;
@@ -674,8 +864,9 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
             let current = s.tab == tab && !s.collapsed && tab != Tab::File;
             // Named for screen readers (and tests): a tab, selected while its ribbon shows.
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, current, name));
-            if resp.hovered() {
-                ui.painter().rect_filled(r, PR::ROUND, top.hover);
+            let hover = ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.1);
+            if hover > 0.0 {
+                ui.painter().rect_filled(r, PR::ROUND, top.hover.gamma_multiply(hover));
             }
             // The contextual tab is in the accent colour, as Office shows it.
             let color = if tab == Tab::Format && !top.colorful { PR::TEAL } else { top.text };
@@ -683,9 +874,7 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
             ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, name, tab_font, color);
             let resp = if tab == Tab::Format { resp.on_hover_text(s.context.title()) } else { resp };
             if current {
-                // The selected tab: an underline in the accent colour, under its name.
-                let u = Rect::from_center_size(pos2(r.center().x, r.max.y - 1.5), vec2(tw.max(16.0), 3.0));
-                ui.painter().rect_filled(u, 1.5, top.accent);
+                underline = Some((r.center().x, tw.max(16.0), r.max.y - 1.5));
             }
             if tab == Tab::Format {
                 ui.data_mut(|d| d.insert_temp(egui::Id::unique("pr_format_tab_x"), (r.min.x, r.max.x)));
@@ -696,6 +885,12 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
                 chosen = Some(tab);
             }
             x += w + 2.0;
+        }
+        // The selected tab's underline, in the accent colour; it slides to a newly chosen tab.
+        if let Some((cx, w, y)) = underline {
+            let cx = ui.ctx().animate_value_with_time(egui::Id::unique("pr_tab_underline_x"), cx, 0.18);
+            let w = ui.ctx().animate_value_with_time(egui::Id::unique("pr_tab_underline_w"), w, 0.18);
+            ui.painter().rect_filled(Rect::from_center_size(pos2(cx, y), vec2(w, 3.0)), 1.5, top.accent);
         }
         if let Some(tab) = chosen {
             if tab == Tab::File {
@@ -718,10 +913,10 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         let card = Rect::from_min_max(body.min + vec2(6.0, 4.0), body.max - vec2(6.0, 5.0));
         let shadow = egui::epaint::Shadow { offset: [0, 1], blur: 4, spread: 0, color: Color32::from_black_alpha(22) };
         ui.painter().add(shadow.as_shape(card, 8.0));
-        ui.painter().rect(card, 8.0, PR::CARD, Stroke::new(1.0, PR::CARD_EDGE), egui::StrokeKind::Inside);
+        ui.painter().rect(card, 8.0, pal().card, Stroke::new(1.0, pal().card_edge), egui::StrokeKind::Inside);
         let mut inner =
             ui.new_child(egui::UiBuilder::new().max_rect(card.shrink2(vec2(2.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Min)));
-        inner.style_mut().visuals = egui::Visuals::light();
+        inner.style_mut().visuals = inner.ctx().global_style().visuals.clone();
         inner.set_clip_rect(card.shrink(1.0));
         egui::ScrollArea::horizontal().id_salt("pr_ribbon_scroll").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
             &mut inner,
@@ -734,11 +929,11 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         let cr = Rect::from_min_size(pos2(card.max.x - 26.0, card.max.y - 22.0), vec2(20.0, 18.0));
         let resp = ui.interact(cr, egui::Id::unique("pr_collapse"), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(cr, PR::ROUND, PR::HOVER);
+            ui.painter().rect_filled(cr, PR::ROUND, pal().hover);
         }
         let c = cr.center();
-        ui.painter().line_segment([c + vec2(-4.0, 2.0), c + vec2(0.0, -2.0)], Stroke::new(1.2, PR::GROUP_LABEL));
-        ui.painter().line_segment([c + vec2(0.0, -2.0), c + vec2(4.0, 2.0)], Stroke::new(1.2, PR::GROUP_LABEL));
+        ui.painter().line_segment([c + vec2(-4.0, 2.0), c + vec2(0.0, -2.0)], Stroke::new(1.2, pal().group_label));
+        ui.painter().line_segment([c + vec2(0.0, -2.0), c + vec2(4.0, 2.0)], Stroke::new(1.2, pal().group_label));
         if resp.on_hover_text("Collapse the Ribbon (Ctrl+F1)").clicked() {
             update(ui.ctx(), |st| st.collapsed = true);
         }
@@ -749,9 +944,9 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
 }
 
 fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
-    egui::Panel::bottom("pr_status").exact_size(STATUS_H).frame(egui::Frame::NONE.fill(PR::RIBBON)).show(ui, |ui| {
+    egui::Panel::bottom("pr_status").exact_size(STATUS_H).frame(egui::Frame::NONE.fill(pal().status)).show(ui, |ui| {
         let full = ui.max_rect();
-        ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(1.0, PR::RIBBON_EDGE));
+        ui.painter().line_segment([full.left_top(), full.right_top()], Stroke::new(1.0, pal().ribbon_edge));
         let font = FontId::proportional(11.5);
         let Some(n) = app.session.active().map(|d| d.doc.page_count()) else { return };
         let cur = crate::canvas::current_page(app).unwrap_or(0);
@@ -759,7 +954,7 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let pr = Rect::from_min_size(pos2(full.min.x + 8.0, full.min.y + 2.0), vec2(96.0, STATUS_H - 4.0));
         let resp = ui.interact(pr, egui::Id::unique("pr_status_page"), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(pr, PR::ROUND, PR::HOVER);
+            ui.painter().rect_filled(pr, PR::ROUND, pal().hover);
         }
         art::paint(ui.painter(), Rect::from_min_size(pr.min + vec2(2.0, 1.5), vec2(15.0, 15.0)), "single-page", true);
         ui.painter().text(
@@ -767,24 +962,24 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
             egui::Align2::LEFT_CENTER,
             format!("Page: {} of {}", cur + 1, n),
             font.clone(),
-            PR::TEXT,
+            pal().text,
         );
         if resp.on_hover_text("Page Navigation").clicked() {
             let hidden = nav_hidden(ui.ctx());
             set_nav_hidden(ui.ctx(), !hidden);
         }
         if !app.ui.status.is_empty() {
-            ui.painter().text(pos2(pr.max.x + 18.0, full.center().y), egui::Align2::LEFT_CENTER, &app.ui.status, font.clone(), PR::GROUP_LABEL);
+            ui.painter().text(pos2(pr.max.x + 18.0, full.center().y), egui::Align2::LEFT_CENTER, &app.ui.status, font.clone(), pal().group_label);
         }
         // Right: view buttons, zoom slider, percentage, and Fit Page to Window.
         let zoom = app.view().map(|v| v.zoom).unwrap_or(1.0);
         let fit_r = Rect::from_min_size(pos2(full.max.x - 32.0, full.min.y + 2.0), vec2(26.0, STATUS_H - 4.0));
         let fit = ui.interact(fit_r, egui::Id::unique("pr_zoom_fit"), Sense::click());
         if fit.hovered() {
-            ui.painter().rect_filled(fit_r, PR::ROUND, PR::HOVER);
+            ui.painter().rect_filled(fit_r, PR::ROUND, pal().hover);
         }
         let (fo, fi) = (Rect::from_center_size(fit_r.center(), vec2(14.0, 11.0)), Rect::from_center_size(fit_r.center(), vec2(6.0, 4.0)));
-        ui.painter().rect_stroke(fo, 1.5, Stroke::new(1.1, PR::TEXT), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(fo, 1.5, Stroke::new(1.1, pal().text), egui::StrokeKind::Inside);
         ui.painter().rect_filled(fi, 1.0, PR::TEAL);
         if fit.on_hover_text("Fit Page to Window").clicked() {
             ribbon::act(app, "view.fitPage");
@@ -792,9 +987,9 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let pct_r = Rect::from_min_size(pos2(fit_r.min.x - 48.0, full.min.y + 2.0), vec2(46.0, STATUS_H - 4.0));
         let resp = ui.interact(pct_r, egui::Id::unique("pr_zoom_pct"), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(pct_r, PR::ROUND, PR::HOVER);
+            ui.painter().rect_filled(pct_r, PR::ROUND, pal().hover);
         }
-        ui.painter().text(pct_r.center(), egui::Align2::CENTER_CENTER, format!("{:.0}%", zoom * 100.0), font.clone(), PR::TEXT);
+        ui.painter().text(pct_r.center(), egui::Align2::CENTER_CENTER, format!("{:.0}%", zoom * 100.0), font.clone(), pal().text);
         egui::Popup::menu(&resp).show(|ui| {
             for p in [400.0, 200.0, 150.0, 100.0, 75.0, 50.0, 33.0, 25.0] {
                 if ui.button(format!("{p}%")).clicked() {
@@ -812,13 +1007,13 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         let to_t = |z: f64| ((z.max(0.1).ln() - 0.1f64.ln()) / (4.0f64.ln() - 0.1f64.ln())).clamp(0.0, 1.0) as f32;
         let from_t = |t: f32| (0.1f64.ln() + f64::from(t) * (4.0f64.ln() - 0.1f64.ln())).exp();
         let track = Rect::from_min_max(pos2(sr.min.x, sr.center().y - 0.5), pos2(sr.max.x, sr.center().y + 0.5));
-        ui.painter().rect_filled(track, 0.5, PR::GROUP_LABEL);
+        ui.painter().rect_filled(track, 0.5, pal().group_label);
         ui.painter()
-            .line_segment([pos2(sr.center().x, sr.center().y - 4.0), pos2(sr.center().x, sr.center().y + 4.0)], Stroke::new(1.0, PR::GROUP_LABEL));
+            .line_segment([pos2(sr.center().x, sr.center().y - 4.0), pos2(sr.center().x, sr.center().y + 4.0)], Stroke::new(1.0, pal().group_label));
         let resp = ui.interact(sr, egui::Id::unique("pr_zoom_slider"), Sense::click_and_drag());
         let t = to_t(zoom);
         let knob = Rect::from_center_size(pos2(sr.min.x + t * sr.width(), sr.center().y), vec2(5.0, 13.0));
-        ui.painter().rect_filled(knob, 2.5, PR::TEXT);
+        ui.painter().rect_filled(knob, 2.5, pal().text);
         if (resp.dragged() || resp.clicked())
             && let Some(p) = resp.interact_pointer_pos()
         {
@@ -832,11 +1027,11 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
             let br = Rect::from_center_size(c, vec2(16.0, 16.0));
             let b = ui.interact(br, egui::Id::unique(("pr_zoom_step", minus)), Sense::click());
             if b.hovered() {
-                ui.painter().rect_filled(br, PR::ROUND, PR::HOVER);
+                ui.painter().rect_filled(br, PR::ROUND, pal().hover);
             }
-            ui.painter().line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], Stroke::new(1.2, PR::TEXT));
+            ui.painter().line_segment([c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)], Stroke::new(1.2, pal().text));
             if !minus {
-                ui.painter().line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], Stroke::new(1.2, PR::TEXT));
+                ui.painter().line_segment([c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)], Stroke::new(1.2, pal().text));
             }
             if b.clicked() {
                 ribbon::act(app, if minus { "view.zoomOut" } else { "view.zoomIn" });
@@ -848,9 +1043,9 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
             let r = Rect::from_min_size(pos2(sr.min.x - 76.0 + k as f32 * 26.0, full.min.y + 2.0), vec2(24.0, STATUS_H - 4.0));
             let b = ui.interact(r, egui::Id::unique(("pr_viewbtn", icon)), Sense::click());
             if on {
-                ui.painter().rect_filled(r, PR::ROUND, PR::CHECKED);
+                ui.painter().rect_filled(r, PR::ROUND, pal().checked);
             } else if b.hovered() {
-                ui.painter().rect_filled(r, PR::ROUND, PR::HOVER);
+                ui.painter().rect_filled(r, PR::ROUND, pal().hover);
             }
             art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(15.0, 15.0)), icon, true);
             if b.on_hover_text(tip).clicked() {

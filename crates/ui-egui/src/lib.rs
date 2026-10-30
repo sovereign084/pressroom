@@ -195,6 +195,8 @@ pub struct DesignApp {
     /// being cataloged: the fonts are installed again when they are).
     fonts_system: bool,
     pub restyle: bool,
+    /// PressRoom's Office look has been laid over the theme (`pressroom::style`) since it was last applied.
+    pub(crate) pressroom_styled: bool,
     fonts_ready: bool,
     /// Files the operating system asked to open (macOS Finder, Dock, Open With), opened once the
     /// window is ready; see [`DesignApp::open_documents_later`].

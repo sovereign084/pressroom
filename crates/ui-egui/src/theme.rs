@@ -266,8 +266,18 @@ impl Tokens {
 /// installed without waiting, and the caller installs again once they are (see
 /// [`system_fonts_ready`]) to add the installed faces for the scripts they lack.
 pub fn install_fonts(ctx: &egui::Context, lang: &str) -> bool {
+    install_fonts_for(ctx, lang, false)
+}
+
+/// [`install_fonts`], with `windows_ui` putting Windows' own interface font (Segoe UI) first, as
+/// Office draws its windows (PressRoom). It's read from the system's font folder, never bundled;
+/// without it (another system) the app's own face stays.
+pub fn install_fonts_for(ctx: &egui::Context, lang: &str, windows_ui: bool) -> bool {
     let craft = designcraft_fonts::CRAFT_FONTS;
     let mut defs = font_definitions(craft, lang);
+    if windows_ui {
+        prefer_windows_ui_face(&mut defs);
+    }
     let system = system_ui_fonts(craft);
     let found = system.is_some();
     if let Some(system) = &system {
@@ -275,6 +285,24 @@ pub fn install_fonts(ctx: &egui::Context, lang: &str) -> bool {
     }
     ctx.set_fonts(defs);
     found
+}
+
+/// Segoe UI (and its Semibold) at the front of the interface families, when Windows has them.
+fn prefer_windows_ui_face(defs: &mut FontDefinitions) {
+    let dir = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into()).join("Fonts");
+    // A system font file is a few MB; anything far larger isn't the face we want.
+    let read = |name: &str| std::fs::read(dir.join(name)).ok().filter(|b| !b.is_empty() && b.len() < 32 << 20);
+    let Some(regular) = read("segoeui.ttf") else { return };
+    defs.font_data.insert("ui-windows".into(), Arc::new(FontData::from_owned(regular)));
+    if let Some(stack) = defs.families.get_mut(&FontFamily::Proportional) {
+        stack.insert(0, "ui-windows".into());
+    }
+    if let Some(semibold) = read("seguisb.ttf").or_else(|| read("segoeuib.ttf")) {
+        defs.font_data.insert("ui-windows-semibold".into(), Arc::new(FontData::from_owned(semibold)));
+        if let Some(stack) = defs.families.get_mut(&FontFamily::Name("semibold".into())) {
+            stack.insert(0, "ui-windows-semibold".into());
+        }
+    }
 }
 
 /// Whether [`install_fonts`] would find the installed fonts cataloged.
