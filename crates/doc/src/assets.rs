@@ -87,7 +87,7 @@ impl Asset {
     /// relinked on its own. Assets without bytes (a link that couldn't be read) are the same only
     /// when they link to the same path.
     pub fn same_file(&self, other: &Asset) -> bool {
-        if self.mime != other.mime || self.page != other.page || self.pdf_crop != other.pdf_crop {
+        if self.mime != other.mime || self.page != other.page || self.pdf_crop != other.pdf_crop || self.adjusted != other.adjusted {
             return false;
         }
         if self.link != other.link {
@@ -253,11 +253,19 @@ impl Document {
     /// has); returns the id to reference here, `None` when `src` has no such asset.
     pub fn adopt_asset(&mut self, src: &Document, id: AssetId) -> Option<AssetId> {
         let a = src.assets.get(&id)?;
-        if let Some(same) = find_same_asset(&self.assets, a) {
+        let mut copy = (**a).clone();
+        // A corrected picture brings its original along (never a corrected one: no chains).
+        if let Some(adj) = copy.adjusted.as_mut() {
+            match src.assets.get(&adj.source).filter(|s| s.adjusted.is_none()).map(|s| s.id) {
+                Some(source) => adj.source = self.adopt_asset(src, source)?,
+                None => copy.adjusted = None,
+            }
+        }
+        if let Some(same) = find_same_asset(&self.assets, &copy) {
             return Some(same);
         }
         let fresh = AssetId(self.alloc());
-        Some(self.add_asset(Asset { id: fresh, ..(**a).clone() }))
+        Some(self.add_asset(Asset { id: fresh, ..copy }))
     }
 
     /// Calls `f` with every asset reference: graphics on document and parent spreads (in
@@ -285,6 +293,8 @@ impl Document {
         }) {
             return self.assets.keys().copied().collect();
         }
+        let sources: Vec<AssetId> = used.iter().filter_map(|id| self.assets.get(id)?.adjusted.as_ref().map(|a| a.source)).collect();
+        used.extend(sources);
         used
     }
 
@@ -335,6 +345,13 @@ impl Document {
         }
         self.remap_assets(&map);
         self.assets.retain(|id, _| !map.contains_key(id));
+        for a in self.assets.values_mut() {
+            if let Some(to) = a.adjusted.as_ref().and_then(|adj| map.get(&adj.source)).copied()
+                && let Some(adj) = Arc::make_mut(a).adjusted.as_mut()
+            {
+                adj.source = to;
+            }
+        }
         map.len()
     }
 
@@ -497,5 +514,29 @@ mod tests {
         assert_eq!(d.assets.keys().copied().collect::<Vec<_>>(), vec![AssetId(1), AssetId(3)]);
         let crops: Vec<(AssetId, f64)> = d.spreads[0].items.iter().filter_map(|i| i.graphic().map(|g| (g.asset, g.crop[0]))).collect();
         assert_eq!(crops, vec![(AssetId(1), 1.0), (AssetId(1), 2.0)]);
+    }
+
+    #[test]
+    fn a_corrected_picture_keeps_its_original_and_brings_it_along() {
+        let mut d = Document::new(&Default::default());
+        let adj = |source| crate::Adjusted { source: AssetId(source), brightness: 20, ..Default::default() };
+        // The original twice (merged on save), and the picture corrected from the second copy.
+        for (id, data) in [(1, b"orig"), (2, b"orig")] {
+            d.assets.insert(AssetId(id), Arc::new(asset(id, data)));
+        }
+        d.assets.insert(AssetId(3), Arc::new(Asset { adjusted: Some(adj(2)), ..asset(3, b"lighter") }));
+        // The same bytes with other corrections are another picture.
+        assert_ne!(d.add_asset(Asset { adjusted: Some(crate::Adjusted { contrast: 5, ..adj(2) }), ..asset(4, b"lighter") }), AssetId(3));
+        Arc::make_mut(d.spreads.first_mut().unwrap()).items.push(Arc::new(graphic_item(10, 3, 0.0)));
+        assert_eq!(d.used_assets(), [2, 3].map(AssetId).into_iter().collect(), "the original is kept");
+        d.compact_assets();
+        assert_eq!(d.assets.keys().copied().collect::<Vec<_>>(), vec![AssetId(1), AssetId(3)]);
+        assert_eq!(d.assets[&AssetId(3)].adjusted.as_ref().map(|a| a.source), Some(AssetId(1)), "points at the kept copy");
+
+        let mut other = Document::new(&Default::default());
+        let copied = other.adopt_asset(&d, AssetId(3)).unwrap();
+        let source = other.assets[&copied].adjusted.as_ref().map(|a| a.source).unwrap();
+        assert_eq!(other.assets[&source].data.as_slice(), b"orig");
+        assert_eq!(other.assets.len(), 2);
     }
 }

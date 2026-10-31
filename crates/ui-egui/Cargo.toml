@@ -19,6 +19,7 @@ designcraft-doc = { workspace = true }
 designcraft-fonts = { workspace = true }
 designcraft-compose = { workspace = true }
 designcraft-render = { workspace = true }
+designcraft-images = { workspace = true }
 designcraft-tools = { workspace = true }
 designcraft-engine = { workspace = true }
 craft-prepress = { workspace = true }

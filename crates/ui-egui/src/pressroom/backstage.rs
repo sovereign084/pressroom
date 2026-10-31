@@ -313,6 +313,17 @@ fn open_page(app: &mut DesignApp, ui: &mut Ui) {
         super::close_backstage(ui.ctx());
         ribbon::act(app, "app.openDialog");
     }
+    ui.add_space(10.0);
+    // Her old Publisher files, all at once, while Publisher is still on this computer.
+    let busy = super::pubimport::busy().is_some();
+    if ui
+        .add_enabled(!busy, egui::Button::new(egui::RichText::new("   Convert a Folder of Publisher Files\u{2026}   ").font(FontId::proportional(13.0))))
+        .on_hover_text("Turns every Publisher file in a folder (and its folders) into a PressRoom publication beside it. Publisher must still be installed on this computer.")
+        .clicked()
+        && let Some(folder) = app.services.pick_open.as_mut().and_then(|pick| pick("folder"))
+    {
+        super::pubimport::start_folder(app, &folder);
+    }
     ui.add_space(18.0);
     heading(ui, "Recent Publications");
     let recent = app.run("file.recentFiles", json!({})).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();

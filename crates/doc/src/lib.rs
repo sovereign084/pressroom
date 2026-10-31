@@ -575,6 +575,31 @@ pub struct Asset {
     /// measured yet (`designcraft_render::shown_box` measures it when the graphic is drawn).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_box: Option<[f64; 4]>,
+    /// Picture corrections (PressRoom's Corrections and Recolor): this picture is the asset
+    /// `source` with them applied. The source stays in the document, so they can be changed or
+    /// taken off again (Reset Picture).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjusted: Option<Adjusted>,
+}
+
+/// How a corrected picture was made from its original ([`Asset::adjusted`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Adjusted {
+    /// The picture as placed, before any corrections.
+    pub source: AssetId,
+    /// Brightness, -100 to 100 percent.
+    #[serde(default)]
+    pub brightness: i32,
+    /// Contrast, -100 to 100 percent.
+    #[serde(default)]
+    pub contrast: i32,
+    /// Recolor: none, grayscale, sepia, washout, blackWhite, dark or light.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recolor: String,
+    /// The colour of a dark or light recolour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<[u8; 3]>,
 }
 
 impl Asset {

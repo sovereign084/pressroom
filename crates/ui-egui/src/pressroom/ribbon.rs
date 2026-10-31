@@ -335,28 +335,62 @@ fn char_attrs(app: &mut DesignApp) -> Option<Value> {
     crate::panels::text_attrs(app).map(|a| a["chars"].clone())
 }
 
+/// Character formatting from the Font group: for the text selected, or, with none (Publisher keeps
+/// the group working), for the next text box drawn.
+fn set_chars(app: &mut DesignApp, text: bool, attrs: Value) {
+    if text {
+        let _ = app.run("type.char", json!({"attrs": attrs}));
+    } else {
+        super::set_next_text(&attrs);
+    }
+}
+
+/// What the Font group shows with no text selected: the formatting waiting for the next text box
+/// over the publication's [Basic Paragraph].
+fn next_text_attrs(app: &DesignApp) -> Value {
+    let mut v = json!({});
+    if let Some(st) = app.session.active() {
+        // The style's font as it resolves (a new publication's names none of its own).
+        let (_, c) = st.doc.styles.resolve_para_style(designcraft_doc::BASIC_PARAGRAPH);
+        v = json!({"fontFamily": c.font_family, "fontStyle": c.font_style, "size": c.size});
+    }
+    for (k, val) in super::next_text().unwrap_or_default() {
+        v[k] = val;
+    }
+    v
+}
+
 fn font_group(app: &mut DesignApp, ui: &mut Ui) {
     let chars = char_attrs(app);
     let text = chars.is_some();
-    let ch = chars.unwrap_or(Value::Null);
-    let style = ch["fontStyle"].as_str().unwrap_or("").to_lowercase();
-    let bold = style.contains("bold") || style.contains("black") || style.contains("heavy");
-    let italic = style.contains("italic") || style.contains("oblique");
+    // With nothing selected the group still works (for the next text box), as in Publisher;
+    // with a picture or shape selected it's greyed.
+    let nothing = app.session.active().is_some_and(|st| st.selection.items.is_empty() && st.selection.text.is_none());
+    let doc = text || nothing;
+    let ch = chars.unwrap_or_else(|| if doc { next_text_attrs(app) } else { Value::Null });
+    let family = ch["fontFamily"].as_str().unwrap_or("").to_string();
+    let style_name = ch["fontStyle"].as_str().unwrap_or("").to_string();
+    // Bold and Italic as Publisher's buttons show them: Arial Black isn't bold, it's a font.
+    let bold = super::fontnames::is_bold(&style_name);
+    let italic = super::fontnames::is_italic(&style_name);
     let underline = ch["underline"].as_bool().unwrap_or(false) || ch["underline"].is_object();
     if group(ui, "Font", true, |ui| {
         column(ui, |ui| {
             row(ui, |ui| {
-                ui.add_enabled_ui(text, |ui| {
-                    let fam = ch["fontFamily"].as_str().unwrap_or("").to_string();
-                    crate::panels::font_family_picker(app, ui, &fam, 150.0);
-                    ui.add_space(2.0);
+                let shown = if family.is_empty() { String::new() } else { super::fontnames::windows_name(&family, &style_name) };
+                if let Some(name) = super::fontnames::picker(app, ui, &shown, 150.0, doc) {
+                    let (f, s) = super::fontnames::resolve(app, &name, bold, italic);
+                    set_chars(app, text, json!({"fontFamily": f, "fontStyle": s}));
+                }
+                ui.add_space(2.0);
+                ui.add_enabled_ui(doc, |ui| {
                     if let Some(v) = crate::widgets::NumField::number("pr_font_size", ch["size"].as_f64(), "", 1)
                         .width(46.0)
                         .presets(SIZES)
                         .range(1.0, 1296.0)
                         .show(ui)
                     {
-                        let _ = app.run("type.char", json!({"attrs": {"size": v}}));
+                        set_chars(app, text, json!({"size": v}));
                     }
                 });
                 ui.add_space(2.0);
@@ -373,14 +407,18 @@ fn font_group(app: &mut DesignApp, ui: &mut Ui) {
             });
             ui.add_space(4.0);
             row(ui, |ui| {
-                if letter(ui, "B", "Bold (Ctrl+B)", text, bold).clicked() {
-                    act(app, "type.bold");
+                let toggle = |app: &mut DesignApp, b: bool, i: bool| {
+                    let (f, s) = super::fontnames::resolve(app, &super::fontnames::windows_name(&family, &style_name), b, i);
+                    super::set_next_text(&json!({"fontFamily": f, "fontStyle": s}));
+                };
+                if letter(ui, "B", "Bold (Ctrl+B)", doc, bold).clicked() {
+                    if text { act(app, "type.bold") } else { toggle(app, !bold, italic) }
                 }
-                if letter(ui, "I", "Italic (Ctrl+I)", text, italic).clicked() {
-                    act(app, "type.italic");
+                if letter(ui, "I", "Italic (Ctrl+I)", doc, italic).clicked() {
+                    if text { act(app, "type.italic") } else { toggle(app, bold, !italic) }
                 }
-                if letter(ui, "U", "Underline (Ctrl+U)", text, underline).clicked() {
-                    act(app, "type.underline");
+                if letter(ui, "U", "Underline (Ctrl+U)", doc, underline).clicked() {
+                    if text { act(app, "type.underline") } else { super::set_next_text(&json!({"underline": !underline})) }
                 }
                 if tool(ui, "subscript", "Subscript (Ctrl+=)", text, ch["position"].as_str() == Some("subscript")).clicked() {
                     let pos = if ch["position"].as_str() == Some("subscript") { "normal" } else { "subscript" };
@@ -412,12 +450,12 @@ fn font_group(app: &mut DesignApp, ui: &mut Ui) {
                         act(app, "app.characterPanel");
                     }
                 });
-                let resp = tool(ui, "font-color", "Font Color", text, false);
+                let resp = tool(ui, "font-color", "Font Color", doc, false);
                 egui::Popup::menu(&resp).show(|ui| {
-                    if let Some(doc) = app.session.active().map(|d| d.doc.clone()) {
+                    if let Some(d) = app.session.active().map(|d| d.doc.clone()) {
                         let cur = ch["fill"].as_str().unwrap_or("").to_string();
-                        if let Some(name) = crate::panels::swatch_list(ui, &doc, &cur) {
-                            let _ = app.run("type.char", json!({"attrs": {"fill": name}}));
+                        if let Some(name) = crate::panels::swatch_list(ui, &d, &cur) {
+                            set_chars(app, text, json!({"fill": name}));
                             ui.close();
                         }
                     }
@@ -722,11 +760,11 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
         }
     });
     group(ui, "Building Blocks", false, |ui| {
-        for (icon, label) in
-            [("page-parts", "Page\nParts"), ("calendars", "Calendars"), ("borders", "Borders &\nAccents"), ("ads", "Advertise-\nments")]
-        {
-            big_inner(ui, icon, label, false, true, false).on_hover_text("Coming in a later PressRoom update");
-        }
+        use super::blocks;
+        big_menu(ui, "page-parts", "Page\nParts", doc, |ui| blocks::gallery(app, ui, "Page Parts", &blocks::PAGE_PARTS));
+        big_menu(ui, "calendars", "Calendars", doc, |ui| blocks::gallery(app, ui, "Calendars", &blocks::CALENDARS));
+        big_menu(ui, "borders", "Borders &\nAccents", doc, |ui| blocks::gallery(app, ui, "Borders & Accents", &blocks::BORDERS));
+        big_menu(ui, "ads", "Advertise-\nments", doc, |ui| blocks::gallery(app, ui, "Advertisements", &blocks::ADS));
     });
     group(ui, "Text", false, |ui| {
         if big(ui, "textbox", "Draw Text\nBox", doc).clicked() {
@@ -735,7 +773,7 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
         if big(ui, "insert-file", "Insert\nFile", doc).clicked() {
             act(app, "app.placeDialog");
         }
-        big_inner(ui, "wordart", "WordArt", false, true, false).on_hover_text("Coming in a later PressRoom update");
+        big_menu(ui, "wordart", "WordArt", doc, |ui| super::wordart::gallery(app, ui));
         column(ui, |ui| {
             small_menu(ui, "symbol", "Symbol", doc, |ui| {
                 egui::Grid::new("pr_symbols").spacing(vec2(2.0, 2.0)).show(ui, |ui| {
@@ -922,8 +960,8 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
         });
     });
     group(ui, "Schemes", false, |ui| {
-        big(ui, "schemes", "Color\nSchemes", false).on_hover_text("Coming in a later PressRoom update");
-        big(ui, "fonts", "Fonts", false).on_hover_text("Coming in a later PressRoom update");
+        big_menu(ui, "schemes", "Color\nSchemes", doc, |ui| super::scheme::color_gallery(app, ui));
+        big_menu(ui, "fonts", "Fonts", doc, |ui| super::scheme::font_gallery(app, ui));
     });
     group(ui, "Page Background", false, |ui| {
         big_menu(ui, "background", "Background", doc, |ui| {
@@ -1180,14 +1218,19 @@ fn shape_styles_group(app: &mut DesignApp, ui: &mut Ui) {
 fn picture_format(app: &mut DesignApp, ui: &mut Ui) {
     let sel = app.session.active().is_some_and(|d| !d.selection.items.is_empty());
     group(ui, "Adjust", false, |ui| {
-        for (icon, label) in [("corrections", "Corrections"), ("recolor", "Recolor"), ("compress", "Compress\nPictures")] {
-            big_inner(ui, icon, label, false, true, false).on_hover_text("Coming in a later PressRoom update");
+        // Galleries drawn from the picture itself, as Publisher's are.
+        big_menu(ui, "corrections", "Corrections", sel, |ui| super::pictures::corrections_gallery(app, ui));
+        big_menu(ui, "recolor", "Recolor", sel, |ui| super::pictures::recolor_gallery(app, ui));
+        if big(ui, "compress", "Compress\nPictures", has_doc(app)).clicked() {
+            super::pictures::open_compress(app);
         }
         column(ui, |ui| {
             if small(ui, "change-picture", "Change Picture", sel).clicked() {
                 super::insert_picture(app);
             }
+            // Corrections and recolouring off, and the picture fitted to its frame again.
             if small(ui, "reset-picture", "Reset Picture", sel).clicked() {
+                act(app, "picture.reset");
                 act(app, "fit.contentProportionally");
             }
         });

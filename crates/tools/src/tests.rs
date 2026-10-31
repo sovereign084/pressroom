@@ -1554,6 +1554,7 @@ fn eyedropper_samples_a_placed_image_and_matches_other_objects() {
             page: 0,
             pdf_crop: Default::default(),
             pdf_box: None,
+            adjusted: None,
         }),
     );
     d.insert_item(SpreadRef::Doc(0), it, None).unwrap();

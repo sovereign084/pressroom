@@ -24,8 +24,9 @@ your publications and settings stay as they are. What changed in each version is
 [releases page](https://github.com/sovereign084/pressroom/releases).
 
 **Your old Publisher files:** in PressRoom, choose **File › Open** and pick the `.pub` file. PressRoom
-converts it into a `.pressroom` file next to it. Converting needs Microsoft Publisher still
-installed on the same computer, so convert your files while you have it.
+converts it into a `.pressroom` file next to it. To do a whole folder at once, choose **File › Open ›
+Convert a Folder of Publisher Files**. Converting needs Microsoft Publisher still installed on the
+same computer, so convert your files while you have it.
 
 ## What's in it
 
@@ -36,6 +37,12 @@ installed on the same computer, so convert your files while you have it.
 - Publisher's round selection handles with a rotate handle (they turn with a turned object; a picture stretches with them, and Crop trims it), Office-style ScreenTips on the ribbon, a
   text cursor and zoom that glide instead of jumping, and a start-up splash.
 - Text boxes, pictures, shapes, tables and calendars you can edit, with text that flows from box to box.
+- WordArt, Building Blocks (headings, pull quotes, sidebars, month calendars, borders, coupons and
+  ads) and Color and Font Schemes that recolour and restyle them all at once, all PressRoom's own designs.
+- Picture tools: Corrections and Recolor galleries that preview your own picture, Reset Picture, and
+  Compress Pictures to make a publication small enough to email.
+- The font list by the names you know (Arial Black, Segoe UI Semibold), each in its own font, and a
+  Quick Access Toolbar you can choose the buttons of.
 - Opens `.pub` files with their layout, fonts, colours (spot inks too), tables and Hebrew text.
 - About 80 free font families come with it: the free fonts in Microsoft 365's online font list
   (Montserrat, Lobster, Pacifico, Playfair Display, Bebas Neue, Amatic SC and more) under the same
@@ -55,6 +62,8 @@ its own documentation is in `docs/` and the upstream repository.
   `target-pkg/PressRoom-Setup-X.Y.Z.msi`.
 - Release: `packaging/pressroom/release.ps1 -Version X.Y.Z -Notes "…"` builds the installer and
   publishes it as a GitHub release (needs the GitHub CLI, signed in).
+- Signing: set `PRESSROOM_SIGN` before building to sign the programs and the installer
+  (`packaging/pressroom/SIGNING.md`).
 
 ## Licence
 

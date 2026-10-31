@@ -3,10 +3,26 @@
 # Needs Rust (rustup), WiX 5 (dotnet tool install --global wix --version 5.0.2) and, the first
 # time, the internet (the free fonts in fonts.json).
 # Writes target-pkg\PressRoom-Setup-<version>.msi.
+# Signing (optional, see SIGNING.md): when PRESSROOM_SIGN holds a command with {file} in it, the
+# programs and then the installer are signed with it, e.g.
+#   $env:PRESSROOM_SIGN = 'signtool sign /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 /dlib C:\Tools\signing\Azure.CodeSigning.Dlib.dll /dmdf C:\Tools\signing\metadata.json "{file}"'
 param([Parameter(Mandatory)][string]$Version, [string]$TargetDir = 'C:\Users\jayde\Craft\src\target-dc')
 # Native tools write progress to stderr; failures are judged by their exit codes.
 $ErrorActionPreference = 'Continue'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+
+# Signs `file` with the PRESSROOM_SIGN command, when there is one.
+function Sign-File([string]$file) {
+    if (-not $env:PRESSROOM_SIGN) { return }
+    if ($env:PRESSROOM_SIGN -notmatch '\{file\}') { throw 'PRESSROOM_SIGN needs {file} where the file goes' }
+    # Through a .cmd file: PowerShell 5.1 mangles quotes handed to a native program.
+    $bat = Join-Path $env:TEMP "pressroom-sign-$PID.cmd"
+    Set-Content -LiteralPath $bat -Value ('@' + $env:PRESSROOM_SIGN.Replace('{file}', $file)) -Encoding ASCII
+    & $bat 2>&1 | Select-Object -Last 3 | Out-Host
+    $code = $LASTEXITCODE
+    Remove-Item -LiteralPath $bat -ErrorAction SilentlyContinue
+    if ($code -ne 0) { throw "signing $file failed" }
+}
 
 # A GUID that stays the same from build to build for `name` (a WiX component's).
 function Stable-Guid([string]$name) {
@@ -88,11 +104,14 @@ try {
     Copy-Item (Join-Path $TargetDir 'release\designcraft-cli.exe') (Join-Path $stage 'PressRoom-cli.exe') -Force
     Copy-Item (Join-Path $root 'tools\pub-import\pub2pressroom.ps1') $stage -Force
     Copy-Item (Join-Path $root 'NOTICE'), (Join-Path $root 'LICENSE-APACHE'), (Join-Path $root 'LICENSE-MIT') $stage -Force
+    Sign-File (Join-Path $stage 'PressRoom.exe')
+    Sign-File (Join-Path $stage 'PressRoom-cli.exe')
     $fontsWxs = Get-Fonts
     $msi = Join-Path $root "target-pkg\PressRoom-Setup-$Version.msi"
     Push-Location $PSScriptRoot
     try { wix build pressroom.wxs $fontsWxs -d "Version=$Version" -d "BinDir=$stage" -d "FontDir=$(Join-Path $root 'target-pkg\fonts')" -o $msi } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw 'wix build failed' }
+    Sign-File $msi
     Get-Item $msi | Select-Object Name, Length
 }
 finally { Pop-Location }

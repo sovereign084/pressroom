@@ -361,6 +361,10 @@ fn pick_save(suggested: &str) -> Option<String> {
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
+            // A folder rather than a file (PressRoom's Convert a Folder of Publisher Files).
+            if purpose == "folder" {
+                return rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().to_string());
+            }
             let mut dialog = rfd::FileDialog::new();
             for filter in open_filters(purpose) {
                 dialog = dialog.add_filter(filter.name, filter.extensions);

@@ -261,3 +261,105 @@ fn top_bar_hover_shades_match_the_palette() {
         assert!((over(p.top.r()) - i32::from(p.top_hover.r())).abs() <= 1, "{shade:?}");
     }
 }
+
+fn top_level_items(h: &Harness<'static, Window>) -> usize {
+    h.state().app.session.active().map_or(0, |st| st.doc.spreads.iter().map(|s| s.items.len()).sum())
+}
+
+fn doc_json(h: &Harness<'static, Window>) -> Value {
+    serde_json::to_value(h.state().app.session.active().unwrap().doc.as_ref()).unwrap()
+}
+
+#[test]
+fn every_building_block_goes_in_whole_as_one_undo_step() {
+    use super::blocks;
+    let mut h = window();
+    run(&mut h, "frame.create", json!({"rect": [72, 72, 100, 100], "content": "unassigned"}));
+    let start = doc_json(&h);
+    let items = top_level_items(&h);
+    for b in blocks::PAGE_PARTS.iter().chain(&blocks::CALENDARS).chain(&blocks::BORDERS).chain(&blocks::ADS) {
+        blocks::insert(&mut h.state_mut().app, b).unwrap_or_else(|e| panic!("{}: {e}", b.name));
+        h.run_steps(2);
+        // One object: the block's parts grouped.
+        assert_eq!(top_level_items(&h), items + 1, "{}", b.name);
+        let st = h.state().app.session.active().unwrap();
+        for name in super::scheme::SWATCHES {
+            assert!(st.doc.swatch(name).is_some(), "{}: {name}", b.name);
+        }
+        assert!(st.doc.styles.paragraph.iter().any(|p| p.name == super::scheme::HEADING), "{}", b.name);
+        run(&mut h, "edit.undo", json!({}));
+        assert_eq!(doc_json(&h), start, "{} undoes whole", b.name);
+    }
+}
+
+#[test]
+fn a_calendar_block_fills_in_its_month() {
+    use super::blocks;
+    let mut h = window();
+    blocks::insert(&mut h.state_mut().app, &blocks::CALENDARS[1]).unwrap();
+    let (title, first, len, weeks) = blocks::month(true);
+    let st = h.state().app.session.active().unwrap();
+    let texts: Vec<String> = st.doc.stories.values().map(|s| s.text.clone()).collect();
+    assert!(texts.contains(&title), "{texts:?}");
+    let table = st.doc.stories.values().flat_map(|s| s.tables.values()).next().expect("a table");
+    let cell = |r: u32, c: u32| table.cell(r as usize, c as usize).map(|x| x.text.text.clone()).unwrap_or_default();
+    assert_eq!(cell(0, 0), "Sun");
+    assert_eq!(cell(1, first), "1");
+    let last = first + len - 1;
+    assert_eq!(cell(1 + last / 7, last % 7), len.to_string());
+    assert_eq!(table.rows.len() as u32, weeks + 1);
+}
+
+#[test]
+fn wordart_goes_in_styled_and_schemes_restyle_the_publication() {
+    let mut h = window();
+    let items = top_level_items(&h);
+    for i in 0..super::wordart::STYLES.len() {
+        let d = crate::dialogs::Dialog::new(
+            super::WORDART,
+            json!({"style": i, "text": "Harvest Supper", "font": "Arial Black", "size": 36, "bold": false, "italic": false}),
+        );
+        super::wordart::insert(&mut h.state_mut().app, &d).unwrap_or_else(|e| panic!("style {i}: {e}"));
+        h.run_steps(2);
+        assert_eq!(top_level_items(&h), items + 1 + i, "style {i}");
+    }
+    // Empty text is refused.
+    let d = crate::dialogs::Dialog::new(super::WORDART, json!({"style": 0, "text": "  "}));
+    assert!(super::wordart::insert(&mut h.state_mut().app, &d).is_err());
+
+    // A colour scheme fills the scheme swatches; Fonts sets body and heading fonts.
+    super::scheme::apply_color_scheme(&mut h.state_mut().app, 3);
+    h.run_steps(2);
+    assert_eq!(super::scheme::current_color_scheme(&h.state().app), Some(3));
+    super::scheme::apply_color_scheme(&mut h.state_mut().app, 0);
+    h.run_steps(2);
+    assert_eq!(super::scheme::current_color_scheme(&h.state().app), Some(0));
+    super::scheme::apply_font_scheme(&mut h.state_mut().app, 2);
+    h.run_steps(2);
+    assert_eq!(super::scheme::current_font_scheme(&h.state().app), Some(2));
+    let st = h.state().app.session.active().unwrap();
+    let basic = st.doc.styles.paragraph.iter().find(|p| p.name == designcraft_doc::BASIC_PARAGRAPH).unwrap();
+    assert_eq!(basic.chars.font_family.as_deref(), Some("Arial"));
+}
+
+#[test]
+fn the_font_group_works_with_nothing_selected_for_the_next_text_box() {
+    let mut h = window();
+    run(&mut h, "edit.deselectAll", json!({}));
+    super::set_next_text(&json!({"size": 31}));
+    // A text box drawn now (a caret in an empty story) takes it.
+    run(&mut h, "frame.create", json!({"rect": [72, 72, 300, 200], "content": "text", "caret": true}));
+    h.run_steps(3);
+    assert_eq!(run(&mut h, "type.selectionAttrs", json!({}))["chars"]["size"], json!(31.0));
+    assert!(super::next_text().is_none(), "used once");
+}
+
+#[test]
+fn the_quick_access_toolbar_shows_the_commands_chosen_and_saves_them() {
+    let mut h = window();
+    assert!(h.query_by_label("Customize Quick Access Toolbar").is_some());
+    h.state_mut().app.ui.pressroom_qat.push("spelling".into());
+    h.run_steps(3);
+    let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.state().app.ui).unwrap()).unwrap();
+    assert_eq!(back.pressroom_qat, ["save", "undo", "redo", "spelling"]);
+}

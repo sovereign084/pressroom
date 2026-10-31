@@ -99,6 +99,7 @@ pub fn document(bytes: Vec<u8>, hidden_sets: &[&[&str]]) -> Document {
         page: 0,
         pdf_crop: Default::default(),
         pdf_box: None,
+        adjusted: None,
     });
     for (index, hidden) in hidden_sets.iter().enumerate() {
         let x = 100.0 * f64::from(u32::try_from(index).unwrap());

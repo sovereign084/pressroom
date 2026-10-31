@@ -356,6 +356,8 @@ pub struct UiState {
     /// Office's: White on a light Windows, Black on a dark one), "white", "colorful" (the top in
     /// Publisher's teal), "darkgray" or "black".
     pub pressroom_theme: String,
+    /// The commands on PressRoom's Quick Access Toolbar (Customize Quick Access Toolbar ▾).
+    pub pressroom_qat: Vec<String>,
     /// Where the Contextual Task Bar is pinned: its top-left, in points from the canvas's top-left
     /// (`None`: it follows the selection).
     pub task_bar_pin: Option<[f32; 2]>,
@@ -478,6 +480,7 @@ impl Default for UiState {
             task_bar: true,
             pressroom_shell: pressroom_shell(),
             pressroom_theme: "system".into(),
+            pressroom_qat: ["save", "undo", "redo"].map(String::from).to_vec(),
             task_bar_pin: None,
             task_bar_at: None,
             about: false,

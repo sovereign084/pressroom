@@ -1875,3 +1875,99 @@ fn resizing_with_pictures_stretches_a_placed_picture_with_its_frame() {
     s.execute("transform.resize", &json!({"from": [100, 100, 300, 200], "to": [100, 100, 500, 200]})).unwrap();
     assert_eq!(picture(&s), before);
 }
+
+/// A placed picture of `w`×`h` opaque pixels with some detail in it, in a new frame `rect`.
+fn placed_picture(s: &mut Session, w: u32, h: u32, rect: [f64; 4]) -> designcraft_doc::ItemId {
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            pixels.extend_from_slice(&[(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x ^ y) % 256) as u8, 255]);
+        }
+    }
+    let png = designcraft_render::Rendered { width: w, height: h, pixels }.to_png();
+    let f = designcraft_doc::ItemId(s.execute("frame.create", &json!({"rect": rect, "content": "graphic"})).unwrap()["id"].as_u64().unwrap());
+    s.execute("place.load", &json!({"base64": cmd::base64_encode(&png)})).unwrap();
+    s.execute("place.drop", &json!({"frame": f.0})).unwrap();
+    s.execute("selection.set", &json!({"ids": [f.0]})).unwrap();
+    f
+}
+
+fn graphic_of(s: &Session, f: designcraft_doc::ItemId) -> designcraft_doc::Graphic {
+    s.doc().unwrap().doc.item(f).unwrap().graphic().unwrap().clone()
+}
+
+#[test]
+fn picture_corrections_make_a_corrected_copy_and_reset_puts_the_original_back() {
+    let mut s = session();
+    let f = placed_picture(&mut s, 40, 20, [100.0, 100.0, 300.0, 200.0]);
+    let original = graphic_of(&s, f).asset;
+    let pixel = |s: &Session, a: designcraft_doc::AssetId| {
+        let doc = &s.doc().unwrap().doc;
+        designcraft_images::decode_rgba(&doc.assets[&a].data).unwrap().get_pixel(10, 10).0
+    };
+    let first = pixel(&s, original);
+    s.execute("picture.adjust", &json!({"brightness": -50})).unwrap();
+    let darker = graphic_of(&s, f).asset;
+    assert_ne!(darker, original);
+    let adj = s.doc().unwrap().doc.assets[&darker].adjusted.clone().unwrap();
+    assert_eq!((adj.source, adj.brightness), (original, -50));
+    assert!(pixel(&s, darker)[0] < first[0] || first[0] == 0);
+    // Recolouring keeps the brightness and is made from the original, never from a corrected copy.
+    s.execute("picture.adjust", &json!({"recolor": "grayscale"})).unwrap();
+    let grey = graphic_of(&s, f).asset;
+    let adj = s.doc().unwrap().doc.assets[&grey].adjusted.clone().unwrap();
+    assert_eq!((adj.source, adj.brightness, adj.recolor.as_str()), (original, -50, "grayscale"));
+    let p = pixel(&s, grey);
+    assert!(p[0] == p[1] && p[1] == p[2], "{p:?}");
+    // Saved and opened again, the original is still there.
+    let back = cmd::file_from(&cmd::file_bytes(&s.doc().unwrap().doc).unwrap()).unwrap();
+    let kept = back.item(f).unwrap().graphic().unwrap().asset;
+    let source = back.assets[&kept].adjusted.as_ref().unwrap().source;
+    assert!(back.assets.contains_key(&source) && back.assets[&source].adjusted.is_none());
+    // A dark variation needs its colour.
+    assert!(s.execute("picture.adjust", &json!({"recolor": "dark"})).is_err());
+    s.execute("picture.adjust", &json!({"recolor": "dark", "tint": "#1f5f7a"})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.assets[&graphic_of(&s, f).asset].adjusted.as_ref().unwrap().tint, Some([0x1f, 0x5f, 0x7a]));
+    // Reset Picture: the original again. Taking every correction off does the same.
+    assert_eq!(s.execute("picture.reset", &json!({})).unwrap()["changed"], 1);
+    assert_eq!(graphic_of(&s, f).asset, original);
+    s.execute("picture.adjust", &json!({"contrast": 30})).unwrap();
+    s.execute("picture.adjust", &json!({"contrast": 0})).unwrap();
+    assert_eq!(graphic_of(&s, f).asset, original);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_ne!(graphic_of(&s, f).asset, original, "one undo step each");
+    assert!(s.execute("picture.adjust", &json!({"brightness": 140})).is_err());
+    // Nothing to change: no undo step.
+    let undo = s.doc().unwrap().history.undo.len();
+    assert_eq!(s.execute("picture.adjust", &json!({})).unwrap()["changed"], 0);
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+}
+
+#[test]
+fn compress_pictures_shrinks_a_big_picture_shown_small_and_leaves_out_what_is_cropped_away() {
+    let mut s = session();
+    // 1200×600 pixels shown 200×100 points wide: 432 ppi.
+    let f = placed_picture(&mut s, 1200, 600, [100.0, 100.0, 300.0, 200.0]);
+    // Trim the frame to its left half; the picture keeps its size and place.
+    s.execute("transform.resize", &json!({"from": [100, 100, 300, 200], "to": [100, 100, 200, 200]})).unwrap();
+    let g = graphic_of(&s, f);
+    let shown_before = g.xf.transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0 / 2.0, g.size.1));
+    let r = s.execute("picture.compress", &json!({"ppi": 96})).unwrap();
+    assert_eq!(r["pictures"], 1, "{r}");
+    assert!(r["after"].as_u64().unwrap() < r["before"].as_u64().unwrap(), "{r}");
+    let g = graphic_of(&s, f);
+    let doc = &s.doc().unwrap().doc;
+    let a = &doc.assets[&g.asset];
+    // The left half, 600×600 pixels, at 96 ppi over 100 points: about 133 pixels.
+    let (pw, ph) = a.pixels.unwrap();
+    assert!((pw as i64 - 133).abs() <= 2 && (ph as i64 - 133).abs() <= 2, "{pw}×{ph}");
+    assert_eq!(a.mime, "image/jpeg");
+    let shown_after = g.xf.transform_rect_bbox(designcraft_geom::Rect::new(0.0, 0.0, g.size.0, g.size.1));
+    for (b, a) in
+        [(shown_before.x0, shown_after.x0), (shown_before.y0, shown_after.y0), (shown_before.x1, shown_after.x1), (shown_before.y1, shown_after.y1)]
+    {
+        assert!((a - b).abs() < 0.2, "the picture stays where it was: {shown_before:?} → {shown_after:?}");
+    }
+    // Already small enough: nothing more to do.
+    assert_eq!(s.execute("picture.compress", &json!({"ppi": 96, "all": true})).unwrap()["pictures"], 0);
+}

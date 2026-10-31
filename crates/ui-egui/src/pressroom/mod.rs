@@ -6,21 +6,26 @@
 
 mod art;
 mod backstage;
+mod blocks;
+mod fontnames;
 mod keys;
 mod mica;
 mod nav;
+pub(crate) mod pictures;
 pub mod pubimport;
 mod ribbon;
+mod scheme;
 mod splash;
 mod templates;
 #[cfg(test)]
 mod tests;
 mod tips;
 pub mod update;
+mod wordart;
 
 use designcraft_doc::Content;
 use egui::{Color32, FontId, Rect, Sense, Stroke, Ui, pos2, vec2};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::DesignApp;
 
@@ -454,6 +459,54 @@ fn start_draw(app: &mut DesignApp, tool: &str) {
     });
 }
 
+/// Edit WordArt Text (Insert › WordArt), drawn and confirmed by the dialogs module.
+pub const WORDART: &str = wordart::DIALOG;
+
+pub(crate) fn wordart_dialog(app: &DesignApp, ui: &mut Ui, d: &mut crate::dialogs::Dialog) {
+    wordart::dialog(app, ui, d);
+}
+
+pub(crate) fn wordart_insert(app: &mut DesignApp, d: &crate::dialogs::Dialog) -> Result<Value, String> {
+    wordart::insert(app, d)
+}
+
+/// Character formatting chosen in the Font group with nothing selected: Publisher keeps the group
+/// working then, and the next text box drawn takes it.
+static NEXT_TEXT: std::sync::Mutex<Option<serde_json::Map<String, Value>>> = std::sync::Mutex::new(None);
+
+/// Adds `attrs` to the formatting the next text box takes.
+pub(super) fn set_next_text(attrs: &Value) {
+    let mut g = NEXT_TEXT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let m = g.get_or_insert_with(serde_json::Map::new);
+    if let Some(o) = attrs.as_object() {
+        for (k, v) in o {
+            m.insert(k.clone(), v.clone());
+        }
+    }
+}
+
+/// The formatting waiting for the next text box.
+pub(super) fn next_text() -> Option<serde_json::Map<String, Value>> {
+    NEXT_TEXT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+/// A caret in an empty text box (one just drawn): it takes the waiting formatting, once.
+fn apply_next_text(app: &mut DesignApp, ctx: &egui::Context) {
+    let Some(attrs) = next_text() else { return };
+    // Not while the box is still being drawn: the drag's own end places the caret afresh.
+    if ctx.input(|i| i.pointer.any_down()) {
+        return;
+    }
+    let empty_caret = app.session.active().is_some_and(|st| {
+        st.interaction.is_none()
+            && st.selection.text.as_ref().is_some_and(|t| t.cell.is_none() && st.doc.story(t.story).is_some_and(|s| s.text.is_empty()))
+    });
+    if empty_caret {
+        *NEXT_TEXT.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        let _ = app.run("type.char", json!({"attrs": Value::Object(attrs)}));
+    }
+}
+
 /// A rectangle in the middle of the page in view, in spread coordinates: (spread index, rect).
 fn centre_rect(app: &DesignApp, wf: f64, hf: f64) -> Option<(usize, [f64; 4])> {
     let st = app.session.active()?;
@@ -694,6 +747,7 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     ctx.data_mut(|d| d.insert_temp(state_id(), s.clone()));
     finish_link(app, &ctx);
     pubimport::poll(app, &ctx);
+    apply_next_text(app, &ctx);
     title_bar(app, ui, &s);
     if s.backstage.is_none() {
         tabs_and_ribbon(app, ui, &s);
@@ -727,7 +781,10 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
         painter.text(
             card.center() + vec2(0.0, 14.0),
             egui::Align2::CENTER_CENTER,
-            "Publisher is reading the file. This can take a minute.",
+            match pubimport::progress() {
+                Some((n, of)) => format!("Publisher is reading file {n} of {of}. Each can take a minute."),
+                None => "Publisher is reading the file. This can take a minute.".to_string(),
+            },
             FontId::proportional(12.0),
             pal().group_label,
         );
@@ -755,6 +812,60 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
     egui::Frame::NONE.fill(pal().scratch).show(ui, |ui| {
         app.canvas_area(ui, false);
     });
+}
+
+/// A Quick Access Toolbar command: its key (as saved), its name in the ▾ menu, tooltip, the icons
+/// on the coloured and on the light top, and the command it runs.
+struct Qat {
+    key: &'static str,
+    label: &'static str,
+    tip: &'static str,
+    icon: &'static str,
+    icon_dark: &'static str,
+    cmd: &'static str,
+}
+
+const QAT: [Qat; 9] = [
+    Qat { key: "new", label: "New", tip: "New (Ctrl+N)", icon: "new", icon_dark: "new", cmd: "" },
+    Qat { key: "open", label: "Open", tip: "Open (Ctrl+O)", icon: "open", icon_dark: "open", cmd: "app.openDialog" },
+    Qat { key: "save", label: "Save", tip: "Save (Ctrl+S)", icon: "save", icon_dark: "save-dark", cmd: "app.save" },
+    Qat {
+        key: "quickPrint",
+        label: "Quick Print",
+        tip: "Quick Print: the whole publication on the printer",
+        icon: "print",
+        icon_dark: "print",
+        cmd: "",
+    },
+    Qat {
+        key: "printPreview",
+        label: "Print Preview and Print",
+        tip: "Print Preview and Print (Ctrl+P)",
+        icon: "print",
+        icon_dark: "print",
+        cmd: "",
+    },
+    Qat { key: "spelling", label: "Spelling", tip: "Spelling (F7)", icon: "spelling", icon_dark: "spelling", cmd: "spelling.check" },
+    Qat { key: "undo", label: "Undo", tip: "Undo (Ctrl+Z)", icon: "undo", icon_dark: "undo-ink", cmd: "edit.undo" },
+    Qat { key: "redo", label: "Redo", tip: "Redo (Ctrl+Y)", icon: "redo", icon_dark: "redo-ink", cmd: "edit.redo" },
+    Qat { key: "textBox", label: "Draw Text Box", tip: "Draw Text Box", icon: "textbox", icon_dark: "textbox", cmd: "" },
+];
+
+fn qat_run(app: &mut DesignApp, ctx: &egui::Context, key: &str) {
+    match key {
+        "new" => open_backstage(ctx, Backstage::New),
+        "printPreview" => open_backstage(ctx, Backstage::Print),
+        "quickPrint" => match app.run("file.print", json!({"copies": 1})) {
+            Ok(_) => app.status("Sent to the printer."),
+            Err(e) => app.status(format!("Couldn't print: {e}")),
+        },
+        "textBox" => start_draw(app, "type"),
+        _ => {
+            if let Some(q) = QAT.iter().find(|q| q.key == key) {
+                ribbon::act(app, q.cmd);
+            }
+        }
+    }
 }
 
 fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
@@ -795,22 +906,49 @@ fn title_bar(app: &mut DesignApp, ui: &mut Ui, s: &State) {
         ));
         x += 30.0;
         let doc = app.session.active().is_some();
-        let icons = if top.colorful { ["save", "undo", "redo"] } else { ["save-dark", "undo-ink", "redo-ink"] };
-        for (icon, (tip, cmd)) in
-            icons.into_iter().zip([("Save (Ctrl+S)", "app.save"), ("Undo (Ctrl+Z)", "edit.undo"), ("Redo (Ctrl+Y)", "edit.redo")])
-        {
+        let shown = app.ui.pressroom_qat.clone();
+        for q in QAT.iter().filter(|q| shown.iter().any(|s| s == q.key)) {
             let r = Rect::from_min_size(pos2(x, full.min.y + 3.0), vec2(28.0, TITLE_H - 6.0));
-            let enabled = doc && ribbon::on(app, cmd);
-            let resp = ui.interact(r, egui::Id::unique(("pr_qat", cmd)), if enabled { Sense::click() } else { Sense::hover() });
+            let enabled = match q.key {
+                "new" | "open" => true,
+                "undo" | "redo" | "save" => doc && ribbon::on(app, q.cmd),
+                _ => doc,
+            };
+            let resp = ui.interact(r, egui::Id::unique(("pr_qat", q.key)), if enabled { Sense::click() } else { Sense::hover() });
             if resp.hovered() && enabled {
                 ui.painter().rect_filled(r, PR::ROUND, top.hover);
             }
+            let icon = if top.colorful { q.icon } else { q.icon_dark };
             art::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), icon, enabled);
-            if resp.on_hover_text(tip).clicked() {
-                ribbon::act(app, cmd);
+            if resp.on_hover_text(q.tip).clicked() {
+                qat_run(app, ui.ctx(), q.key);
             }
             x += 29.0;
         }
+        // Customize Quick Access Toolbar ▾: which commands it shows.
+        let r = Rect::from_min_size(pos2(x, full.min.y + 3.0), vec2(16.0, TITLE_H - 6.0));
+        let resp = ui.interact(r, egui::Id::unique("pr_qat_more"), Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(r, PR::ROUND, top.hover);
+        }
+        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "\u{25be}", FontId::proportional(11.0), top.text);
+        let resp = resp.on_hover_text("Customize Quick Access Toolbar");
+        egui::Popup::menu(&resp).show(|ui| {
+            ui.set_min_width(220.0);
+            ui.label(egui::RichText::new("Customize Quick Access Toolbar").strong());
+            ui.separator();
+            for q in QAT.iter() {
+                let mut on = app.ui.pressroom_qat.iter().any(|s| s == q.key);
+                if ui.checkbox(&mut on, q.label).changed() {
+                    if on {
+                        app.ui.pressroom_qat.push(q.key.to_string());
+                    } else {
+                        app.ui.pressroom_qat.retain(|s| s != q.key);
+                    }
+                }
+            }
+        });
+        x += 18.0;
         // Title, after the Quick Access Toolbar, as Publisher has it.
         let title = match app.session.active() {
             Some(d) => format!("{} - PressRoom", d.title()),

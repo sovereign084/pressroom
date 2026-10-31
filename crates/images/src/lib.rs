@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 
 pub use resvg::usvg;
 
+pub mod adjust;
 pub mod colour;
 mod eps;
 mod jpeg;
