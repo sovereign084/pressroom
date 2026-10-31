@@ -45,8 +45,29 @@ $ErrorActionPreference = 'Stop'
 
 # Progress for PressRoom, which shows it while the file comes in: one line a step.
 function Say([string]$text) {
+    $script:doing = $text
     [Console]::Out.WriteLine("PRESSROOM: $text")
     [Console]::Out.Flush()
+}
+
+# Why it stopped, for PressRoom to put in words: one line, "PRESSROOM-ERROR: kind|step|words", the
+# words being Publisher's own where it gave some. Kind "open" is Publisher refusing the file.
+$script:doing = ''
+$script:told = $false
+function Tell-Error([string]$kind, [string]$words) {
+    if ($script:told) { return }
+    $script:told = $true
+    [Console]::Out.WriteLine(('PRESSROOM-ERROR: {0}|{1}|{2}' -f $kind, $script:doing, ($words -replace '\s+', ' ').Trim()))
+    [Console]::Out.Flush()
+}
+function Inner-Message($err) {
+    $e = $err.Exception
+    while ($e.InnerException) { $e = $e.InnerException }
+    return $e.Message
+}
+trap {
+    Tell-Error 'other' (Inner-Message $_)
+    break
 }
 
 # Publisher lays a publication out for the default printer, and waits without end for one it can't
@@ -911,7 +932,11 @@ try {
     Say 'Starting Publisher'
     $app = New-Object -ComObject Publisher.Application
     Say 'Publisher is opening the file'
-    $doc = $app.Open($In, $true, $false, 'pbDoNotSaveChanges')
+    try { $doc = $app.Open($In, $true, $false, 'pbDoNotSaveChanges') }
+    catch {
+        Tell-Error 'open' (Inner-Message $_)
+        throw
+    }
     $pw = [double]$doc.PageSetup.PageWidth
     $ph = [double]$doc.PageSetup.PageHeight
     $n = [int]$doc.Pages.Count

@@ -237,13 +237,15 @@ fn newest(current: &str) -> Result<Option<(String, Option<String>, Installer)>, 
 }
 
 /// The PowerShell that waits for PressRoom (process `pid`) to close, runs the installer with a
-/// progress bar and no questions, and opens PressRoom again.
+/// progress bar and no questions, and opens PressRoom again. The installer's log goes beside it
+/// (the .msi's name with .log), for when an update doesn't go in.
 pub fn helper_script(pid: u32, msi: &Path, exe: &Path) -> String {
     // Single-quoted PowerShell strings: a quote inside is written twice.
     let quote = |p: &Path| p.to_string_lossy().replace('\'', "''");
     format!(
-        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i \"{}\" /passive /norestart' -Wait; Start-Process -FilePath '{}'",
+        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i \"{}\" /passive /norestart /l*v \"{}\"' -Wait; Start-Process -FilePath '{}'",
         quote(msi),
+        quote(&msi.with_extension("log")),
         quote(exe)
     )
 }
@@ -384,7 +386,7 @@ mod tests {
         );
         assert!(s.starts_with("Wait-Process -Id 42 "), "{s}");
         assert!(
-            s.contains(r#"'/i "C:\Users\O''Brien\AppData\Local\Temp\PressRoom updates\pressroom-1.0.0-windows-x64.msi" /passive /norestart' -Wait"#),
+            s.contains(r#"'/i "C:\Users\O''Brien\AppData\Local\Temp\PressRoom updates\pressroom-1.0.0-windows-x64.msi" /passive /norestart /l*v "C:\Users\O''Brien\AppData\Local\Temp\PressRoom updates\pressroom-1.0.0-windows-x64.log"' -Wait"#),
             "{s}"
         );
         assert!(s.ends_with(r"Start-Process -FilePath 'C:\Apps\PressRoom.exe'"), "{s}");

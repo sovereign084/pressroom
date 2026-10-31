@@ -203,7 +203,13 @@ fn convert(script: &Path, cli: &Path, src: &Path, out: &Path, tx: &Sender<Msg>) 
     if let Some(out_pipe) = child.stdout.take() {
         let (text, heard, tx) = (Arc::clone(&text), Arc::clone(&heard), tx.clone());
         readers.push(std::thread::spawn(move || {
-            for line in BufReader::new(out_pipe).lines().map_while(Result::ok) {
+            // Windows PowerShell writes in the console's code page: a name or a message with
+            // accents mustn't end the reading (and leave the converter writing into a full pipe).
+            let mut r = BufReader::new(out_pipe);
+            let mut bytes = Vec::new();
+            while r.read_until(b'\n', &mut bytes).is_ok_and(|n| n > 0) {
+                let line = String::from_utf8_lossy(&bytes).trim_end_matches(['\r', '\n']).to_string();
+                bytes.clear();
                 *heard.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = web_time::Instant::now();
                 if let Some(status) = line.strip_prefix("PRESSROOM: ") {
                     let _ = tx.send(Msg::Status(status.trim().to_string()));
@@ -217,9 +223,9 @@ fn convert(script: &Path, cli: &Path, src: &Path, out: &Path, tx: &Sender<Msg>) 
     if let Some(mut err_pipe) = child.stderr.take() {
         let text = Arc::clone(&text);
         readers.push(std::thread::spawn(move || {
-            let mut buf = String::new();
-            let _ = err_pipe.read_to_string(&mut buf);
-            text.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push_str(&buf);
+            let mut buf = Vec::new();
+            let _ = err_pipe.read_to_end(&mut buf);
+            text.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push_str(&String::from_utf8_lossy(&buf));
         }));
     }
     let stopped: Option<&str> = loop {
@@ -257,9 +263,30 @@ fn convert(script: &Path, cli: &Path, src: &Path, out: &Path, tx: &Sender<Msg>) 
     if log.contains("Publisher.Application") || log.contains("80040154") {
         return (Err(NO_PUBLISHER.into()), true);
     }
+    if let Some(why) = failure(&name, &log) {
+        return (Err(why), false);
+    }
     let tail: String =
         log.lines().filter(|l| !l.starts_with("PRESSROOM: ")).rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
     (Err(format!("Couldn't bring in {name}: {tail}")), false)
+}
+
+/// Why the converter stopped, in words, from its `PRESSROOM-ERROR: kind|step|words` line.
+fn failure(name: &str, log: &str) -> Option<String> {
+    let line = log.lines().find_map(|l| l.strip_prefix("PRESSROOM-ERROR: "))?;
+    let mut parts = line.splitn(3, '|');
+    let kind = parts.next()?;
+    let step = parts.next().unwrap_or_default().trim();
+    let words = parts.next().unwrap_or_default().trim();
+    Some(match kind {
+        // Publisher's own check turned the file away: nothing PressRoom can do on this computer.
+        "open" => format!(
+            "The Publisher on this computer can't open {name} either, so PressRoom can't bring it in here. Publisher says: \u{201c}{words}\u{201d}\n\n\
+             On a computer whose Publisher opens it, PressRoom can bring it in. Then copy the .pressroom file it makes to this computer."
+        ),
+        _ if step.is_empty() => format!("Couldn't bring in {name}: {words}"),
+        _ => format!("Couldn't bring in {name}. It stopped at \u{201c}{step}\u{201d}: {words}"),
+    })
 }
 
 fn file_name(p: &Path) -> String {
@@ -455,6 +482,19 @@ mod tests {
         assert_eq!(names, ["c.pub", "B.PUB", "a.pub"]);
         assert_eq!(skipped, 1, "d.pub already has its publication");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_conversion_says_why_in_words() {
+        // As on his mother's laptop: her Publisher turned the file away.
+        let log = "PRESSROOM: Publisher is opening the file\nPRESSROOM-ERROR: open|Publisher is opening the file|Publisher has detected a problem in the file you are trying to open. To protect your computer, Publisher will not open the file.\nException calling \"Open\"\n";
+        let m = failure("News.pub", log).unwrap();
+        assert!(m.starts_with("The Publisher on this computer can't open News.pub either"), "{m}");
+        assert!(m.contains("\u{201c}Publisher has detected a problem") && m.contains("copy the .pressroom file"), "{m}");
+        let m = failure("News.pub", "PRESSROOM-ERROR: other|Reading page 3 of 8|The RPC server is unavailable.\n").unwrap();
+        assert_eq!(m, "Couldn't bring in News.pub. It stopped at \u{201c}Reading page 3 of 8\u{201d}: The RPC server is unavailable.");
+        assert_eq!(failure("News.pub", "PRESSROOM-ERROR: other||Give -In.").unwrap(), "Couldn't bring in News.pub: Give -In.");
+        assert!(failure("News.pub", "PRESSROOM: Reading page 1 of 8\n+ CategoryInfo : NotSpecified").is_none());
     }
 
     #[test]

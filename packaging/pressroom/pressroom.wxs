@@ -6,7 +6,11 @@
   <Package Name="PressRoom" Manufacturer="PressRoom" Version="$(var.Version)" UpgradeCode="7C1E2A55-9B3D-4F0A-8E61-2D4B9C0F7A13"
            Scope="perUser" Compressed="yes" Language="1033">
     <SummaryInformation Description="PressRoom: bulletins, newsletters, flyers and cards" Manufacturer="PressRoom" />
-    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of PressRoom is already installed." />
+    <!-- The new version goes in first and the old one comes out after: files that didn't change (the
+         fonts) are never touched, so a font another program holds open can't stop an update, and an
+         update that fails leaves the old version as it was. Removing the old one first (the default)
+         left nothing installed on 2026-10-31, when a held font couldn't be written back. -->
+    <MajorUpgrade Schedule="afterInstallExecute" AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of PressRoom is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Icon Id="PressRoomIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)pressroom.ico" />

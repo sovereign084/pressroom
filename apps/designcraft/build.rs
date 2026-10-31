@@ -17,6 +17,14 @@ fn main() {
     // The installer build's PressRoom version (build-installer.ps1), shown in the file's Properties.
     if let Ok(version) = std::env::var("PRESSROOM_VERSION") {
         res.set("ProductVersion", &version);
+        // The file version Windows Installer compares when an update replaces PressRoom.exe (the new
+        // version goes in before the old comes out): 1.x.y.z for PressRoom x.y.z, above the 0.13.0.0
+        // (DesignCraft's version) earlier PressRooms carry and higher with every release, so an
+        // update always puts the new program in.
+        if let Some((parts, number)) = file_version(&version) {
+            res.set_version_info(winresource::VersionInfo::FILEVERSION, number);
+            res.set("FileVersion", &parts);
+        }
     }
     res.set_icon("../../packaging/pressroom/pressroom.ico")
         .set("ProductName", "PressRoom")
@@ -32,4 +40,11 @@ fn main() {
         }
         println!("cargo:warning=designcraft.exe built without icon/version resources: {e}");
     }
+}
+
+/// PressRoom `x.y.z` as the file version 1.x.y.z: its text and its VERSIONINFO number.
+fn file_version(version: &str) -> Option<(String, u64)> {
+    let mut parts = version.trim().split('.').map(|p| p.parse::<u16>().ok());
+    let (x, y, z) = (parts.next()??, parts.next().flatten().unwrap_or(0), parts.next().flatten().unwrap_or(0));
+    Some((format!("1.{x}.{y}.{z}"), (1u64 << 48) | (u64::from(x) << 32) | (u64::from(y) << 16) | u64::from(z)))
 }

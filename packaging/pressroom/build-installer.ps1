@@ -89,6 +89,42 @@ $($licences -join "`n")
     [IO.File]::WriteAllText($out, $wxs, (New-Object Text.UTF8Encoding $false))
     return $out
 }
+# Windows Installer can't read some fonts' versions (WiX gives them 0.0.0.0: Oxygen, the PT fonts),
+# so it would write them again on every install and update, which fails while a program holds the
+# font open; browsers do, for fonts web pages ask for (it took PressRoom off this PC on 2026-10-31).
+# Those fonts are compared by their contents instead, so an unchanged one is left alone.
+function Set-FontHashes([string]$msi) {
+    $wi = New-Object -ComObject WindowsInstaller.Installer
+    $get = { param($o, $name, $i) $o.GetType().InvokeMember($name, 'GetProperty', $null, $o, @($i)) }
+    $set = { param($o, $name, $i, $v) [void]$o.GetType().InvokeMember($name, 'SetProperty', $null, $o, @($i, $v)) }
+    $db = $wi.OpenDatabase($msi, 1)
+    try {
+        $view = $db.OpenView("SELECT ``File``, ``FileName`` FROM ``File`` WHERE ``Version`` = '0.0.0.0'")
+        $view.Execute()
+        $found = New-Object System.Collections.Generic.List[object]
+        while ($r = $view.Fetch()) { $found.Add(@((& $get $r 'StringData' 1), ((& $get $r 'StringData' 2) -split '\|')[-1])) }
+        $view.Close()
+        $hashes = $db.OpenView('SELECT * FROM `MsiFileHash`')
+        $hashes.Execute()
+        foreach ($f in $found) {
+            $one = $db.OpenView("SELECT ``Version`` FROM ``File`` WHERE ``File`` = '$($f[0])'")
+            $one.Execute()
+            $r = $one.Fetch()
+            & $set $r 'StringData' 1 ''
+            $one.Modify(2, $r)
+            $one.Close()
+            $h = $wi.FileHash((Join-Path $root "target-pkg\fonts\$($f[1])"), 0)
+            $row = $wi.CreateRecord(6)
+            & $set $row 'StringData' 1 $f[0]
+            & $set $row 'IntegerData' 2 0
+            for ($i = 1; $i -le 4; $i++) { & $set $row 'IntegerData' ($i + 2) (& $get $h 'IntegerData' $i) }
+            $hashes.Modify(1, $row)
+        }
+        $hashes.Close()
+        $db.Commit()
+        "$($found.Count) fonts compared by contents"
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($db); [GC]::Collect(); [GC]::WaitForPendingFinalizers() }
+}
 $env:Path += ";$env:USERPROFILE\.cargo\bin;$env:USERPROFILE\.dotnet\tools"
 $env:CARGO_TARGET_DIR = $TargetDir
 # PressRoom's own version, built into the app: it compares it with the newest release to offer
@@ -111,6 +147,7 @@ try {
     Push-Location $PSScriptRoot
     try { wix build pressroom.wxs $fontsWxs -d "Version=$Version" -d "BinDir=$stage" -d "FontDir=$(Join-Path $root 'target-pkg\fonts')" -o $msi } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw 'wix build failed' }
+    Set-FontHashes $msi
     Sign-File $msi
     Get-Item $msi | Select-Object Name, Length
 }
