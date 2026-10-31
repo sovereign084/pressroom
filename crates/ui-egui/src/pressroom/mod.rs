@@ -764,29 +764,37 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
 pub fn body(app: &mut DesignApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let s = state(&ctx);
-    // A Publisher file on its way in: say so over the window.
+    // A Publisher file on its way in: say so over the window, with what Publisher is doing and a
+    // way out.
     if let Some(name) = pubimport::busy() {
         let r = ui.max_rect();
-        let card = Rect::from_center_size(r.center(), vec2(420.0, 90.0));
-        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("pr_pubimport")));
-        painter.add(egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(50) }.as_shape(card, 8.0));
-        painter.rect(card, 8.0, pal().card, Stroke::new(1.0, pal().card_edge), egui::StrokeKind::Inside);
-        painter.text(
-            card.center() - vec2(0.0, 14.0),
-            egui::Align2::CENTER_CENTER,
-            format!("Bringing in \u{201c}{name}\u{201d}"),
-            FontId::proportional(15.0),
-            pal().text,
-        );
-        painter.text(
-            card.center() + vec2(0.0, 14.0),
-            egui::Align2::CENTER_CENTER,
-            match pubimport::progress() {
-                Some((n, of)) => format!("Publisher is reading file {n} of {of}. Each can take a minute."),
-                None => "Publisher is reading the file. This can take a minute.".to_string(),
+        egui::Area::new(egui::Id::unique("pr_pubimport")).order(egui::Order::Foreground).fixed_pos(r.center() - vec2(230.0, 70.0)).show(
+            ui.ctx(),
+            |ui| {
+                egui::Frame::new()
+                    .fill(pal().card)
+                    .stroke(Stroke::new(1.0, pal().card_edge))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(20, 14))
+                    .shadow(egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(50) })
+                    .show(ui, |ui| {
+                        ui.set_width(420.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new(format!("Bringing in \u{201c}{name}\u{201d}")).size(15.0).color(pal().text));
+                            ui.add_space(4.0);
+                            let status = pubimport::status().unwrap_or_default();
+                            let line = match pubimport::progress() {
+                                Some((n, of)) => format!("File {n} of {of}: {status}\u{2026}"),
+                                None => format!("{status}\u{2026}"),
+                            };
+                            ui.label(egui::RichText::new(line).size(12.0).color(pal().group_label));
+                            ui.add_space(10.0);
+                            if ui.button("   Cancel   ").clicked() {
+                                pubimport::cancel();
+                            }
+                        });
+                    });
             },
-            FontId::proportional(12.0),
-            pal().group_label,
         );
     }
     let shown = s.backstage.or(app.session.active().is_none().then_some(Backstage::New));

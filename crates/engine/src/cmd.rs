@@ -52,6 +52,7 @@ pub mod preflight;
 mod prefs;
 mod prepress;
 mod print;
+pub use print::printer_list;
 mod qr;
 mod rulers;
 mod scripts;

@@ -29,15 +29,58 @@ powershell -ExecutionPolicy Bypass -File pub2pressroom.ps1 -In "Bulletin Oct 26.
 Writes "Bulletin Oct 26.pressroom" beside it, with its pictures inside.
 #>
 param(
-    [Parameter(Mandatory)][string]$In,
+    [string]$In,
     [string]$Out,
     [string]$Cli = (Join-Path $PSScriptRoot 'PressRoom-cli.exe'),
     # Also export Publisher's own PDF of the file, to compare against.
     [switch]$Reference,
     # Keep the pictures folder and the step list (left out once the publication is made).
-    [switch]$KeepWork
+    [switch]$KeepWork,
+    # Leave the default printer alone while Publisher reads (see Use-PdfPrinter).
+    [switch]$NoPrinterSwap,
+    # Only put back the default printer a stopped conversion left switched, then quit.
+    [switch]$RestorePrinter
 )
 $ErrorActionPreference = 'Stop'
+
+# Progress for PressRoom, which shows it while the file comes in: one line a step.
+function Say([string]$text) {
+    [Console]::Out.WriteLine("PRESSROOM: $text")
+    [Console]::Out.Flush()
+}
+
+# Publisher lays a publication out for the default printer, and waits without end for one it can't
+# reach (an office printer away from the office). While it reads, the default is Microsoft Print to
+# PDF, which every Windows has; the user's own default comes back afterwards. What to put back is
+# kept in a file too, so a conversion that was stopped part-way is put right by the next one (or by
+# -RestorePrinter, which PressRoom runs when it stops one).
+$winKey = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Windows'
+$devKey = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Devices'
+$savedFile = Join-Path $env:TEMP 'PressRoom-default-printer.json'
+function Restore-Printer {
+    if (-not (Test-Path $savedFile)) { return }
+    try {
+        $s = Get-Content -Raw $savedFile | ConvertFrom-Json
+        if ($s.device) { Set-ItemProperty $winKey -Name Device -Value $s.device } else { Remove-ItemProperty $winKey -Name Device -ErrorAction SilentlyContinue }
+        if ($s.hadLegacy) { Set-ItemProperty $winKey -Name LegacyDefaultPrinterMode -Value ([int]$s.legacy) -Type DWord }
+        else { Remove-ItemProperty $winKey -Name LegacyDefaultPrinterMode -ErrorAction SilentlyContinue }
+    } finally { Remove-Item $savedFile -Force -ErrorAction SilentlyContinue }
+}
+function Use-PdfPrinter {
+    if ($NoPrinterSwap) { return }
+    $port = (Get-ItemProperty $devKey -Name 'Microsoft Print to PDF' -ErrorAction SilentlyContinue).'Microsoft Print to PDF'
+    $w = Get-ItemProperty $winKey -ErrorAction SilentlyContinue
+    if (-not $port -or -not $w) { return }
+    if ("$($w.Device)" -like 'Microsoft Print to PDF,*') { return }
+    $saved = [ordered]@{ device = $w.Device; legacy = $w.LegacyDefaultPrinterMode; hadLegacy = $null -ne $w.PSObject.Properties['LegacyDefaultPrinterMode'] }
+    [IO.File]::WriteAllText($savedFile, (ConvertTo-Json $saved -Compress))
+    # Windows mustn't pick another default meanwhile.
+    Set-ItemProperty $winKey -Name LegacyDefaultPrinterMode -Value 1 -Type DWord
+    Set-ItemProperty $winKey -Name Device -Value "Microsoft Print to PDF,$port"
+}
+Restore-Printer
+if ($RestorePrinter) { return }
+if (-not $In) { throw 'Give -In: a Publisher file or a folder of them.' }
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName System.Drawing
 $In = (Resolve-Path $In).Path
@@ -830,14 +873,45 @@ function Emit-Shape($shape, $spread, [double]$x) {
     [void](Emit-Picture $shape $spread $x)
 }
 
-$app = New-Object -ComObject Publisher.Application
+# Publisher's own PDF, for its ink names (and to compare against). A Publisher of its own makes it,
+# in a process of its own and against the clock: made by the Publisher that reads the file, in this
+# script's process, the export can hang for good (it did every time on 2026-10-30, though the same
+# export took seconds in a fresh process), and the ink names are worth having, not waiting for.
+function Export-Reference([string]$pdf) {
+    $job = Start-Job -ArgumentList $In, $pdf -ScriptBlock {
+        param($in, $pdf)
+        $a = New-Object -ComObject Publisher.Application
+        try {
+            $d = $a.Open($in, $true, $false, 'pbDoNotSaveChanges')
+            $d.ExportAsFixedFormat(2, $pdf)
+            $d.Close()
+        } finally { $a.Quit() }
+    }
+    try {
+        if (Wait-Job $job -Timeout 150) {
+            Receive-Job $job -ErrorAction SilentlyContinue | Out-Null
+            return (Test-Path $pdf)
+        }
+        Write-Warning "Publisher's own PDF took too long, so the file comes in without its ink names."
+        Stop-Job $job
+        # The Publisher that job started (the reading one isn't running yet).
+        Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'MSPUB.EXE' -and $_.CommandLine -match 'Embedding|Automation' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        return $false
+    } finally { Remove-Job $job -Force -ErrorAction SilentlyContinue }
+}
+
+Use-PdfPrinter
+$app = $null
 try {
-    $doc = $app.Open($In, $true, $false, 'pbDoNotSaveChanges')
-    # Publisher's own PDF, for its ink names (and to compare against): made first, as exporting
-    # once the file has been read through can hang Publisher.
+    Say 'Publisher is reading the colours'
     $pdf = if ($Reference) { "$base (Publisher).pdf" } else { Join-Path $picDir 'inks.pdf' }
-    try { $doc.ExportAsFixedFormat(2, $pdf); Read-Ink-Names $pdf } catch { Write-Warning "Publisher's own PDF could not be made: $($_.Exception.Message)" }
+    try { if (Export-Reference $pdf) { Read-Ink-Names $pdf } } catch { Write-Warning "Publisher's own PDF could not be made: $($_.Exception.Message)" }
     if (-not $Reference) { Remove-Item $pdf -Force -ErrorAction SilentlyContinue }
+    Say 'Starting Publisher'
+    $app = New-Object -ComObject Publisher.Application
+    Say 'Publisher is opening the file'
+    $doc = $app.Open($In, $true, $false, 'pbDoNotSaveChanges')
     $pw = [double]$doc.PageSetup.PageWidth
     $ph = [double]$doc.PageSetup.PageHeight
     $n = [int]$doc.Pages.Count
@@ -852,11 +926,13 @@ try {
     [void](Add-Step 'document.preferences' @{ textWrapOnlyBeneath = $true; glyphFallback = $true })
     [void](Add-Step 'style.paragraph.edit' @{ name = '[Basic Paragraph]'; chars = @{ fontFamily = 'Calibri'; fontStyle = 'Regular'; size = 10.0 } })
     for ($p = 1; $p -le $n; $p++) {
+        Say "Reading page $p of $n"
         $place = Page-Place ($p - 1)
         foreach ($sh in (Back-To-Front $doc.Pages.Item($p).Shapes)) { Emit-Shape $sh $place[0] $place[1] }
     }
     # Master page: on each page of PressRoom's master spread.
     if ($doc.MasterPages.Count -ge 1) {
+        Say 'Reading the master page'
         $m = $doc.MasterPages.Item(1)
         $parentPages = if ($script:facing) { @(0.0, $pw) } else { @(0.0) }
         foreach ($px in $parentPages) {
@@ -881,11 +957,15 @@ try {
     $doc.Close()
 }
 finally {
-    $app.Quit()
-    [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
+    if ($app) {
+        try { $app.Quit() } catch {}
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
+    }
+    Restore-Printer
 }
 
 # Build the publication.
+Say 'Building the PressRoom publication'
 $scriptFile = "$base.import.json"
 $json = ConvertTo-Json -InputObject $steps.ToArray() -Depth 12 -Compress
 [IO.File]::WriteAllText($scriptFile, $json, $utf8)

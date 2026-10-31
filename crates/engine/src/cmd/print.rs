@@ -22,6 +22,12 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// The printers the system knows and its default, as `file.printers` gives them. Asking a printer
+/// that can't be reached can take a long time: a window runs this on a thread of its own.
+pub fn printer_list() -> Value {
+    printers()
+}
+
 fn printers() -> Value {
     let printers = craft_print::printers();
     let default = printers.iter().find(|p| p.default).map(|p| p.name.clone());

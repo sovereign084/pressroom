@@ -6,10 +6,16 @@
 //!
 //! A whole folder can be brought in at once (File › Open › Convert a Folder): every Publisher file
 //! in it and its folders that has no publication beside it yet, one after another.
+//!
+//! The converter says what it is doing a line at a time, and the window shows it. It can be
+//! cancelled, and a Publisher that goes quiet for [`STALL`] (waiting on something nobody can see,
+//! such as a printer it can't reach) is stopped rather than waited on for ever.
 
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 
 use designcraft_engine::{file_access, io};
 use serde_json::json;
@@ -20,10 +26,18 @@ use crate::DesignApp;
 const FOLDER_DEPTH: usize = 6;
 const FOLDER_MAX: usize = 1000;
 
+/// How long the converter may go without a word before it is taken as stuck.
+const STALL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// Cancel, asked for from the window.
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
 /// What the converting thread reports.
 enum Msg {
     /// A folder conversion moved on to its `n`th file (1-based) of `of`.
     Next { name: String, n: usize, of: usize },
+    /// What the converter is doing ("Reading page 3 of 8").
+    Status(String),
     /// One file is done: the publication's path, or why not.
     One(Result<String, String>),
     /// A folder is done: how many were converted, and the files that couldn't be.
@@ -34,6 +48,7 @@ enum Msg {
 struct Job {
     name: String,
     of: Option<(usize, usize)>,
+    status: String,
     rx: Receiver<Msg>,
 }
 
@@ -46,6 +61,16 @@ pub fn is_pub(path: &str) -> bool {
 /// The name of the file being brought in, while a conversion runs.
 pub fn busy() -> Option<String> {
     JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|j| j.name.clone())
+}
+
+/// What the converter is doing now.
+pub fn status() -> Option<String> {
+    JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|j| j.status.clone())
+}
+
+/// Stops the conversion under way (Cancel on its card).
+pub fn cancel() {
+    CANCEL.store(true, Ordering::SeqCst);
 }
 
 /// Where a folder conversion is: the file it's on (1-based) and how many there are.
@@ -124,30 +149,117 @@ fn converter() -> Result<(PathBuf, PathBuf), String> {
 const NO_PUBLISHER: &str =
     "Publisher isn't installed on this computer, so its files can't be read here. Bring the file to a PC with Publisher to convert it.";
 
-/// Converts `src` into `out` with Publisher, waiting for it: the publication's path, or why not.
-/// `no_publisher` is set when Publisher itself is missing.
-fn convert(script: &Path, cli: &Path, src: &Path, out: &Path) -> (Result<String, String>, bool) {
-    let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+const STUCK: &str = "Publisher stopped answering, so PressRoom stopped it. If it happens again, open the file in Publisher itself once to see whether it is asking something (about a printer or a missing font, say), answer it there, close Publisher and try again.";
+
+/// A hidden PowerShell running `args` (no console window flashing up).
+fn powershell<I, S>(args: I) -> std::process::Command
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     let mut cmd = std::process::Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(script).arg("-In").arg(src).arg("-Out").arg(out).arg("-Cli").arg(cli);
+    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass"]).args(args);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // No console window flashing up.
         cmd.creation_flags(0x0800_0000);
     }
-    match cmd.output() {
-        Ok(_) if io::is_file(out) => (Ok(out.to_string_lossy().to_string()), false),
-        Ok(o) => {
-            let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
-            if text.contains("Publisher.Application") || text.contains("80040154") {
-                return (Err(NO_PUBLISHER.into()), true);
+    cmd
+}
+
+/// Ends the Publisher the converter started (the one running for automation; a Publisher the user
+/// opened is left alone) and puts back the default printer it had switched.
+fn stop_publisher(script: &Path) {
+    let kill = "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'MSPUB.EXE' -and $_.CommandLine -match 'Embedding|Automation' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
+    let _ = powershell(["-Command", kill]).output();
+    let _ = powershell([std::ffi::OsStr::new("-File"), script.as_os_str(), std::ffi::OsStr::new("-RestorePrinter")]).output();
+}
+
+/// The converter's own account of the last run (in the temporary folder), kept for when
+/// something goes wrong.
+fn save_log(text: &str) {
+    let p = std::env::temp_dir().join("PressRoom-pub-import-log.txt");
+    file_access::unconfined(|| {
+        let _ = io::write_file(&p, text.as_bytes());
+    });
+}
+
+/// Converts `src` into `out` with Publisher, saying what it is doing on `tx`: the publication's
+/// path, or why not. The flag is set when the files after this one would fail the same way
+/// (Publisher missing, stuck or cancelled).
+fn convert(script: &Path, cli: &Path, src: &Path, out: &Path, tx: &Sender<Msg>) -> (Result<String, String>, bool) {
+    let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let mut cmd = powershell([std::ffi::OsStr::new("-File"), script.as_os_str()]);
+    cmd.arg("-In").arg(src).arg("-Out").arg(out).arg("-Cli").arg(cli);
+    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).stdin(std::process::Stdio::null());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return (Err(format!("Couldn't start the Publisher converter: {e}")), true),
+    };
+    // Everything it says, and when it last said something.
+    let text = Arc::new(Mutex::new(String::new()));
+    let heard = Arc::new(Mutex::new(web_time::Instant::now()));
+    let mut readers = Vec::new();
+    if let Some(out_pipe) = child.stdout.take() {
+        let (text, heard, tx) = (Arc::clone(&text), Arc::clone(&heard), tx.clone());
+        readers.push(std::thread::spawn(move || {
+            for line in BufReader::new(out_pipe).lines().map_while(Result::ok) {
+                *heard.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = web_time::Instant::now();
+                if let Some(status) = line.strip_prefix("PRESSROOM: ") {
+                    let _ = tx.send(Msg::Status(status.trim().to_string()));
+                }
+                let mut t = text.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                t.push_str(&line);
+                t.push('\n');
             }
-            let tail: String = text.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
-            (Err(format!("Couldn't bring in {name}: {tail}")), false)
-        }
-        Err(e) => (Err(format!("Couldn't start the Publisher converter: {e}")), true),
+        }));
     }
+    if let Some(mut err_pipe) = child.stderr.take() {
+        let text = Arc::clone(&text);
+        readers.push(std::thread::spawn(move || {
+            let mut buf = String::new();
+            let _ = err_pipe.read_to_string(&mut buf);
+            text.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push_str(&buf);
+        }));
+    }
+    let stopped: Option<&str> = loop {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => break None,
+            Ok(None) => {}
+        }
+        if CANCEL.load(Ordering::SeqCst) {
+            break Some("Cancelled.");
+        }
+        if heard.lock().unwrap_or_else(std::sync::PoisonError::into_inner).elapsed() > STALL {
+            break Some(STUCK);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    };
+    if let Some(why) = stopped {
+        let _ = child.kill();
+        let _ = child.wait();
+        stop_publisher(script);
+        for r in readers {
+            let _ = r.join();
+        }
+        let log = text.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        save_log(&format!("{name}: {why}\n\n{log}"));
+        return (Err(why.to_string()), true);
+    }
+    for r in readers {
+        let _ = r.join();
+    }
+    let log = text.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    save_log(&format!("{name}\n\n{log}"));
+    if io::is_file(out) {
+        return (Ok(out.to_string_lossy().to_string()), false);
+    }
+    if log.contains("Publisher.Application") || log.contains("80040154") {
+        return (Err(NO_PUBLISHER.into()), true);
+    }
+    let tail: String =
+        log.lines().filter(|l| !l.starts_with("PRESSROOM: ")).rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+    (Err(format!("Couldn't bring in {name}: {tail}")), false)
 }
 
 fn file_name(p: &Path) -> String {
@@ -155,7 +267,9 @@ fn file_name(p: &Path) -> String {
 }
 
 fn set_job(name: String, of: Option<(usize, usize)>, rx: Receiver<Msg>) {
-    *JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Job { name, of, rx });
+    CANCEL.store(false, Ordering::SeqCst);
+    let status = "Starting Publisher".to_string();
+    *JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Job { name, of, status, rx });
 }
 
 /// Start bringing in `path`.
@@ -179,7 +293,8 @@ pub fn start(app: &mut DesignApp, path: &str) {
     let name = file_name(&src);
     let (tx, rx) = channel();
     std::thread::spawn(move || {
-        let _ = tx.send(Msg::One(convert(&script, &cli, &src, &out).0));
+        let r = convert(&script, &cli, &src, &out, &tx).0;
+        let _ = tx.send(Msg::One(r));
     });
     set_job(name.clone(), None, rx);
     app.status(format!("Bringing in \u{201c}{name}\u{201d} from Publisher\u{2026} this can take a minute."));
@@ -227,9 +342,9 @@ fn convert_all(script: &Path, cli: &Path, files: Vec<PathBuf>, tx: &Sender<Msg>)
             failed.push(file_name(src));
             continue;
         }
-        match convert(script, cli, src, &out) {
+        match convert(script, cli, src, &out, tx) {
             (Ok(_), _) => converted += 1,
-            // Publisher is missing: the rest would fail the same way.
+            // Publisher is missing, stuck or cancelled: the rest would fail the same way.
             (Err(e), true) => {
                 stopped = Some(e);
                 break;
@@ -279,6 +394,12 @@ pub fn poll(app: &mut DesignApp, ctx: &egui::Context) {
                 if let Some(j) = JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {
                     j.name = name;
                     j.of = Some((n, of));
+                    j.status = "Starting Publisher".into();
+                }
+            }
+            Msg::Status(text) => {
+                if let Some(j) = JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {
+                    j.status = text;
                 }
             }
             Msg::One(result) => {
@@ -295,7 +416,12 @@ pub fn poll(app: &mut DesignApp, ctx: &egui::Context) {
                             Err(e) => app.status(format!("Converted {name}, but couldn't open the result: {e}")),
                         }
                     }
-                    Err(e) => app.status(e),
+                    Err(e) => {
+                        app.status(e.clone());
+                        if e != "Cancelled." {
+                            alert(app, &name, e);
+                        }
+                    }
                 }
             }
             Msg::Folder { converted, failed, stopped } => {

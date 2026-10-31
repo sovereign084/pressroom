@@ -434,10 +434,36 @@ struct PrintSettings {
     grayscale: bool,
     /// The sheet or page shown in the preview.
     preview: usize,
-    /// Printers, read once per visit.
+    /// Printers, read once per visit (on a thread: see [`look_for_printers`]).
     printers: Option<(Vec<String>, Option<String>)>,
+    /// Whether this visit has started looking for them.
+    looked: bool,
     /// The document the defaults were chosen for.
     doc: u64,
+}
+
+/// The printers last found, and whether a search is under way. They are looked for on a thread:
+/// asking a printer that can't be reached (an office printer away from the office) can take
+/// minutes, and the window mustn't wait on it.
+static PRINTERS: std::sync::Mutex<Option<(Vec<String>, Option<String>)>> = std::sync::Mutex::new(None);
+static LOOKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts looking for the printers, unless a search is under way.
+fn look_for_printers(ctx: &egui::Context) {
+    use std::sync::atomic::Ordering;
+    if LOOKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let ctx = ctx.clone();
+    std::thread::spawn(move || {
+        let r = designcraft_engine::cmd::printer_list();
+        let names: Vec<String> =
+            r["printers"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let default = r["default"].as_str().map(str::to_string);
+        *PRINTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((names, default));
+        LOOKING.store(false, Ordering::SeqCst);
+        ctx.request_repaint();
+    });
 }
 
 fn print_settings_id() -> egui::Id {
@@ -464,17 +490,26 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
         grayscale: false,
         preview: 0,
         printers: None,
+        looked: false,
         doc: uid,
     });
     if s.printers.is_none() {
-        let r = app.run("file.printers", json!({})).unwrap_or(Value::Null);
-        let names: Vec<String> =
-            r["printers"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
-        let default = r["default"].as_str().map(str::to_string);
-        if s.printer.is_none() {
-            s.printer = default.clone().or_else(|| names.first().cloned());
+        // The last list at once (none the first time), and a fresh look for each visit.
+        let found = PRINTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        if !s.looked {
+            look_for_printers(&ctx);
+            s.looked = true;
         }
-        s.printers = Some((names, default));
+        if let Some((names, default)) = found
+            && !LOOKING.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            if s.printer.is_none() {
+                s.printer = default.clone().or_else(|| names.first().cloned());
+            }
+            s.printers = Some((names, default));
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(300));
+        }
     }
     let mut print_now = false;
     ui.horizontal_top(|ui| {
@@ -503,7 +538,11 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
             ui.add_space(14.0);
             heading(ui, "Printer");
             let (names, default) = s.printers.clone().unwrap_or_default();
-            let shown = s.printer.clone().unwrap_or_else(|| "No printer found".into());
+            let shown = match (&s.printer, &s.printers) {
+                (Some(p), _) => p.clone(),
+                (None, None) => "Looking for printers\u{2026}".into(),
+                (None, Some(_)) => "No printer found".into(),
+            };
             craft_ui::ComboBox::from_id_salt("pr_printer").width(290.0).selected_text(shown).show_ui(ui, |ui| {
                 for n in &names {
                     let label = if Some(n) == default.as_ref() { format!("{n} (default)") } else { n.clone() };
