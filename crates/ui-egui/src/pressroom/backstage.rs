@@ -118,7 +118,7 @@ pub(super) fn show(app: &mut DesignApp, ui: &mut Ui, page: Backstage) {
     ui.painter().text(r.left_center() + vec2(26.0, 0.0), egui::Align2::LEFT_CENTER, "Options", FontId::proportional(15.0), Color32::WHITE);
     if resp.clicked() {
         super::close_backstage(ui.ctx());
-        ribbon::act(app, "app.preferences");
+        super::dialogs::open_options(app);
     }
     // The page.
     let content = Rect::from_min_max(pos2(column.max.x + 40.0, full.min.y + 24.0), pos2(full.max.x - 40.0, full.max.y - 16.0));
@@ -401,7 +401,7 @@ fn info(app: &mut DesignApp, ui: &mut Ui) {
     ui.add_space(18.0);
     if ui.button("  Run Design Checker  ").clicked() {
         super::close_backstage(ui.ctx());
-        let _ = app.run("window.panel.activate", json!({"panel": "preflight"}));
+        super::taskpane::open(app, "preflight");
     }
 }
 
@@ -428,24 +428,48 @@ struct PrintSettings {
     /// 0 all pages, 1 current page, 2 the pages typed in `pages`.
     which: u8,
     pages: String,
-    booklet: bool,
-    /// "one", "longEdge", "shortEdge".
+    /// "pages", "booklet", "copiesPerSheet" or "pagesPerSheet".
+    layout: &'static str,
+    /// "one", "longEdge", "shortEdge", or "manual": both sides, turned over by hand.
     sides: &'static str,
     grayscale: bool,
-    /// The sheet or page shown in the preview.
+    /// The paper that copies and pages per sheet fill, an index into [`PAPERS`].
+    paper: usize,
+    /// The printed side shown in the preview.
     preview: usize,
     /// Printers, read once per visit (on a thread: see [`look_for_printers`]).
-    printers: Option<(Vec<String>, Option<String>)>,
+    printers: Option<Found>,
     /// Whether this visit has started looking for them.
     looked: bool,
+    /// The fronts of a two-sided job went out by hand; the backs are waiting.
+    backs_waiting: bool,
+    /// The backs go last sheet first (most home printers, once the stack is turned over).
+    backs_reverse: bool,
+    /// The backs print upside down (a printer that takes the stack the other way round).
+    backs_turned: bool,
     /// The document the defaults were chosen for.
     doc: u64,
 }
 
+/// The printers found: names, the default, and what each says about printing on both sides.
+#[derive(Clone, Debug, Default)]
+struct Found {
+    names: Vec<String>,
+    default: Option<String>,
+    two_sided: std::collections::BTreeMap<String, bool>,
+}
+
+const PAPERS: &[(&str, f64, f64)] = &[
+    ("Letter (8.5 x 11\")", 612.0, 792.0),
+    ("Legal (8.5 x 14\")", 612.0, 1008.0),
+    ("Tabloid (11 x 17\")", 792.0, 1224.0),
+    ("A4 (8.27 x 11.69\")", 595.28, 841.89),
+];
+
 /// The printers last found, and whether a search is under way. They are looked for on a thread:
 /// asking a printer that can't be reached (an office printer away from the office) can take
 /// minutes, and the window mustn't wait on it.
-static PRINTERS: std::sync::Mutex<Option<(Vec<String>, Option<String>)>> = std::sync::Mutex::new(None);
+static PRINTERS: std::sync::Mutex<Option<Found>> = std::sync::Mutex::new(None);
 static LOOKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Starts looking for the printers, unless a search is under way.
@@ -460,7 +484,9 @@ fn look_for_printers(ctx: &egui::Context) {
         let names: Vec<String> =
             r["printers"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
         let default = r["default"].as_str().map(str::to_string);
-        *PRINTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((names, default));
+        let two_sided =
+            r["twoSided"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_bool()?))).collect()).unwrap_or_default();
+        *PRINTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Found { names, default, two_sided });
         LOOKING.store(false, Ordering::SeqCst);
         ctx.request_repaint();
     });
@@ -485,12 +511,16 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
         printer: None,
         which: 0,
         pages: String::new(),
-        booklet: folded,
+        layout: if folded { "booklet" } else { "pages" },
         sides: if folded { "shortEdge" } else { "one" },
         grayscale: false,
+        paper: 0,
         preview: 0,
         printers: None,
         looked: false,
+        backs_waiting: false,
+        backs_reverse: true,
+        backs_turned: false,
         doc: uid,
     });
     if s.printers.is_none() {
@@ -500,18 +530,25 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
             look_for_printers(&ctx);
             s.looked = true;
         }
-        if let Some((names, default)) = found
+        if let Some(found) = found
             && !LOOKING.load(std::sync::atomic::Ordering::SeqCst)
         {
             if s.printer.is_none() {
-                s.printer = default.clone().or_else(|| names.first().cloned());
+                s.printer = found.default.clone().or_else(|| found.names.first().cloned());
             }
-            s.printers = Some((names, default));
+            s.printers = Some(found);
         } else {
             ctx.request_repaint_after(std::time::Duration::from_millis(300));
         }
     }
+    // A printer that can't turn the paper: both sides means by hand.
+    let one_sided_printer = s.printer.as_ref().zip(s.printers.as_ref()).is_some_and(|(p, f)| f.two_sided.get(p) == Some(&false));
+    if one_sided_printer && matches!(s.sides, "longEdge" | "shortEdge") {
+        s.sides = "manual";
+    }
+    let cur = crate::canvas::current_page(app).unwrap_or(0);
     let mut print_now = false;
+    let mut print_backs = false;
     ui.horizontal_top(|ui| {
         // Settings column.
         ui.vertical(|ui| {
@@ -537,55 +574,87 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
             });
             ui.add_space(14.0);
             heading(ui, "Printer");
-            let (names, default) = s.printers.clone().unwrap_or_default();
+            let found = s.printers.clone().unwrap_or_default();
             let shown = match (&s.printer, &s.printers) {
                 (Some(p), _) => p.clone(),
                 (None, None) => "Looking for printers\u{2026}".into(),
                 (None, Some(_)) => "No printer found".into(),
             };
             craft_ui::ComboBox::from_id_salt("pr_printer").width(290.0).selected_text(shown).show_ui(ui, |ui| {
-                for n in &names {
-                    let label = if Some(n) == default.as_ref() { format!("{n} (default)") } else { n.clone() };
+                for n in &found.names {
+                    let label = if Some(n) == found.default.as_ref() { format!("{n} (default)") } else { n.clone() };
                     ui.selectable_value(&mut s.printer, Some(n.clone()), label);
                 }
             });
+            #[cfg(windows)]
+            if let Some(name) = s.printer.clone()
+                && ui.small_button("Printer Properties").clicked()
+            {
+                // The driver's own settings: paper, tray and quality, as Publisher's button opens them.
+                let _ = std::process::Command::new("rundll32").args(["printui.dll,PrintUIEntry", "/e", "/n", name.as_str()]).spawn();
+            }
             ui.add_space(14.0);
             heading(ui, "Settings");
-            let which = ["Print All Pages", "Print Current Page", "Custom Print"];
+            let booklet = s.layout == "booklet";
+            let which: [&str; 3] = if booklet {
+                ["Print All Sheets", "Print the Current Page's Sheet", "Custom Print"]
+            } else {
+                ["Print All Pages", "Print Current Page", "Custom Print"]
+            };
             craft_ui::ComboBox::from_id_salt("pr_which").width(290.0).selected_text(which[usize::from(s.which.min(2))]).show_ui(ui, |ui| {
                 for (k, label) in which.iter().enumerate() {
-                    ui.selectable_value(&mut s.which, k as u8, *label);
+                    if ui.selectable_value(&mut s.which, k as u8, *label).changed() {
+                        s.preview = 0;
+                    }
                 }
             });
             if s.which == 2 {
                 ui.horizontal(|ui| {
-                    ui.label("Pages:");
-                    ui.add(egui::TextEdit::singleline(&mut s.pages).hint_text("e.g. 1-3, 5").desired_width(200.0));
+                    ui.label(if booklet { "Sheets:" } else { "Pages:" });
+                    if ui.add(egui::TextEdit::singleline(&mut s.pages).hint_text("e.g. 1-3, 5").desired_width(200.0)).changed() {
+                        s.preview = 0;
+                    }
                 });
             }
             ui.add_space(6.0);
-            let layout = if s.booklet { "Booklet, side-fold" } else { "One page per sheet" };
-            craft_ui::ComboBox::from_id_salt("pr_layout").width(290.0).selected_text(layout).show_ui(ui, |ui| {
-                if ui.selectable_label(!s.booklet, "One page per sheet").clicked() {
-                    s.booklet = false;
-                    s.preview = 0;
-                }
-                if ui.selectable_label(s.booklet, "Booklet, side-fold").clicked() {
-                    s.booklet = true;
-                    s.sides = "shortEdge";
-                    s.preview = 0;
+            let layouts =
+                [("pages", "One page per sheet"), ("pagesPerSheet", "Multiple pages per sheet"), ("copiesPerSheet", "Multiple copies per sheet"), ("booklet", "Booklet, side-fold")];
+            let shown = layouts.iter().find(|(k, _)| *k == s.layout).map_or("One page per sheet", |(_, l)| *l);
+            craft_ui::ComboBox::from_id_salt("pr_layout").width(290.0).selected_text(shown).show_ui(ui, |ui| {
+                for (k, label) in layouts {
+                    if ui.selectable_label(s.layout == k, label).clicked() {
+                        s.layout = k;
+                        s.preview = 0;
+                        if k == "booklet" && s.sides == "one" {
+                            s.sides = if one_sided_printer { "manual" } else { "shortEdge" };
+                        }
+                    }
                 }
             });
+            if matches!(s.layout, "copiesPerSheet" | "pagesPerSheet") {
+                ui.add_space(6.0);
+                craft_ui::ComboBox::from_id_salt("pr_paper").width(290.0).selected_text(PAPERS.get(s.paper).map_or("", |p| p.0)).show_ui(ui, |ui| {
+                    for (k, p) in PAPERS.iter().enumerate() {
+                        if ui.selectable_value(&mut s.paper, k, p.0).changed() {
+                            s.preview = 0;
+                        }
+                    }
+                });
+            }
             ui.add_space(6.0);
-            let sides = [
-                ("one", "Print One Sided"),
-                ("longEdge", "Print on Both Sides (flip sheets on long edge)"),
-                ("shortEdge", "Print on Both Sides (flip sheets on short edge)"),
-            ];
-            let cur = sides.iter().find(|(k, _)| *k == s.sides).map_or("Print One Sided", |(_, l)| *l);
-            craft_ui::ComboBox::from_id_salt("pr_sides").width(290.0).selected_text(cur).show_ui(ui, |ui| {
+            let manual = if s.layout == "booklet" { "Manually Print on Both Sides (flip on short edge)" } else { "Manually Print on Both Sides" };
+            let mut sides: Vec<(&'static str, &'static str)> = vec![("one", "Print One Sided")];
+            if !one_sided_printer {
+                sides.push(("longEdge", "Print on Both Sides (flip sheets on long edge)"));
+                sides.push(("shortEdge", "Print on Both Sides (flip sheets on short edge)"));
+            }
+            sides.push(("manual", manual));
+            let cur_side = sides.iter().find(|(k, _)| *k == s.sides).map_or("Print One Sided", |(_, l)| *l);
+            craft_ui::ComboBox::from_id_salt("pr_sides").width(290.0).selected_text(cur_side).show_ui(ui, |ui| {
                 for (k, label) in sides {
-                    ui.selectable_value(&mut s.sides, k, label);
+                    if ui.selectable_value(&mut s.sides, k, label).changed() {
+                        s.backs_waiting = false;
+                    }
                 }
             });
             ui.add_space(6.0);
@@ -596,9 +665,9 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
                     ui.selectable_value(&mut s.grayscale, true, "Grayscale");
                 },
             );
-            if s.booklet {
+            if s.layout == "booklet" {
                 ui.add_space(10.0);
-                ui.label(egui::RichText::new("Each sheet holds two pages; fold the printed stack in half.").color(super::pal().group_label));
+                ui.label(egui::RichText::new("Each sheet holds four pages, two on each side. Fold the printed stack in half.").color(super::pal().group_label));
                 if n % 4 != 0 {
                     ui.label(
                         egui::RichText::new(format!("{n} pages: blank pages fill the booklet out to {}.", n.div_ceil(4) * 4))
@@ -606,68 +675,172 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
                     );
                 }
             }
+            // Text that doesn't fit won't reach the paper: say so before any is used.
+            let overflowing = overflow_pages(app, &ctx);
+            if !overflowing.is_empty() {
+                ui.add_space(10.0);
+                let list: Vec<String> = overflowing.iter().map(|p| (p + 1).to_string()).collect();
+                let what = if overflowing.len() == 1 { format!("page {}", list.join("")) } else { format!("pages {}", list.join(", ")) };
+                ui.label(egui::RichText::new(format!("Some text doesn't fit its box on {what}. The rest of it won't print.")).color(Color32::from_rgb(190, 90, 0)));
+            }
+            if s.backs_waiting {
+                ui.add_space(12.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.label(egui::RichText::new("The fronts went to the printer.").strong());
+                    ui.label("When they've finished, take the printed sheets, turn the stack over, put it back in the paper tray, and click Print the Backs.");
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut s.backs_reverse, "Last sheet first (most home printers)");
+                    ui.checkbox(&mut s.backs_turned, "Print the backs upside down");
+                    ui.label(egui::RichText::new("If a test comes out wrong, change these two. Try one sheet first by choosing Custom Print, Sheets: 1.").color(super::pal().group_label));
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        print_backs = ui.button("  Print the Backs  ").clicked();
+                        if ui.button("Cancel").clicked() {
+                            s.backs_waiting = false;
+                        }
+                    });
+                });
+            }
         });
         ui.add_space(30.0);
         // Preview, with its page arrows under it.
-        ui.vertical(|ui| print_preview(app, ui, &mut s, n));
+        ui.vertical(|ui| print_preview(app, ui, &mut s, cur));
     });
-    let cur = crate::canvas::current_page(app).unwrap_or(0);
-    ctx.data_mut(|d| d.insert_temp(print_settings_id(), s.clone()));
     if print_now {
-        let mut p = json!({"copies": s.copies, "sides": s.sides, "grayscale": s.grayscale});
-        if let Some(printer) = &s.printer {
-            p["printer"] = json!(printer);
-        }
-        if s.booklet {
-            p["layout"] = json!("booklet");
-        } else if s.which == 1 {
-            p["pages"] = json!((cur + 1).to_string());
-        } else if s.which == 2 && !s.pages.trim().is_empty() {
-            p["pages"] = json!(s.pages.replace(' ', ""));
-        }
-        match app.run("file.print", p) {
-            Ok(_) => {
+        let side = (s.sides == "manual").then_some(json!({"sheetSides": "front", "sides": "one"}));
+        match send_to_printer(app, &s, cur, side) {
+            Ok(()) if s.sides == "manual" => {
+                s.backs_waiting = true;
+                app.status("The fronts went to the printer. Turn the stack over for the backs.");
+            }
+            Ok(()) => {
                 app.status(format!("Sent to {}.", s.printer.clone().unwrap_or_else(|| "the printer".into())));
+                ctx.data_mut(|d| d.insert_temp(print_settings_id(), s.clone()));
                 super::close_backstage(&ctx);
+                return;
             }
             Err(e) => app.status(format!("Couldn't print: {e}")),
         }
     }
+    if print_backs {
+        let backs = json!({"sheetSides": "back", "sides": "one", "reverse": s.backs_reverse, "turned": s.backs_turned});
+        match send_to_printer(app, &s, cur, Some(backs)) {
+            Ok(()) => {
+                s.backs_waiting = false;
+                app.status("The backs went to the printer.");
+            }
+            Err(e) => app.status(format!("Couldn't print: {e}")),
+        }
+    }
+    ctx.data_mut(|d| d.insert_temp(print_settings_id(), s));
 }
 
-/// The preview: one page, or a booklet sheet side (two pages in folding order).
-fn print_preview(app: &mut DesignApp, ui: &mut Ui, s: &mut PrintSettings, n: usize) {
+/// The settings that say what's on paper, for the job and for the preview alike.
+fn plan_params(app: &DesignApp, s: &PrintSettings, cur: usize) -> Value {
+    let mut p = json!({"layout": s.layout});
+    if matches!(s.layout, "copiesPerSheet" | "pagesPerSheet")
+        && let Some(paper) = PAPERS.get(s.paper)
+    {
+        p["paper"] = json!([paper.1, paper.2]);
+    }
+    if s.layout == "booklet" {
+        match s.which {
+            1 => {
+                // The sheet that holds the page in view.
+                let n = app.session.active().map_or(0, |d| d.doc.page_count());
+                let padded = n.div_ceil(4).max(1) * 4;
+                let side = cur.min(padded.saturating_sub(1).saturating_sub(cur));
+                p["sheets"] = json!((side / 2 + 1).to_string());
+            }
+            2 if !s.pages.trim().is_empty() => p["sheets"] = json!(s.pages.replace(' ', "")),
+            _ => {}
+        }
+    } else {
+        match s.which {
+            1 => p["pages"] = json!((cur + 1).to_string()),
+            2 if !s.pages.trim().is_empty() => p["pages"] = json!(s.pages.replace(' ', "")),
+            _ => {}
+        }
+    }
+    p
+}
+
+fn send_to_printer(app: &mut DesignApp, s: &PrintSettings, cur: usize, extra: Option<Value>) -> Result<(), String> {
+    let mut p = plan_params(app, s, cur);
+    p["copies"] = json!(s.copies);
+    p["sides"] = json!(s.sides);
+    p["grayscale"] = json!(s.grayscale);
+    if let Some(printer) = &s.printer {
+        p["printer"] = json!(printer);
+    }
+    if let Some(Value::Object(extra)) = extra {
+        for (k, v) in extra {
+            p[k] = v;
+        }
+    }
+    app.run("file.print", p).map(|_| ())
+}
+
+/// The pages with text that doesn't fit, remembered until the publication changes.
+fn overflow_pages(app: &DesignApp, ctx: &egui::Context) -> Vec<usize> {
+    let Some(st) = app.session.active() else { return vec![] };
+    let key = egui::Id::unique(("pr_overflow", st.uid, st.revision));
+    if let Some(v) = ctx.data(|d| d.get_temp::<std::sync::Arc<Vec<usize>>>(key)) {
+        return v.as_ref().clone();
+    }
+    let mut pages: Vec<usize> = st
+        .doc
+        .stories
+        .values()
+        .filter(|story| !story.frames.is_empty() && app.session.cache.get(&st.doc, story.id, None).is_overset())
+        .filter_map(|story| st.doc.page_of_item(*story.frames.last()?))
+        .collect();
+    pages.sort_unstable();
+    pages.dedup();
+    ctx.data_mut(|d| d.insert_temp(key, std::sync::Arc::new(pages.clone())));
+    pages
+}
+
+/// The preview: one printed side, from the same list of sides the job prints.
+fn print_preview(app: &mut DesignApp, ui: &mut Ui, s: &mut PrintSettings, cur: usize) {
     let ctx = ui.ctx().clone();
-    let padded = n.div_ceil(4) * 4;
-    let count = if s.booklet { padded / 2 } else { n };
+    let plan = app.session.execute("file.printPlan", &plan_params(app, s, cur)).ok();
+    let sides: Vec<Value> = plan.as_ref().and_then(|v| v["sides"].as_array().cloned()).unwrap_or_default();
+    let count = sides.len();
     s.preview = s.preview.min(count.saturating_sub(1));
     let avail = ui.available_size();
     let area = vec2(avail.x.max(200.0), (avail.y - 40.0).clamp(200.0, 620.0));
     let (r, _) = ui.allocate_exact_size(area, Sense::hover());
     ui.painter().rect_filled(r, 0.0, Color32::from_gray(225));
-    let pages: Vec<Option<usize>> = if s.booklet {
-        let i = s.preview;
-        let (l, rt) = if i.is_multiple_of(2) { (padded - 1 - i, i) } else { (i, padded - 1 - i) };
-        vec![(l < n).then_some(l), (rt < n).then_some(rt)]
-    } else {
-        vec![Some(s.preview)]
+    let Some(side) = sides.get(s.preview) else {
+        ui.painter().text(
+            r.center(),
+            egui::Align2::CENTER_CENTER,
+            "Nothing to print with these settings.",
+            FontId::proportional(13.0),
+            Color32::from_gray(90),
+        );
+        return;
     };
-    let (pw, ph) = app.session.active().and_then(|d| d.doc.page(0).map(|p| (p.width as f32, p.height as f32))).unwrap_or((612.0, 792.0));
-    let sheet_w = pw * pages.len() as f32;
-    let scale = ((r.width() - 40.0) / sheet_w).min((r.height() - 40.0) / ph);
-    let size = vec2(pw * scale, ph * scale);
-    let total = Rect::from_center_size(r.center(), vec2(size.x * pages.len() as f32, size.y));
+    let (sw, sh) = (side["width"].as_f64().unwrap_or(612.0) as f32, side["height"].as_f64().unwrap_or(792.0) as f32);
+    let scale = ((r.width() - 40.0) / sw.max(1.0)).min((r.height() - 40.0) / sh.max(1.0));
+    let total = Rect::from_center_size(r.center(), vec2(sw * scale, sh * scale));
     ui.painter().rect_filled(total.translate(vec2(3.0, 3.0)), 0.0, Color32::from_black_alpha(40));
-    for (k, page) in pages.iter().enumerate() {
-        let pr = Rect::from_min_size(total.min + vec2(size.x * k as f32, 0.0), size);
-        ui.painter().rect_filled(pr, 0.0, Color32::WHITE);
-        if let Some(abs) = page
-            && let Some(tex) = crate::panels::pages::thumb(app, &ctx, crate::panels::pages::ThumbOf::Page(*abs), size.y)
-        {
+    ui.painter().rect_filled(total, 0.0, Color32::WHITE);
+    for q in side["placed"].as_array().into_iter().flatten() {
+        let Some(page) = q["page"].as_u64().map(|p| p as usize) else { continue };
+        let Some((pw, ph)) = app.session.active().and_then(|d| d.doc.page(page).map(|p| (p.width as f32, p.height as f32))) else { continue };
+        let k = q["scale"].as_f64().unwrap_or(1.0) as f32 * scale;
+        let at = total.min + vec2(q["x"].as_f64().unwrap_or(0.0) as f32 * scale, q["y"].as_f64().unwrap_or(0.0) as f32 * scale);
+        let pr = Rect::from_min_size(at, vec2(pw * k, ph * k));
+        if let Some(tex) = crate::panels::pages::thumb(app, &ctx, crate::panels::pages::ThumbOf::Page(page), pr.height()) {
             ui.painter().image(tex.id(), pr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
+        if matches!(s.layout, "copiesPerSheet" | "pagesPerSheet") {
+            ui.painter().rect_stroke(pr, 0.0, Stroke::new(0.5, Color32::from_gray(200)), StrokeKind::Outside);
+        }
     }
-    if s.booklet {
+    if s.layout == "booklet" {
         ui.painter().line_segment([total.center_top(), total.center_bottom()], Stroke::new(1.0, Color32::from_gray(200)));
     }
     ui.painter().rect_stroke(total, 0.0, Stroke::new(1.0, Color32::from_gray(160)), StrokeKind::Outside);
@@ -676,7 +849,8 @@ fn print_preview(app: &mut DesignApp, ui: &mut Ui, s: &mut PrintSettings, n: usi
         if ui.add_enabled(s.preview > 0, egui::Button::new("◀")).clicked() {
             s.preview -= 1;
         }
-        let what = if s.booklet {
+        let both_on_sheet = s.layout == "booklet" || s.sides == "manual";
+        let what = if both_on_sheet {
             format!("Sheet {} {} of {}", s.preview / 2 + 1, if s.preview.is_multiple_of(2) { "front" } else { "back" }, count.div_ceil(2))
         } else {
             format!("{} of {}", s.preview + 1, count)
@@ -704,6 +878,11 @@ fn export_page(app: &mut DesignApp, ui: &mut Ui) {
         ("Save as Picture", "Save the page as a PNG picture.", "app.exportPng"),
         ("Save for Word / PowerPoint", "Export the pages as a PowerPoint file.", "app.exportPptx"),
         ("Save as a Web Page", "One HTML page with the text and pictures.", "app.exportHtml"),
+        (
+            "Pack and Go",
+            "A folder with the publication, its pictures and its fonts, to take to another computer or a print shop.",
+            "app.packageDialog",
+        ),
     ] {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width().min(560.0), 56.0), Sense::click());
         if resp.hovered() {

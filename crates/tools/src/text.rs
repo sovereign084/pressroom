@@ -324,6 +324,20 @@ impl TypeTool {
             self.selecting = None;
             return vec![Action::Commit];
         }
+        // PressRoom: a click off every text box, with Draw Text Box ready, makes a box of the
+        // default size there, as a shape's click does.
+        if cx.publisher
+            && self.selecting.is_none()
+            && let Some(a) = start
+            && (ev.pos - a).hypot() < cx.tol(3.0)
+            && let Some((sr, sa)) = cx.layout.spread_at(a)
+        {
+            let rect = [sa.x, sa.y, sa.x + DEFAULT_BOX.0, sa.y + DEFAULT_BOX.1];
+            return vec![Action::Exec(
+                "frame.create".into(),
+                json!({"spread": spread_json(sr), "shape": "rectangle", "content": "text", "rect": rect, "caret": true}),
+            )];
+        }
         // Ends a press in text: drops dragged text, or is ignored by the engine.
         if let Some(fid) = self.selecting.take() {
             let sp = cx.layout.spread_at(ev.pos).map(|(_, p)| p).unwrap_or(ev.pos);
@@ -333,6 +347,9 @@ impl TypeTool {
         vec![]
     }
 }
+
+/// A text box from a plain click in PressRoom: width and height, points.
+const DEFAULT_BOX: (f64, f64) = (216.0, 108.0);
 
 impl Tool for TypeTool {
     fn id(&self) -> &'static str {
@@ -369,6 +386,24 @@ impl Tool for TypeTool {
             let steps = if mods.cmd || mods.ctrl { 5.0 } else { 1.0 };
             vec![Action::Exec("type.kernStep".into(), json!({"steps": sign * steps}))]
         };
+        // PressRoom: Alt+arrows nudge the box being typed in, as Publisher's do.
+        if cx.publisher
+            && mods.alt
+            && !mods.shift
+            && let Some(frame) = cx.selection.text.and_then(|t| t.frame)
+        {
+            let inc = cx.doc.settings.keyboard_increment;
+            let nudge = |dx: f64, dy: f64| vec![Action::Exec("transform.move".into(), json!({"dx": dx, "dy": dy, "ids": [frame.0]}))];
+            match key {
+                ToolKey::Left => return nudge(-inc, 0.0),
+                ToolKey::Right => return nudge(inc, 0.0),
+                ToolKey::Up => return nudge(0.0, -inc),
+                ToolKey::Down => return nudge(0.0, inc),
+                _ => {}
+            }
+        }
+        // Whole words go with Ctrl on Windows, where PressRoom runs; with Option on a Mac.
+        let word = if cx.publisher { mods.cmd || mods.ctrl } else { mods.alt };
         match key {
             ToolKey::Left if mods.alt && !mods.shift => kern(-1.0),
             ToolKey::Right if mods.alt && !mods.shift => kern(1.0),
@@ -378,8 +413,8 @@ impl Tool for TypeTool {
             ToolKey::Down => mv("down"),
             ToolKey::Home => mv("lineStart"),
             ToolKey::End => mv("lineEnd"),
-            ToolKey::Backspace => vec![Action::Exec("text.delete".into(), json!({"forward": false, "word": mods.alt}))],
-            ToolKey::Delete => vec![Action::Exec("text.delete".into(), json!({"forward": true, "word": mods.alt}))],
+            ToolKey::Backspace => vec![Action::Exec("text.delete".into(), json!({"forward": false, "word": word}))],
+            ToolKey::Delete => vec![Action::Exec("text.delete".into(), json!({"forward": true, "word": word}))],
             ToolKey::Enter => vec![Action::Exec("text.insert".into(), json!({"text": if mods.shift { "\u{2028}" } else { "\n" }}))],
             ToolKey::Tab => vec![Action::Exec("text.insert".into(), json!({"text": "\t"}))],
             ToolKey::Escape => vec![Action::SwitchTool("selection".into()), Action::Exec("text.exitToFrame".into(), json!({}))],

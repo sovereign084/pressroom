@@ -1970,6 +1970,52 @@ fn loaded_text_cursor_threads_into_a_frame_inside_a_group() {
 }
 
 #[test]
+fn publisher_copies_with_ctrl_not_alt_and_a_shape_click_makes_a_shape() {
+    let mut d = Document::new(&NewDocument::default());
+    let id = ItemId(d.alloc());
+    let lid = d.default_layer();
+    d.insert_item(
+        SpreadRef::Doc(0),
+        Item::new(id, lid, designcraft_doc::Shape::Rectangle, shapes::rectangle(Rect::new(100.0, 100.0, 200.0, 200.0))),
+        None,
+    )
+    .unwrap();
+    let c = Cache::new();
+    let l = CanvasLayout::new(&d, false);
+    let sel = Selection::items(vec![id]);
+    let pub_cx = || ToolContext { publisher: true, ..ctx(&d, &sel, &c, &l) };
+    let ev = |kind, x, y, mods| PointerEvent { kind, pos: Point::new(x, y), mods, clicks: 0 };
+    let drag = |mods: Mods| {
+        let mut t = create("selection");
+        let cx = pub_cx();
+        t.pointer(&cx, &ev(PointerKind::Down, 150.0, 150.0, mods));
+        t.pointer(&cx, &ev(PointerKind::Drag, 190.0, 150.0, mods))
+    };
+    let copy_of = |actions: Vec<Action>| {
+        actions.iter().find_map(|a| match a {
+            Action::Preview(id, p) if id == "transform.move" => p["copy"].as_bool(),
+            _ => None,
+        })
+    };
+    assert_eq!(copy_of(drag(Mods { cmd: true, ..Mods::default() })), Some(true), "Ctrl copies");
+    assert_eq!(copy_of(drag(Mods { alt: true, ..Mods::default() })), Some(false), "Alt doesn't");
+    assert_eq!(copy_of(drag(Mods::default())), Some(false));
+    // A click with a shape tool makes one of the default size, without a dialog.
+    let mut t = create("rectangle");
+    let cx = pub_cx();
+    t.pointer(&cx, &ev(PointerKind::Down, 300.0, 300.0, Mods::default()));
+    let up = t.pointer(&cx, &ev(PointerKind::Up, 300.0, 300.0, Mods::default()));
+    assert!(up.iter().any(|a| matches!(a, Action::Exec(id, _) if id == "frame.create")), "{up:?}");
+    assert!(!up.iter().any(|a| matches!(a, Action::Dialog(..))));
+    // DesignCraft keeps InDesign's dialog.
+    let mut t = create("rectangle");
+    let cx = ctx(&d, &sel, &c, &l);
+    t.pointer(&cx, &ev(PointerKind::Down, 300.0, 300.0, Mods::default()));
+    let up = t.pointer(&cx, &ev(PointerKind::Up, 300.0, 300.0, Mods::default()));
+    assert!(up.iter().any(|a| matches!(a, Action::Dialog(..))));
+}
+
+#[test]
 fn publisher_selection_has_a_rotate_handle_and_no_grabber_or_live_corners() {
     let mut d = Document::new(&NewDocument::default());
     let f = graphic_frame(&mut d);

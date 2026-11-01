@@ -231,6 +231,7 @@ impl Document {
             liquid: Default::default(),
             transition: None,
             view_rotation: 0,
+            title: None,
             show_parent_overlay: false,
         }
     }

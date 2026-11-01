@@ -7,15 +7,24 @@
 mod art;
 mod backstage;
 mod blocks;
+mod colors;
+pub(crate) mod dialogs;
+mod find;
 mod fontnames;
 mod keys;
+pub(crate) mod marks;
+pub(crate) mod menus;
 mod mica;
 mod nav;
+pub(crate) mod painter;
 pub(crate) mod pictures;
 pub mod pubimport;
 mod ribbon;
 mod scheme;
+mod shapes;
+pub(crate) mod spelling;
 mod splash;
+pub(crate) mod taskpane;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -30,7 +39,8 @@ use serde_json::{Value, json};
 use crate::DesignApp;
 
 pub use backstage::Backstage;
-pub use keys::shortcuts;
+pub use keys::{INHERITED_KEYS, shortcuts};
+pub use spelling::Clicked as SpellClick;
 
 /// Colours that are the same in every Office Theme: Publisher's teal accent and its shades.
 #[allow(non_snake_case)]
@@ -296,7 +306,7 @@ const TABS_H: f32 = 30.0;
 const STATUS_H: f32 = 23.0;
 const CAPTION_W: f32 = 46.0;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Tab {
     File,
     #[default]
@@ -307,11 +317,13 @@ pub enum Tab {
     Review,
     View,
     Help,
+    /// Table Tools › Design, beside Table Tools › Layout.
+    TableDesign,
     Format,
 }
 
 /// What the selection is, which picks the contextual Format tab.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Context {
     #[default]
     None,
@@ -520,12 +532,24 @@ fn centre_rect(app: &DesignApp, wf: f64, hf: f64) -> Option<(usize, [f64; 4])> {
 
 /// Draw Table / Table: a table needs a text box to live in; make one in the middle of the page
 /// when no text is being edited, then ask for the rows and columns.
-fn insert_table(app: &mut DesignApp) {
-    let editing = app.session.active().is_some_and(|d| d.selection.text.is_some());
-    if !editing && let Some((si, rect)) = centre_rect(app, 0.7, 0.3) {
-        let _ = app.run("frame.create", json!({"spread": si, "rect": rect, "content": "text", "caret": true}));
+/// A table is its own object in Publisher, never part of a text box's text: a new box in the
+/// middle of the page, even while typing elsewhere. One undo step.
+fn insert_table_of(app: &mut DesignApp, rows: u64, cols: u64) -> Result<Value, String> {
+    let (si, rect) = centre_rect(app, 0.7, 0.3).ok_or("Open a publication first.")?;
+    let steps = json!([
+        {"command": "frame.create", "params": {"spread": si, "rect": rect, "content": "text", "caret": true}},
+        {"command": "table.insert", "params": {"rows": rows, "cols": cols}},
+    ]);
+    app.run("script.run", json!({"text": steps.to_string()}))
+}
+
+/// Text at the text cursor, or in a new text box in the middle of the page.
+fn insert_text_or_box(app: &mut DesignApp, text: &str) {
+    if app.session.active().is_some_and(|d| d.selection.text.is_some()) {
+        let _ = app.run("text.insert", json!({"text": text}));
+    } else if let Some((si, rect)) = centre_rect(app, 0.4, 0.06) {
+        let _ = app.run("frame.create", json!({"spread": si, "rect": rect, "content": "text", "text": text}));
     }
-    ribbon::act(app, "app.insertTableDialog");
 }
 
 /// Pictures: choose a picture file. It fills the selected picture box (cropped to fill, as a
@@ -537,24 +561,125 @@ fn insert_picture(app: &mut DesignApp) {
         return;
     };
     let Some(path) = pick("place") else { return };
+    place_picture(app, &path);
+}
+
+/// Insert File: a document's text goes in at the text cursor, into the selected text box, or into
+/// a new box in the middle of the page; a picture goes in as Pictures puts it.
+fn insert_file(app: &mut DesignApp) {
+    let Some(pick) = app.services.pick_open.as_mut() else {
+        ribbon::act(app, "app.placeDialog");
+        return;
+    };
+    let Some(path) = pick("place") else { return };
+    let lower = path.to_lowercase();
+    if !["txt", "rtf", "doc", "docx", "md", "html", "htm", "text"].iter().any(|e| lower.ends_with(&format!(".{e}"))) {
+        place_picture(app, &path);
+        return;
+    }
+    let typing = app.session.active().is_some_and(|d| d.selection.text.is_some());
+    let mut params = json!({"path": path});
+    if !typing {
+        let frame = selected_text_frame(app).map(|id| id.0).or_else(|| {
+            let (si, rect) = centre_rect(app, 0.7, 0.6)?;
+            app.run("frame.create", json!({"spread": si, "rect": rect, "content": "text"})).ok()?["id"].as_u64()
+        });
+        params["frame"] = json!(frame);
+    }
+    match app.open_file("file.place", params) {
+        Ok(_) => {
+            let spills = selected_text_frame(app).and_then(|id| {
+                let st = app.session.active()?;
+                let story = st.doc.item(id)?.text_frame()?.story;
+                Some(app.session.cache.get(&st.doc, story, None).is_overset())
+            });
+            if spills == Some(true) {
+                app.status("The text doesn't all fit. Click the mark on the box's corner, then an empty text box, to continue it there.");
+            }
+        }
+        Err(e) => app.status(format!("Couldn't insert the file: {e}")),
+    }
+}
+
+/// Puts the picture file in the selected picture box, or in the middle of the page in view, and
+/// keeps it in the publication, as Publisher does: moving the file later doesn't lose the picture.
+fn place_picture(app: &mut DesignApp, path: &str) {
     let target = app.session.active().and_then(|st| {
         let id = *st.selection.items.first()?;
         let it = st.doc.item(id)?;
         (st.selection.items.len() == 1 && matches!(it.content, Content::Graphic(_) | Content::Unassigned)).then_some(id)
     });
     let placed = match target {
-        Some(id) => app.open_file("file.place", json!({"path": path, "frame": id.0})).map(|_| {
-            let _ = app.run("selection.set", json!({"ids": [id.0]}));
-            let _ = app.run("fit.fillFrameProportionally", json!({}));
-        }),
+        Some(id) => fill_box(app, path, id.0),
         None => {
             let Some((si, rect)) = centre_rect(app, 0.6, 0.4) else { return };
             app.open_file("file.place", json!({"path": path, "spread": si, "x": rect[0], "y": rect[1], "width": rect[2] - rect[0]})).map(|_| ())
         }
     };
-    if let Err(e) = placed {
-        app.status(format!("Couldn't insert the picture: {e}"));
+    match placed {
+        Ok(()) => embed_selected(app),
+        Err(e) => app.status(format!("Couldn't insert the picture: {e}")),
     }
+}
+
+/// A picture file into a box, cropped to fill it, as a Publisher placeholder does.
+fn fill_box(app: &mut DesignApp, path: &str, frame: u64) -> Result<(), String> {
+    app.open_file("file.place", json!({"path": path, "frame": frame}))?;
+    let _ = app.run("selection.set", json!({"ids": [frame]}));
+    let _ = app.run("fit.fillFrameProportionally", json!({}));
+    Ok(())
+}
+
+/// Keeps the selected picture's file inside the publication.
+fn embed_selected(app: &mut DesignApp) {
+    let asset = app.session.active().and_then(|st| st.doc.item(*st.selection.items.first()?)?.graphic().map(|g| g.asset.0));
+    if let Some(asset) = asset {
+        let _ = app.run("links.embed", json!({"asset": asset}));
+    }
+}
+
+/// A picture file dropped on the page: into the picture box under the pointer, if there is one.
+/// False when it should land as a new picture.
+pub(crate) fn drop_picture(app: &mut DesignApp, path: &str, pointer: Option<egui::Pos2>) -> bool {
+    let Some((sr, at)) = crate::canvas::drop_point(app, pointer) else { return false };
+    let target = app.session.active().and_then(|st| {
+        let sp = st.doc.spread(sr)?;
+        sp.items.iter().rev().find(|it| it.bounds().contains(at) && matches!(it.content, Content::Graphic(_) | Content::Unassigned)).map(|it| it.id.0)
+    });
+    let Some(frame) = target else { return false };
+    match fill_box(app, path, frame) {
+        Ok(()) => embed_selected(app),
+        Err(e) => app.status(format!("Couldn't insert the picture: {e}")),
+    }
+    true
+}
+
+/// Ctrl+V with a picture on the clipboard and no text there: it goes in as a picture. Web pages and
+/// the Snipping Tool copy pictures this way. Returns whether one did.
+pub(crate) fn paste_picture(app: &mut DesignApp) -> bool {
+    let Some(read) = app.services.clipboard_image.as_mut() else { return false };
+    let Some((width, height, mut pixels)) = read() else { return false };
+    if pixels.len() != width as usize * height as usize * 4 {
+        return false;
+    }
+    // Rendered pixels are premultiplied: to_png takes that back off.
+    for px in pixels.as_chunks_mut::<4>().0 {
+        let a = u32::from(px[3]);
+        if a != 255 {
+            for c in &mut px[..3] {
+                *c = ((u32::from(*c) * a + 127) / 255) as u8;
+            }
+        }
+    }
+    let png = designcraft_render::Rendered { width, height, pixels }.to_png();
+    let path = std::env::temp_dir().join(format!("PressRoom-pasted-{}.png", now_secs()));
+    let Some(path) = path.to_str().map(str::to_string) else { return false };
+    let wrote = app.services.write.as_mut().map(|w| w(&path, &png));
+    if !matches!(wrote, Some(Ok(_))) {
+        return false;
+    }
+    place_picture(app, &path);
+    true
 }
 
 fn duplicate_page(app: &mut DesignApp, abs: usize) {
@@ -567,9 +692,8 @@ fn delete_page(app: &mut DesignApp, abs: usize) {
 }
 
 /// Today's date as Publisher's default long format ("October 28, 2026").
-fn today() -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let days = (secs / 86_400) as i64;
+/// Year, month (1 to 12) and day from days since 1970-01-01.
+fn civil(days: i64) -> (i64, i64, i64) {
     // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -580,18 +704,59 @@ fn today() -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    const MONTHS: [&str; 12] =
-        ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    (y, m, d)
+}
+
+const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn today() -> String {
+    let (y, m, d) = civil((now_secs() / 86_400) as i64);
     let name = MONTHS.get((m - 1).clamp(0, 11) as usize).copied().unwrap_or("January");
     format!("{name} {d}, {y}")
 }
 
+/// Today in the Date and Time dialog's formats.
+fn date_formats() -> Vec<String> {
+    let secs = now_secs();
+    let days = (secs / 86_400) as i64;
+    let (y, m, d) = civil(days);
+    let name = MONTHS.get((m - 1).clamp(0, 11) as usize).copied().unwrap_or("January");
+    const DAYS: [&str; 7] = ["Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"];
+    let weekday = DAYS.get(days.rem_euclid(7) as usize).copied().unwrap_or("Monday");
+    let short = name.get(..3).unwrap_or(name);
+    let (h, min) = ((secs / 3600) % 24, (secs / 60) % 60);
+    let (h12, ampm) = (if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" });
+    vec![
+        format!("{m}/{d}/{y}"),
+        format!("{weekday}, {name} {d}, {y}"),
+        format!("{name} {d}, {y}"),
+        format!("{m}/{d}/{:02}", y.rem_euclid(100)),
+        format!("{y}-{m:02}-{d:02}"),
+        format!("{d}-{short}-{:02}", y.rem_euclid(100)),
+        format!("{d} {name} {y}"),
+        format!("{name} {:02}", y.rem_euclid(100)),
+        format!("{short}-{:02}", y.rem_euclid(100)),
+        format!("{h12}:{min:02} {ampm}"),
+        format!("{h:02}:{min:02}"),
+    ]
+}
+
 fn insert_date(app: &mut DesignApp) {
-    let editing = app.session.active().is_some_and(|d| d.selection.text.is_some());
-    if editing {
-        let _ = app.run("text.insert", json!({"text": today()}));
-    } else if let Some((si, rect)) = centre_rect(app, 0.4, 0.06) {
-        let _ = app.run("frame.create", json!({"spread": si, "rect": rect, "content": "text", "text": today()}));
+    insert_text_or_box(app, &today());
+}
+
+/// The time now, as Alt+Shift+T types it.
+fn insert_time(app: &mut DesignApp) {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let (h, m) = ((secs / 3600) % 24, (secs / 60) % 60);
+    let (h12, ampm) = (if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" });
+    let text = format!("{h12}:{m:02} {ampm}");
+    if app.session.active().is_some_and(|d| d.selection.text.is_some()) {
+        let _ = app.run("text.insert", json!({"text": text}));
     }
 }
 
@@ -612,6 +777,31 @@ fn edit_header_footer(app: &mut DesignApp, header: bool) {
     if app.run("frame.create", json!({"spread": {"kind": "parent", "index": 0}, "rect": [x0, y0, x1, y1], "content": "text", "caret": true})).is_ok()
     {
         let _ = app.run("object.label", json!({"label": label}));
+    }
+}
+
+/// A page number on every page: a small text box on the master page, in the margin.
+fn page_number_at(app: &mut DesignApp, top: bool, align: &str) {
+    let Some(st) = app.session.active() else { return };
+    let Some(pg) = st.doc.parents.first().and_then(|p| p.pages.first()) else { return };
+    const W: f64 = 72.0;
+    const H: f64 = 22.0;
+    const EDGE: f64 = 18.0;
+    let x = match align {
+        "left" => pg.x + EDGE,
+        "center" => pg.x + (pg.width - W) / 2.0,
+        _ => pg.x + pg.width - W - EDGE,
+    };
+    let y = if top { EDGE } else { pg.height - H - EDGE };
+    let steps = json!([
+        {"command": "frame.create", "params": {"spread": {"kind": "parent", "index": 0}, "rect": [x, y, x + W, y + H], "content": "text", "caret": true}},
+        {"command": "text.insert", "params": {"text": "\u{e000}", "raw": true}},
+        {"command": "type.para", "params": {"attrs": {"align": align}}},
+    ]);
+    if let Err(e) = app.run("script.run", json!({"text": steps.to_string()})) {
+        app.status(format!("Couldn't add the page number: {e}"));
+    } else {
+        app.status("The page number goes on every page. It's on the master page: Ctrl+M to see it.");
     }
 }
 
@@ -739,7 +929,7 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     if c != s.context {
         // A new kind of selection brings its Format tab forward, as Publisher does when a box is
         // inserted; losing it goes back to Home.
-        if c == Context::None && s.tab == Tab::Format {
+        if (c == Context::None && s.tab == Tab::Format) || (c != Context::Table && s.tab == Tab::TableDesign) {
             s.tab = Tab::Home;
         }
         s.context = c;
@@ -748,6 +938,12 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     finish_link(app, &ctx);
     pubimport::poll(app, &ctx);
     apply_next_text(app, &ctx);
+    painter::frame(app, &ctx);
+    // Publisher underlines misspellings from the start. Once: after that it's the person's choice.
+    if !app.ui.pressroom_spelling_set {
+        app.ui.pressroom_spelling_set = true;
+        app.ui.dynamic_spelling = true;
+    }
     title_bar(app, ui, &s);
     if s.backstage.is_none() {
         tabs_and_ribbon(app, ui, &s);
@@ -813,6 +1009,7 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
     if !s.nav_hidden {
         nav::pane(app, ui, s.nav_narrow);
     }
+    taskpane::show(app, ui);
     let w = ui.available_width();
     if (w - s.canvas_w).abs() > 0.5 {
         update(&ctx, |s| s.canvas_w = w);
@@ -820,6 +1017,7 @@ pub fn body(app: &mut DesignApp, ui: &mut Ui) {
     egui::Frame::NONE.fill(pal().scratch).show(ui, |ui| {
         app.canvas_area(ui, false);
     });
+    marks::clicks(app, &ctx);
 }
 
 /// A Quick Access Toolbar command: its key (as saved), its name in the ▾ menu, tooltip, the icons
@@ -1035,6 +1233,9 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
             (Tab::Help, "Help"),
         ];
         if s.context != Context::None {
+            if s.context == Context::Table {
+                tabs.push((Tab::TableDesign, "Design"));
+            }
             tabs.push((Tab::Format, if s.context == Context::Table { "Layout" } else { "Format" }));
         }
         let font = FontId::proportional(13.0);
@@ -1055,10 +1256,11 @@ fn tabs_and_ribbon(app: &mut DesignApp, ui: &mut Ui, s: &State) {
                 ui.painter().rect_filled(r, PR::ROUND, top.hover.gamma_multiply(hover));
             }
             // The contextual tab is in the accent colour, as Office shows it.
-            let color = if tab == Tab::Format && !top.colorful { PR::TEAL } else { top.text };
+            let contextual = matches!(tab, Tab::Format | Tab::TableDesign);
+            let color = if contextual && !top.colorful { PR::TEAL } else { top.text };
             let tab_font = if current { crate::theme::semibold(13.0) } else { font.clone() };
             ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, name, tab_font, color);
-            let resp = if tab == Tab::Format { resp.on_hover_text(s.context.title()) } else { resp };
+            let resp = if contextual { resp.on_hover_text(s.context.title()) } else { resp };
             if current {
                 underline = Some((r.center().x, tw.max(16.0), r.max.y - 1.5));
             }
@@ -1156,6 +1358,22 @@ fn status_bar(app: &mut DesignApp, ui: &mut Ui) {
         }
         if !app.ui.status.is_empty() {
             ui.painter().text(pos2(pr.max.x + 18.0, full.center().y), egui::Align2::LEFT_CENTER, &app.ui.status, font.clone(), pal().group_label);
+        } else if let Some(info) = crate::panels::sel_info(app) {
+            // The selected object's position and size, as Publisher's status bar has them. A click
+            // opens its Format dialog.
+            let unit = app.session.active().map_or(designcraft_geom::units::Unit::Inches, |d| d.doc.settings.horizontal_units);
+            let m = |pt: f64| designcraft_geom::units::format_measure_prec(pt, unit, 2);
+            let r = info.page_rect;
+            let shown = format!("{}, {}      {} x {}", m(r.x0), m(r.y0), m(r.width()), m(r.height()));
+            let at = Rect::from_min_size(pos2(pr.max.x + 18.0, full.min.y + 2.0), vec2(260.0, STATUS_H - 4.0));
+            let resp = ui.interact(at, egui::Id::unique("pr_status_measure"), Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(at, PR::ROUND, pal().hover);
+            }
+            ui.painter().text(at.left_center() + vec2(4.0, 0.0), egui::Align2::LEFT_CENTER, shown, font.clone(), pal().text);
+            if resp.on_hover_text("Position and size: click to change them").clicked() {
+                dialogs::open_format(app);
+            }
         }
         // Right: view buttons, zoom slider, percentage, and Fit Page to Window.
         let zoom = app.view().map(|v| v.zoom).unwrap_or(1.0);

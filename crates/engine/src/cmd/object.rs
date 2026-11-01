@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             frame_create
         ),
-        cmd!("line.create", "Create Line", [], None, "{spread?, a: [x,y], b: [x,y]}", has_doc, line_create),
+        cmd!("line.create", "Create Line", [], None, "{spread?, a: [x,y], b: [x,y], preset?: arrow|doubleArrow}", has_doc, line_create),
         cmd!(
             "transform.move",
             "Move",
@@ -598,7 +598,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Frame Options…",
             ["Object"],
             Some("Cmd+B"),
-            "{columns?, gutter?, inset?: number|[t,l,b,r] (null keeps that side), verticalJustification?: top|center|bottom|justify, columnsKind?: fixedNumber|fixedWidth, columnWidth? (pt, Fixed Width), firstBaseline?: ascent|capHeight|leading|xHeight|emboxHeight|fixed, firstBaselineMin? (pt), autoSize?: off|heightOnly|widthOnly|heightAndWidth|heightAndWidthProportionally, autoSizeReference?: topLeft|topCenter|topRight|leftCenter|center|rightCenter|bottomLeft|bottomCenter|bottomRight (the point that stays put), useMinimumHeight?: bool, minimumHeight? (pt), useMinimumWidth?: bool, minimumWidth? (pt), noLineBreaks?: bool, ignoreWrap?, balanceColumns?, columnRule?: bool, columnRuleWeight? (pt), columnRuleColor? (swatch name), columnRuleTint? (0..1), columnRuleOffset? (pt, horizontal), columnRuleTopInset? (pt), columnRuleBottomInset? (pt), baselineGrid?: {start? (pt), increment? (pt), relativeTo?: page|margin|frame|inset} (the frame's custom baseline grid; fields not given keep the frame's, or come from the document grid; null turns it off), vertical?: bool (sets the story direction of the frames' stories, as Type ▸ Story Direction), ids?}",
+            "{columns?, gutter?, inset?: number|[t,l,b,r] (null keeps that side), verticalJustification?: top|center|bottom|justify, columnsKind?: fixedNumber|fixedWidth, columnWidth? (pt, Fixed Width), firstBaseline?: ascent|capHeight|leading|xHeight|emboxHeight|fixed, firstBaselineMin? (pt), autoSize?: off|heightOnly|widthOnly|heightAndWidth|heightAndWidthProportionally, textFit?: none|shrink|best (excludes autoSize; a scale drawn over the story's sizes, re-found as text changes), autoSizeReference?: topLeft|topCenter|topRight|leftCenter|center|rightCenter|bottomLeft|bottomCenter|bottomRight (the point that stays put), useMinimumHeight?: bool, minimumHeight? (pt), useMinimumWidth?: bool, minimumWidth? (pt), noLineBreaks?: bool, ignoreWrap?, balanceColumns?, columnRule?: bool, columnRuleWeight? (pt), columnRuleColor? (swatch name), columnRuleTint? (0..1), columnRuleOffset? (pt, horizontal), columnRuleTopInset? (pt), columnRuleBottomInset? (pt), baselineGrid?: {start? (pt), increment? (pt), relativeTo?: page|margin|frame|inset} (the frame's custom baseline grid; fields not given keep the frame's, or come from the document grid; null turns it off), vertical?: bool (sets the story direction of the frames' stories, as Type ▸ Story Direction), ids?}",
             has_selection,
             text_frame_options
         ),
@@ -975,11 +975,16 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
     let sides = p.get("sides").and_then(Value::as_u64).unwrap_or(u64::from(s.prefs.polygon_sides)).clamp(3, 100) as u32;
     let inset = p.get("starInset").and_then(Value::as_f64).map_or(s.prefs.star_inset, |v| v / 100.0).clamp(0.0, 1.0);
     let rect = Rect::new(rect.x0, rect.y0, rect.x1.max(rect.x0 + 0.5), rect.y1.max(rect.y0 + 0.5));
+    let preset = match str_param(p, "preset") {
+        Some(name) => Some(shapes::preset(name, rect).ok_or_else(|| bad("frame.create", format!("no shape named `{name}`")))?),
+        None => None,
+    };
     s.edit(|d, sel| {
         if d.spread(sr).is_none() {
             return Err(bad("frame.create", "no such spread"));
         }
         let (path, sh) = match shape {
+            _ if preset.is_some() => (preset.clone().unwrap_or_default(), Shape::Polygon),
             "ellipse" | "oval" => (shapes::ellipse(rect), Shape::Oval),
             "polygon" => (polygon_in(rect, sides, inset), Shape::Polygon),
             _ => (shapes::rectangle(rect), Shape::Rectangle),
@@ -1037,11 +1042,23 @@ fn line_create(s: &mut Session, p: &Value) -> Result<Value> {
     let b = point_param(p, "b").ok_or_else(|| bad("line.create", "missing b"))?;
     let sr = spread_param(p, "line.create")?;
     let lid = s.doc()?.active_layer;
+    let (arrow_start, arrow_end) = match str_param(p, "preset") {
+        None => (None, None),
+        Some("arrow") => (None, Some(designcraft_doc::Arrowhead::Triangle)),
+        Some("doubleArrow") => (Some(designcraft_doc::Arrowhead::Triangle), Some(designcraft_doc::Arrowhead::Triangle)),
+        Some(o) => return Err(bad("line.create", format!("no line named `{o}`"))),
+    };
     s.edit(|d, sel| {
         let id = ItemId(d.alloc());
         let mut it = Item::new(id, lid, Shape::GraphicLine, shapes::line(a, b));
         it.stroke = Stroke::default();
         new_object_colors(d, &mut it);
+        if let Some(head) = arrow_end {
+            it.stroke.end = head;
+        }
+        if let Some(head) = arrow_start {
+            it.stroke.start = head;
+        }
         d.insert_item(sr, it, None)?;
         *sel = Selection::items(vec![id]);
         Ok(json!({"id": id.0}))
@@ -2517,6 +2534,10 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
     let min_width = ranged("minimumWidth", 0.0, crate::autosize::MAX_SIDE, "a number of points")?;
     let column_width = ranged("columnWidth", 0.0, 15552.0, "a number of points")?;
     let first_baseline_min = ranged("firstBaselineMin", 0.0, 15552.0, "a number of points")?;
+    let text_fit: Option<designcraft_doc::TextFit> = match p.get("textFit") {
+        None => None,
+        Some(v) => Some(serde_json::from_value(v.clone()).map_err(|_| bad(ID, format!("textFit must be none, shrink or best, not {v}")))?),
+    };
     let reference = match p.get("autoSizeReference") {
         None | Some(Value::Null) => None,
         Some(v) => Some(
@@ -2589,6 +2610,17 @@ fn text_frame_options(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                 }
                 _ => {}
+            }
+            if let Some(fit) = text_fit {
+                o.text_fit = fit;
+                o.fit_scale = 1.0;
+                if fit != designcraft_doc::TextFit::None {
+                    o.auto_size = designcraft_doc::AutoSize::Off;
+                }
+            }
+            if p.get("autoSize").and_then(Value::as_str).is_some_and(|v| v != "off") {
+                o.text_fit = designcraft_doc::TextFit::None;
+                o.fit_scale = 1.0;
             }
             for (k, which) in [("verticalJustification", 0), ("firstBaseline", 1), ("autoSize", 2), ("columnsKind", 3)] {
                 if let Some(v) = p.get(k).cloned() {

@@ -42,6 +42,14 @@ pub(super) fn path_screen(it: &Item, xf: &Xf, a: Affine) -> Vec<Vec<Pos2>> {
 }
 
 pub(super) fn draw_frames(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout) {
+    let publisher = app.ui.pressroom_shell;
+    if publisher {
+        for (k, slot) in layout.slots.iter().enumerate() {
+            if let Some(sp) = doc.spread(slot.spread) {
+                crate::pressroom::marks::draw(app, painter, xf, doc, layout, &sp.items, k == 0);
+            }
+        }
+    }
     if !app.ui.frame_edges {
         return;
     }
@@ -69,12 +77,13 @@ pub(super) fn draw_frames(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc
             }
         }
         for it in &sp.items {
-            draw_item_edges(painter, xf, doc, it, a);
+            draw_item_edges(painter, xf, doc, it, a, publisher);
         }
         // Every overset frame, selected or not and inside groups too, shows its red mark at the
         // out port (InDesign shows it only on the selected frame; a report in Preflight is easy
         // to miss while laying out).
-        for (it, c) in overset_marks(app, doc, layout, &sp.items, xf.zoom, &ported) {
+        let marks = if publisher { vec![] } else { overset_marks(app, doc, layout, &sp.items, xf.zoom, &ported) };
+        for (it, c) in marks {
             let c = xf.to_screen(c);
             let s = designcraft_tools::thread::PORT_SIZE_PX as f32;
             painter.rect_filled(Rect::from_center_size(c, vec2(s, s)), 0.0, Color32::WHITE);
@@ -103,14 +112,14 @@ pub(super) fn draw_frames(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc
     }
 }
 
-fn draw_item_edges(painter: &egui::Painter, xf: &Xf, doc: &Document, it: &Item, a: Affine) {
+fn draw_item_edges(painter: &egui::Painter, xf: &Xf, doc: &Document, it: &Item, a: Affine, publisher: bool) {
     if it.hidden || doc.layer(it.layer).is_some_and(|l| !l.visible) {
         return;
     }
     let col = doc.layer(it.layer).map(|l| c32(l.color)).unwrap_or(Color32::LIGHT_BLUE);
     if let Content::Group { items } = &it.content {
         for c in items {
-            draw_item_edges(painter, xf, doc, c, a * it.xf);
+            draw_item_edges(painter, xf, doc, c, a * it.xf, publisher);
         }
         return;
     }
@@ -122,7 +131,7 @@ fn draw_item_edges(painter: &egui::Painter, xf: &Xf, doc: &Document, it: &Item, 
         }
     }
     // Empty graphic frame: the X.
-    if it.object_style == designcraft_doc::BASIC_GRAPHICS_FRAME && matches!(it.content, Content::Unassigned) {
+    if !publisher && it.object_style == designcraft_doc::BASIC_GRAPHICS_FRAME && matches!(it.content, Content::Unassigned) {
         let r = it.inner_bounds();
         let m = a * it.xf;
         let p = |x: f64, y: f64| xf.to_screen(m * Point::new(x, y));
@@ -258,7 +267,10 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
         let mut frames = Vec::new();
         text_frames_in(it, 0, &mut frames);
         for (frame, story) in frames {
-            draw_ports(app, painter, xf, doc, layout, frame, story, color);
+            // PressRoom draws Publisher's marks instead (`pressroom::marks`).
+            if !publisher {
+                draw_ports(app, painter, xf, doc, layout, frame, story, color);
+            }
         }
         if let Content::Graphic(g) = &it.content
             && sel.content

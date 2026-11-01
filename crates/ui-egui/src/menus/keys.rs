@@ -97,8 +97,13 @@ fn take_keys(app: &mut DesignApp, input: &mut egui::InputState, typing: bool) ->
     // in for = never reaches it, and a command's other bindings run here.
     // Copy, Cut and Paste stay too (the dispatcher's default): the canvas and text tools
     // handle them, and Paste carries the text.
+    let pressroom = app.ui.pressroom_shell;
     let accept = |hit: &craft_keymap::egui::Hit| {
         let c = &hit.command;
+        // PressRoom keeps only the keys Publisher has too; its own table ran first.
+        if pressroom && !crate::pressroom::INHERITED_KEYS.contains(&c.id.as_str()) {
+            return false;
+        }
         let on_bar =
             || c.params.is_null() && native.get(&c.id).and_then(|sc| craft_keymap::Binding::parse(sc).ok()).is_some_and(|b| b.trigger == hit.trigger);
         let leave = hit.exact && hit.cycle.is_empty() && (c.id == "edit.clear" || on_bar());

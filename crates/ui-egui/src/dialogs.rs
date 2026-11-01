@@ -2267,6 +2267,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         "goToPage" => crate::i18n::tr(&app.ui.language, "Go to Page"),
         crate::pressroom::pictures::COMPRESS => crate::i18n::tr(&app.ui.language, "Compress Pictures"),
         crate::pressroom::WORDART => crate::i18n::tr(&app.ui.language, "Edit WordArt Text"),
+        id if id.starts_with(crate::pressroom::dialogs::PREFIX) => crate::pressroom::dialogs::title(id),
         "insertTable" => crate::i18n::tr(&app.ui.language, "Create Table"),
         "cellOptions" => crate::i18n::tr(&app.ui.language, "Cell Options"),
         "createGuides" => crate::i18n::tr(&app.ui.language, "Create Guides"),
@@ -2340,6 +2341,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let preferred_width: f32 = match d.id.as_str() {
             "alert" | crate::pressroom::pictures::COMPRESS => 440.0,
             crate::pressroom::WORDART => 480.0,
+            id if id.starts_with(crate::pressroom::dialogs::PREFIX) => crate::pressroom::dialogs::width(id),
             "closeDocument" | "updateLink" | "deletePages" | "newWorkspace" | "pagesPanelOptions" => 380.0,
             "newDocument" => 960.0,
             "hyphenation" => 560.0,
@@ -3029,6 +3031,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                     id if id.starts_with("cmd:") => command_form(app, ui, &mut d),
                     crate::pressroom::pictures::COMPRESS => crate::pressroom::pictures::compress_dialog(app, ui, &mut d),
                     crate::pressroom::WORDART => crate::pressroom::wordart_dialog(app, ui, &mut d),
+                    id if id.starts_with(crate::pressroom::dialogs::PREFIX) => crate::pressroom::dialogs::body(app, ui, &mut d),
                     "goToPage" => {
                         ui.horizontal(|ui| {
                             crate::rtl::label(ui, crate::i18n::tr(&app.ui.language, "Page"));
@@ -3097,6 +3100,7 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
         let cancel_label = match d.id.as_str() {
             "newDocument" => "Close",
             "findFont" => "Done",
+            id if crate::pressroom::dialogs::close_only(id) => "Close",
             _ => "Cancel",
         };
         ui.horizontal(|ui| {
@@ -3106,13 +3110,14 @@ pub fn show(app: &mut DesignApp, ctx: &egui::Context) {
                 style_options_preview(app, &mut d);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add(
-                        egui::Button::new(crate::rtl::widget(ui, egui::RichText::new(ok_label).color(egui::Color32::WHITE)))
-                            .fill(crate::theme::Tokens::get(ui.ctx()).accent_strong),
-                    )
-                    .clicked()
-                    || (!popup_open && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                if !crate::pressroom::dialogs::close_only(&d.id)
+                    && (ui
+                        .add(
+                            egui::Button::new(crate::rtl::widget(ui, egui::RichText::new(ok_label).color(egui::Color32::WHITE)))
+                                .fill(crate::theme::Tokens::get(ui.ctx()).accent_strong),
+                        )
+                        .clicked()
+                        || (!popup_open && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                 {
                     result = Some(true);
                 }
@@ -3365,6 +3370,7 @@ pub fn confirm(app: &mut DesignApp) -> Result<Value, String> {
         "ruby" => app.run("type.ruby", style_cjk::ruby_params(&d)),
         crate::pressroom::pictures::COMPRESS => crate::pressroom::pictures::compress_apply(app, &d),
         crate::pressroom::WORDART => crate::pressroom::wordart_insert(app, &d),
+        id if id.starts_with(crate::pressroom::dialogs::PREFIX) => crate::pressroom::dialogs::apply(app, &d),
         "goToPage" => {
             // A page name ("iv", "A-3"), a number, or "+n" for an absolute position.
             let typed = match d.fields.get("page") {

@@ -226,6 +226,9 @@ impl DesignApp {
         if document {
             return self.open_file("file.open", json!({"path": path}));
         }
+        if self.ui.pressroom_shell && crate::pressroom::drop_picture(self, path, pointer) {
+            return Ok(Value::Null);
+        }
         let mut params = json!({"path": path});
         if let (Some((sr, at)), Some(o)) = (canvas::drop_point(self, pointer), params.as_object_mut()) {
             o.insert("spread".into(), serde_json::to_value(sr).unwrap_or(Value::Null));

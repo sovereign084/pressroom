@@ -74,6 +74,17 @@ pub fn specs() -> Vec<CommandSpec> {
                 ok()
             })
         }),
+        cmd!("layout.pages.setTitle", "Rename Page", [], None, "{page: 0-based page index, title: \"\" removes it}", has_doc, |s, p| {
+            let page = p.get("page").and_then(Value::as_u64).ok_or_else(|| bad("layout.pages.setTitle", "missing page"))? as usize;
+            let title = p.get("title").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+            s.edit(|d, _| {
+                let (si, pi) = d.page_loc(page).ok_or(designcraft_doc::DocError::NoPage(page))?;
+                let sp = d.spreads.get_mut(si).ok_or(designcraft_doc::DocError::NoPage(page))?;
+                let pg = std::sync::Arc::make_mut(sp).pages.get_mut(pi).ok_or(designcraft_doc::DocError::NoPage(page))?;
+                pg.title = title.clone();
+                ok()
+            })
+        }),
         cmd!("layout.pages.move", "Move Pages…", ["Layout", "Pages"], None, "{from, to}", has_doc, |s, p| {
             let from = p.get("from").and_then(Value::as_u64).ok_or_else(|| bad("layout.pages.move", "missing from"))? as usize;
             let to = p.get("to").and_then(Value::as_u64).ok_or_else(|| bad("layout.pages.move", "missing to"))? as usize;

@@ -16,6 +16,10 @@ const THUMB_H: f32 = 78.0;
 /// The thumbnails' corner rounding, as Windows 11 rounds its previews.
 const THUMB_ROUND: u8 = 3;
 
+/// The page being dragged in the pane.
+#[derive(Clone, Copy)]
+struct DragPage(usize);
+
 pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
     egui::Panel::left("pr_nav")
         .exact_size(if narrow { NARROW } else { WIDE })
@@ -74,6 +78,7 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                 None => return,
             };
             let labels: Vec<String> = (0..spreads.iter().map(Vec::len).sum()).map(|i| app.session.page_label(i)).collect();
+            let mut moved = None;
             egui::ScrollArea::vertical().id_salt("pr_nav_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(6.0);
                 for pages in spreads {
@@ -121,7 +126,30 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                     ui.painter().add(shadow.as_shape(spread.translate(up), THUMB_ROUND));
                     let n = sheets.len();
                     for (k, &(abs, th, base)) in sheets.iter().enumerate() {
-                        let resp = ui.interact(base.expand(3.0), egui::Id::unique(("pr_nav_page", abs)), Sense::click());
+                        let resp = ui.interact(base.expand(3.0), egui::Id::unique(("pr_nav_page", abs)), Sense::click_and_drag());
+                        resp.dnd_set_drag_payload(DragPage(abs));
+                        // A page dragged over: the line shows where it lands, before or after this
+                        // one, across the near edge of the thumbnail.
+                        if resp.dnd_hover_payload::<DragPage>().is_some_and(|d| d.0 != abs) {
+                            let after = ui
+                                .input(|i| i.pointer.hover_pos())
+                                .is_some_and(|p| if n > 1 { p.x > base.center().x } else { p.y > base.center().y });
+                            let line = match (n > 1, after) {
+                                (true, false) => [base.left_top() - vec2(4.0, 2.0), base.left_bottom() + vec2(-4.0, 2.0)],
+                                (true, true) => [base.right_top() + vec2(4.0, -2.0), base.right_bottom() + vec2(4.0, 2.0)],
+                                (false, false) => [base.left_top() - vec2(6.0, 5.0), base.right_top() + vec2(6.0, -5.0)],
+                                (false, true) => [base.left_bottom() + vec2(-6.0, 5.0), base.right_bottom() + vec2(6.0, 5.0)],
+                            };
+                            ui.painter().line_segment(line, Stroke::new(3.0, super::pal().select));
+                        }
+                        if let Some(d) = resp.dnd_release_payload::<DragPage>()
+                            && d.0 != abs
+                        {
+                            let after = ui
+                                .input(|i| i.pointer.interact_pos())
+                                .is_some_and(|p| if n > 1 { p.x > base.center().x } else { p.y > base.center().y });
+                            moved = Some((d.0, super::dialogs::move_target(d.0, abs, after)));
+                        }
                         let r = base.translate(up);
                         // Facing pages read as one sheet: round only the spread's outer corners.
                         let (first, last) = (k == 0, k + 1 == n);
@@ -151,6 +179,11 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                             FontId::proportional(11.5),
                             super::pal().text,
                         );
+                        let page_title = app.session.active().and_then(|d| d.doc.page(abs).and_then(|p| p.title.clone()));
+                        let resp = match page_title {
+                            Some(t) => resp.on_hover_text(t),
+                            None => resp,
+                        };
                         if resp.clicked() {
                             crate::canvas::go_to_page(app, abs);
                         }
@@ -162,6 +195,11 @@ pub(super) fn pane(app: &mut DesignApp, ui: &mut Ui, narrow: bool) {
                     ui.add_space(4.0);
                 }
             });
+            if let Some((from, to)) = moved
+                && from != to
+            {
+                ribbon::act_with(app, "layout.pages.move", json!({"from": from, "to": to}));
+            }
         });
 }
 
@@ -181,11 +219,11 @@ fn page_menu(app: &mut DesignApp, ui: &mut Ui, abs: usize) {
         ui.close();
     }
     if ui.add_enabled(n > 1, egui::Button::new("Move…")).clicked() {
-        ribbon::act(app, "layout.pages.move");
+        super::dialogs::open_move(app, abs);
         ui.close();
     }
     if ui.button("Rename…").clicked() {
-        ribbon::act_with(app, "layout.section", json!({"page": abs + 1}));
+        super::dialogs::open_rename(app, abs);
         ui.close();
     }
     ui.separator();

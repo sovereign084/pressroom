@@ -468,6 +468,8 @@ pub trait Tool: Send {
     fn cursor(&self, _cx: &ToolContext, _p: Point, _mods: Mods) -> Cursor {
         Cursor::Arrow
     }
+    /// The named shape a drawing tool draws. Other tools have none.
+    fn set_preset(&mut self, _preset: Option<String>) {}
     fn busy(&self) -> bool {
         false
     }

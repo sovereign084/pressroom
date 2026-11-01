@@ -141,6 +141,7 @@ impl<'r> Importer<'r> {
                 liquid: names::liquid_rule_in(p.get("LayoutRule").unwrap_or("Off")),
                 transition: None,
                 view_rotation: if i == 0 { view_rotation } else { 0 },
+                title: None,
                 show_parent_overlay: false,
             });
         }

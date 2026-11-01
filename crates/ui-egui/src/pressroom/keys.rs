@@ -17,30 +17,64 @@ enum Do {
     Cmd(&'static str),
     Para(&'static str),
     SizeStep(f64),
+    Tracking(f64),
     Position(&'static str),
     Backstage(Backstage),
     GroupToggle,
     InsertPage,
+    DuplicatePage,
     MasterToggle,
     ZoomToggle,
     ClearChar,
+    Spelling,
+    SmallCaps,
+    NoHyphen,
+    Font,
+    Hyperlink,
+    Hyphenation,
+    CopyFormat,
+    PasteFormat,
+    Find,
+    Replace,
+    Date,
+    Time,
+    PageNumber,
+    DeleteObject,
+    Page(bool),
 }
 
-/// The shortcut table: most specific modifiers first, so Ctrl+Shift+X is tried before Ctrl+X.
+/// The shortcut table, from Microsoft's list for Publisher. Each row wants exactly these modifiers,
+/// so Ctrl+Shift+F is never taken for Ctrl+F.
 const TABLE: &[(Modifiers, Key, Do)] = &[
     (CTRL_SHIFT, Key::Period, Do::Cmd("type.sizeUp")),
     (CTRL_SHIFT, Key::Comma, Do::Cmd("type.sizeDown")),
     (CTRL_SHIFT, Key::Equals, Do::Position("superscript")),
     (CTRL_SHIFT, Key::Plus, Do::Position("superscript")),
-    (CTRL_SHIFT, Key::K, Do::Cmd("type.allCaps")),
+    (CTRL_SHIFT, Key::K, Do::SmallCaps),
     (CTRL_SHIFT, Key::D, Do::Para("fullyJustified")),
     (CTRL_SHIFT, Key::G, Do::GroupToggle),
     (CTRL_SHIFT, Key::N, Do::InsertPage),
+    (CTRL_SHIFT, Key::U, Do::DuplicatePage),
     (CTRL_SHIFT, Key::Y, Do::Cmd("view.hiddenCharacters")),
     (CTRL_SHIFT, Key::L, Do::Cmd("view.fitPage")),
+    (CTRL_SHIFT, Key::O, Do::Cmd("view.frameEdges")),
     (CTRL_SHIFT, Key::S, Do::Cmd("app.saveDialog")),
-    (ALT_SHIFT, Key::F6, Do::Cmd("object.sendBackward")),
-    (ALT, Key::F6, Do::Cmd("object.bringForward")),
+    (CTRL_SHIFT, Key::F, Do::Font),
+    (CTRL_SHIFT, Key::H, Do::Hyphenation),
+    (CTRL_SHIFT, Key::C, Do::CopyFormat),
+    (CTRL_SHIFT, Key::V, Do::PasteFormat),
+    (CTRL_SHIFT, Key::X, Do::DeleteObject),
+    (CTRL_SHIFT, Key::Num0, Do::NoHyphen),
+    (CTRL_SHIFT, Key::CloseBracket, Do::Tracking(10.0)),
+    (CTRL_SHIFT, Key::CloseCurlyBracket, Do::Tracking(10.0)),
+    (CTRL_SHIFT, Key::OpenBracket, Do::Tracking(-10.0)),
+    (CTRL_SHIFT, Key::OpenCurlyBracket, Do::Tracking(-10.0)),
+    (ALT_SHIFT, Key::F6, Do::Cmd("object.sendToBack")),
+    (ALT_SHIFT, Key::T, Do::Time),
+    (ALT_SHIFT, Key::D, Do::Date),
+    (ALT_SHIFT, Key::P, Do::PageNumber),
+    (ALT, Key::F6, Do::Cmd("object.bringToFront")),
+    (ALT, Key::Backspace, Do::Cmd("edit.undo")),
     (CTRL, Key::B, Do::Cmd("type.bold")),
     (CTRL, Key::I, Do::Cmd("type.italic")),
     (CTRL, Key::U, Do::Cmd("type.underline")),
@@ -58,16 +92,38 @@ const TABLE: &[(Modifiers, Key, Do)] = &[
     (CTRL, Key::P, Do::Backstage(Backstage::Print)),
     (CTRL, Key::N, Do::Backstage(Backstage::New)),
     (CTRL, Key::O, Do::Backstage(Backstage::Open)),
-    (CTRL, Key::F, Do::Cmd("app.findChange")),
-    (CTRL, Key::H, Do::Cmd("app.findChange")),
-    (CTRL, Key::K, Do::Cmd("app.insertXrefDialog")),
+    (CTRL, Key::F, Do::Find),
+    (CTRL, Key::H, Do::Replace),
+    (CTRL, Key::K, Do::Hyperlink),
     (CTRL, Key::A, Do::Cmd("edit.selectAll")),
     (CTRL, Key::M, Do::MasterToggle),
     (CTRL, Key::G, Do::Cmd("view.goToPage")),
     (CTRL, Key::W, Do::Cmd("file.close")),
+    (CTRL, Key::F4, Do::Cmd("file.close")),
+    (CTRL, Key::F7, Do::Cmd("view.baselineGrid")),
+    (CTRL, Key::PageDown, Do::Page(true)),
+    (CTRL, Key::PageUp, Do::Page(false)),
+    (Modifiers::SHIFT, Key::F4, Do::Find),
+    (Modifiers::NONE, Key::F3, Do::Find),
+    (Modifiers::NONE, Key::F4, Do::Cmd("edit.redo")),
     (Modifiers::NONE, Key::F5, Do::Cmd("view.goToPage")),
-    (Modifiers::NONE, Key::F7, Do::Cmd("spelling.check")),
+    (Modifiers::NONE, Key::F7, Do::Spelling),
     (Modifiers::NONE, Key::F9, Do::ZoomToggle),
+];
+
+/// The inherited keymap's commands that PressRoom's window keeps. Everything else there is a
+/// page-layout program's key that Publisher doesn't have (Ctrl+D Place, Ctrl+3 Hide, Tab Hide
+/// Panels, the panel keys on F6, F8 and F10...).
+pub const INHERITED_KEYS: &[&str] = &[
+    "edit.copy",
+    "edit.cut",
+    "edit.paste",
+    "edit.clear",
+    "view.zoomIn",
+    "view.zoomOut",
+    "window.nextDocument",
+    "window.previousDocument",
+    "app.quit",
 ];
 
 /// Letter and digit keys: typed, never tool shortcuts.
@@ -125,9 +181,17 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
     }
     let typing = app.session.wants_text();
     let mut hits = Vec::new();
+    let paste = ctx.input(|i| {
+        i.events
+            .iter()
+            .any(|e| matches!(e, egui::Event::Key { key: Key::V, pressed: true, repeat: false, modifiers, .. } if modifiers.matches_exact(CTRL)))
+    });
     ctx.input_mut(|i| {
         for (k, (mods, key, _)) in TABLE.iter().enumerate() {
-            if i.consume_shortcut(&egui::KeyboardShortcut::new(*mods, *key)) {
+            let exact = i.events.iter().any(
+                |e| matches!(e, egui::Event::Key { key: pressed, pressed: true, modifiers, .. } if pressed == key && modifiers.matches_exact(*mods)),
+            );
+            if exact && i.consume_key(*mods, *key) {
                 hits.push(k);
             }
         }
@@ -142,6 +206,9 @@ pub fn shortcuts(app: &mut DesignApp, ctx: &egui::Context) {
     for k in hits {
         let Some((_, _, what)) = TABLE.get(k) else { continue };
         run(app, ctx, what);
+    }
+    if paste {
+        super::paste_picture(app);
     }
 }
 
@@ -178,6 +245,45 @@ fn run(app: &mut DesignApp, ctx: &egui::Context, what: &Do) {
         }
         Do::ClearChar => {
             let _ = app.run("style.character.apply", json!({"name": "[None]"}));
+        }
+        Do::Tracking(d) => {
+            let cur = crate::panels::text_attrs(app).and_then(|a| a["chars"]["tracking"].as_f64()).unwrap_or(0.0);
+            let _ = app.run("type.char", json!({"attrs": {"tracking": cur + d}}));
+        }
+        Do::DuplicatePage => {
+            let cur = crate::canvas::current_page(app).unwrap_or(0);
+            super::duplicate_page(app, cur);
+        }
+        Do::SmallCaps => {
+            let cur = crate::panels::text_attrs(app).and_then(|a| a["chars"]["capitalization"].as_str().map(str::to_string)).unwrap_or_default();
+            let to = if cur == "smallCaps" { "normal" } else { "smallCaps" };
+            let _ = app.run("type.char", json!({"attrs": {"capitalization": to}}));
+        }
+        Do::NoHyphen => {
+            let cur = crate::panels::text_attrs(app).and_then(|a| a["chars"]["noBreak"].as_bool()).unwrap_or(false);
+            let _ = app.run("type.char", json!({"attrs": {"noBreak": !cur}}));
+        }
+        Do::Font => super::dialogs::open_font(app),
+        Do::Hyperlink => super::dialogs::open_hyperlink(app),
+        Do::Hyphenation => super::dialogs::open_hyphenation(app),
+        Do::Spelling => super::spelling::open(app),
+        Do::CopyFormat => super::painter::copy(app),
+        Do::PasteFormat => super::painter::paste(app),
+        Do::Find => super::find::open(app, false),
+        Do::Replace => super::find::open(app, true),
+        Do::Date => super::insert_date(app),
+        Do::Time => super::insert_time(app),
+        Do::PageNumber => ribbon::act(app, "app.insertCurrentPageNumber"),
+        Do::DeleteObject => {
+            if app.session.active().is_some_and(|d| !d.selection.items.is_empty() && d.selection.text.is_none()) {
+                ribbon::act(app, "edit.clear");
+            }
+        }
+        Do::Page(next) => {
+            let n = app.session.active().map(|d| d.doc.page_count()).unwrap_or(0);
+            let cur = crate::canvas::current_page(app).unwrap_or(0);
+            let to = if *next { (cur + 1).min(n.saturating_sub(1)) } else { cur.saturating_sub(1) };
+            crate::canvas::go_to_page(app, to);
         }
         Do::ZoomToggle => {
             let z = app.view().map(|v| v.zoom).unwrap_or(1.0);

@@ -184,7 +184,53 @@ fn letter(ui: &mut Ui, text: &str, tip: &str, enabled: bool, on: bool) -> Respon
 /// A group: its controls, its name below, an optional dialog launcher at the bottom right, and the
 /// separator after it. Returns whether the launcher was clicked.
 fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> bool {
+    let index = GROUP_INDEX.with(|i| i.replace(i.get() + 1));
     let top = ui.cursor().min;
+    // Too narrow for the whole ribbon: this group folds into one button, as Office's do.
+    if index >= GROUPS_SHOWN.with(std::cell::Cell::get) {
+        let w = text_w(ui, name, &label_font()) + 20.0;
+        let (r, resp) = ui.allocate_exact_size(vec2(w.max(FOLDED_W), CONTENT_H + LABEL_H), Sense::click());
+        paint_button_bg(ui, r, &resp, false);
+        let icon = match name {
+            "Clipboard" => "paste",
+            "Font" => "fonts",
+            "Paragraph" => "align-left",
+            "Styles" => "styles",
+            "Objects" | "Text" => "textbox",
+            "Arrange" => "wrap",
+            "Editing" => "find",
+            "Size" => "size",
+            "Tables" | "Table" | "Table Formats" => "table",
+            "Illustrations" | "Adjust" | "Picture Styles" => "picture",
+            "Pages" => "page-insert",
+            "Shape Styles" | "Fill" => "shape-fill",
+            "Borders" => "shape-outline",
+            "Zoom" => "zoom",
+            "Show" => "guides",
+            _ => "page-parts",
+        };
+        art::paint(ui.painter(), Rect::from_min_size(pos2(r.center().x - BIG_ICON / 2.0, r.min.y + 4.0), vec2(BIG_ICON, BIG_ICON)), icon, true);
+        ui.painter().text(pos2(r.center().x, r.min.y + 48.0), egui::Align2::CENTER_CENTER, name, label_font(), super::pal().text);
+        ui.painter().text(pos2(r.center().x, r.min.y + 62.0), egui::Align2::CENTER_CENTER, "\u{23F7}", FontId::proportional(9.0), super::pal().text);
+        let mut launched = false;
+        egui::Popup::menu(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
+            ui.horizontal_top(|ui| {
+                ui.set_height(CONTENT_H);
+                add(ui);
+            });
+            if launcher && ui.small_button(format!("{name} Settings…")).clicked() {
+                launched = true;
+                ui.close();
+            }
+        });
+        ui.add_space(6.0);
+        ui.painter().line_segment(
+            [pos2(r.max.x + 3.0, top.y + 8.0), pos2(r.max.x + 3.0, top.y + CONTENT_H + LABEL_H - 6.0)],
+            Stroke::new(1.0, super::pal().group_sep),
+        );
+        return launched;
+    }
     let inner = ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = vec2(1.0, 0.0);
         let content = ui.horizontal_top(|ui| {
@@ -220,7 +266,45 @@ fn group(ui: &mut Ui, name: &str, launcher: bool, add: impl FnOnce(&mut Ui)) -> 
     let right = inner.response.rect.max.x + 3.0;
     ui.add_space(6.0);
     ui.painter().line_segment([pos2(right, top.y + 8.0), pos2(right, top.y + CONTENT_H + LABEL_H - 6.0)], Stroke::new(1.0, super::pal().group_sep));
+    GROUP_WIDTHS.with(|w| {
+        let mut w = w.borrow_mut();
+        if w.len() <= index {
+            w.resize(index + 1, 0.0);
+        }
+        if let Some(slot) = w.get_mut(index) {
+            *slot = right - top.x + 6.0;
+        }
+    });
     inner.inner
+}
+
+/// A folded group's width.
+const FOLDED_W: f32 = 62.0;
+
+thread_local! {
+    /// The next group this frame.
+    static GROUP_INDEX: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many of this frame's groups show whole, left to right.
+    static GROUPS_SHOWN: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+    /// This frame's whole groups' widths.
+    static GROUP_WIDTHS: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How many groups fit whole in `room`, the rest folding into buttons from the right.
+pub(super) fn groups_that_fit(widths: &[f32], count: usize, room: f32) -> usize {
+    let whole: f32 = widths.iter().sum();
+    if whole <= room {
+        return count;
+    }
+    let mut used = 0.0;
+    for (k, w) in widths.iter().enumerate() {
+        let folded = (count.saturating_sub(k + 1)) as f32 * (FOLDED_W + 6.0);
+        if used + w + folded > room {
+            return k;
+        }
+        used += w;
+    }
+    count
 }
 
 /// A column of up to three small rows.
@@ -251,9 +335,18 @@ fn item(ui: &mut Ui, label: &str) -> bool {
 /// Lay out the body of the current tab.
 pub(super) fn body(app: &mut DesignApp, ui: &mut Ui, tab: Tab, context: Context) {
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+    // Each tab's whole groups' widths are known from the first frame it showed them all.
+    let key = ui.scope_id().with(("pr_group_widths", tab, context));
+    let known: Option<std::sync::Arc<Vec<f32>>> = ui.ctx().data(|d| d.get_temp(key));
+    let room = ui.clip_rect().width() - 34.0;
+    let shown = known.as_ref().map_or(usize::MAX, |w| groups_that_fit(w, w.len(), room));
+    GROUPS_SHOWN.with(|s| s.set(shown));
+    GROUP_INDEX.with(|i| i.set(0));
+    GROUP_WIDTHS.with(|w| w.borrow_mut().clear());
     ui.horizontal_top(|ui| {
         ui.add_space(4.0);
         match tab {
+            Tab::TableDesign => table_design(app, ui),
             Tab::Home => home(app, ui),
             Tab::Insert => insert(app, ui),
             Tab::PageDesign => page_design(app, ui),
@@ -270,6 +363,13 @@ pub(super) fn body(app: &mut DesignApp, ui: &mut Ui, tab: Tab, context: Context)
             Tab::File => {}
         }
     });
+    if known.is_none() {
+        let widths = GROUP_WIDTHS.with(|w| w.borrow().clone());
+        if !widths.is_empty() {
+            ui.ctx().data_mut(|d| d.insert_temp(key, std::sync::Arc::new(widths)));
+            ui.ctx().request_repaint();
+        }
+    }
 }
 
 // ───────────────────────────── Help ─────────────────────────────
@@ -301,7 +401,9 @@ fn clipboard_group(app: &mut DesignApp, ui: &mut Ui) {
         let resp = big_inner(ui, "paste", "Paste", paste_on, true, false);
         // The icon pastes; the arrow (lower part) opens the paste options.
         if resp.clicked() && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.y < resp.rect.min.y + 40.0) {
-            act(app, "edit.paste");
+            if !super::paste_picture(app) {
+                act(app, "edit.paste");
+            }
         } else if paste_on {
             egui::Popup::menu(&resp).show(|ui| {
                 ui.set_min_width(180.0);
@@ -323,8 +425,12 @@ fn clipboard_group(app: &mut DesignApp, ui: &mut Ui) {
             if small(ui, "copy", "Copy", on(app, "edit.copy")).clicked() {
                 act(app, "edit.copy");
             }
-            if small(ui, "format-painter", "Format Painter", on(app, "type.pickUpFormat")).clicked() {
-                let _ = app.run("tool.select", json!({"tool": "eyedropper"}));
+            let any = app.session.active().is_some_and(|d| d.selection.text.is_some() || !d.selection.items.is_empty());
+            let brush = small_inner(ui, "format-painter", "Format Painter", any, false, super::painter::armed());
+            if brush.double_clicked() {
+                super::painter::button(app, true);
+            } else if brush.clicked() {
+                super::painter::button(app, false);
             }
         });
     });
@@ -447,23 +553,18 @@ fn font_group(app: &mut DesignApp, ui: &mut Ui) {
                     }
                     ui.separator();
                     if item(ui, "More Spacing…") {
-                        act(app, "app.characterPanel");
+                        super::dialogs::open_spacing(app);
                     }
                 });
                 let resp = tool(ui, "font-color", "Font Color", doc, false);
                 egui::Popup::menu(&resp).show(|ui| {
-                    if let Some(d) = app.session.active().map(|d| d.doc.clone()) {
-                        let cur = ch["fill"].as_str().unwrap_or("").to_string();
-                        if let Some(name) = crate::panels::swatch_list(ui, &d, &cur) {
-                            set_chars(app, text, json!({"fill": name}));
-                            ui.close();
-                        }
-                    }
+                    let cur = ch["fill"].as_str().unwrap_or("").to_string();
+                    super::colors::menu(app, ui, super::colors::Target::Font, None, &cur);
                 });
             });
         });
     }) {
-        act(app, "app.characterPanel");
+        super::dialogs::open_font(app);
     }
 }
 
@@ -541,20 +642,23 @@ fn paragraph_group(app: &mut DesignApp, ui: &mut Ui) {
                 egui::Popup::menu(&resp).show(|ui| {
                     for (label, v) in [("1.0", 1.0), ("1.15", 1.15), ("1.5", 1.5), ("2.0", 2.0), ("2.5", 2.5), ("3.0", 3.0)] {
                         if item(ui, label) {
-                            // Line spacing in lines → leading as a multiple of the size.
+                            // Line spacing in lines → leading as a multiple of the size, for whole
+                            // paragraphs, as Publisher sets it.
                             let size = ch_size(app);
-                            let _ = app.run("type.char", json!({"attrs": {"leading": {"kind": "points", "value": size * 1.2 * v}}}));
+                            let set = json!({"command": "type.char", "params": {"attrs": {"leading": {"kind": "points", "value": size * 1.2 * v}}}});
+                            let steps = super::dialogs::over_paragraphs(app, vec![set]);
+                            let _ = app.run("script.run", json!({"text": Value::Array(steps).to_string()}));
                         }
                     }
                     ui.separator();
                     if item(ui, "Line Spacing Options…") {
-                        act(app, "app.paragraphPanel");
+                        super::dialogs::open_paragraph(app);
                     }
                 });
             });
         });
     }) {
-        act(app, "app.paragraphPanel");
+        super::dialogs::open_paragraph(app);
     }
 }
 
@@ -596,11 +700,45 @@ fn objects_group(app: &mut DesignApp, ui: &mut Ui) {
         if big(ui, "picture", "Pictures", doc).clicked() {
             super::insert_picture(app);
         }
-        if big_inner(ui, "table", "Table", doc, true, false).clicked() {
-            super::insert_table(app);
-        }
+        big_menu(ui, "table", "Table", doc, |ui| table_grid(app, ui));
         big_menu(ui, "shapes", "Shapes", doc, |ui| shapes_menu(app, ui));
     });
+}
+
+/// The size grid under the Table button, and Insert Table for any other size.
+fn table_grid(app: &mut DesignApp, ui: &mut Ui) {
+    const CELL: f32 = 18.0;
+    let (cols, rows) = (10usize, 8usize);
+    let (grid, resp) = ui.allocate_exact_size(vec2(cols as f32 * CELL, rows as f32 * CELL), Sense::click());
+    let hover =
+        resp.hover_pos().map(|p| (((p.x - grid.min.x) / CELL).ceil().max(1.0) as usize, ((p.y - grid.min.y) / CELL).ceil().max(1.0) as usize));
+    for r in 0..rows {
+        for c in 0..cols {
+            let cell = Rect::from_min_size(grid.min + vec2(c as f32 * CELL, r as f32 * CELL), vec2(CELL, CELL)).shrink(1.5);
+            let lit = hover.is_some_and(|(hc, hr)| c < hc && r < hr);
+            ui.painter().rect(
+                cell,
+                1.0,
+                if lit { super::pal().checked } else { super::pal().card },
+                Stroke::new(1.0, if lit { super::pal().select } else { super::pal().ribbon_edge }),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    let label = hover.map_or("Insert Table".to_string(), |(c, r)| format!("{c} x {r} Table"));
+    ui.label(label);
+    if resp.clicked()
+        && let Some((c, r)) = hover
+    {
+        if let Err(e) = super::insert_table_of(app, r as u64, c as u64) {
+            app.status(format!("Couldn't insert the table: {e}"));
+        }
+        ui.close();
+    }
+    ui.separator();
+    if item(ui, "Insert Table…") {
+        super::dialogs::open_table(app);
+    }
 }
 
 fn arrange_group(app: &mut DesignApp, ui: &mut Ui) {
@@ -608,20 +746,14 @@ fn arrange_group(app: &mut DesignApp, ui: &mut Ui) {
     let many = app.session.active().is_some_and(|d| d.selection.items.len() > 1);
     group(ui, "Arrange", false, |ui| {
         big_menu(ui, "wrap", "Wrap\nText", sel, |ui| {
-            for (label, mode) in [
-                ("None", "none"),
-                ("Square", "boundingBox"),
-                ("Tight", "contour"),
-                ("Top and Bottom", "jumpObject"),
-                ("Jump to Next Column", "jumpToNextColumn"),
-            ] {
+            for (label, mode) in [("None", "none"), ("Square", "boundingBox"), ("Tight", "contour"), ("Top and Bottom", "jumpObject")] {
                 if item(ui, label) {
                     act_with(app, "object.textWrap", json!({"mode": mode}));
                 }
             }
             ui.separator();
             if item(ui, "More Layout Options…") {
-                act(app, "object.textWrap");
+                super::dialogs::open_format(app);
             }
         });
         column(ui, |ui| {
@@ -694,10 +826,10 @@ fn editing_group(app: &mut DesignApp, ui: &mut Ui) {
     group(ui, "Editing", false, |ui| {
         column(ui, |ui| {
             if small(ui, "find", "Find", doc).clicked() {
-                act(app, "app.findChange");
+                super::find::open(app, false);
             }
             if small(ui, "replace", "Replace", doc).clicked() {
-                act(app, "app.findChange");
+                super::find::open(app, true);
             }
             small_menu(ui, "select", "Select", doc, |ui| {
                 if item(ui, "Select All Text in Text Box") {
@@ -735,7 +867,7 @@ fn page_menu(app: &mut DesignApp, ui: &mut Ui) {
         super::duplicate_page(app, cur);
     }
     if item(ui, "Insert Page…") {
-        act(app, "layout.pages.insert");
+        super::dialogs::open_insert_page(app);
     }
 }
 
@@ -745,9 +877,7 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
         big_menu(ui, "page-insert", "Page", doc, |ui| page_menu(app, ui));
     });
     group(ui, "Tables", false, |ui| {
-        if big_inner(ui, "table", "Table", doc, true, false).clicked() {
-            super::insert_table(app);
-        }
+        big_menu(ui, "table", "Table", doc, |ui| table_grid(app, ui));
     });
     group(ui, "Illustrations", false, |ui| {
         if big(ui, "picture", "Pictures", doc).clicked() {
@@ -771,7 +901,7 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
             super::start_draw(app, "type");
         }
         if big(ui, "insert-file", "Insert\nFile", doc).clicked() {
-            act(app, "app.placeDialog");
+            super::insert_file(app);
         }
         big_menu(ui, "wordart", "WordArt", doc, |ui| super::wordart::gallery(app, ui));
         column(ui, |ui| {
@@ -793,21 +923,20 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
                 });
                 ui.separator();
                 if item(ui, "More Symbols…") {
-                    act(app, "app.glyphsPanel");
+                    super::taskpane::open(app, "glyphs");
                 }
             });
             if small(ui, "datetime", "Date & Time", doc).clicked() {
-                super::insert_date(app);
+                super::dialogs::open_date(app);
             }
-            small(ui, "insert-file", "Object", false).on_hover_text("Coming in a later PressRoom update");
         });
     });
     group(ui, "Links", false, |ui| {
         if big(ui, "link", "Link", doc && has_selection(app)).clicked() {
-            let _ = app.run("window.panel.activate", json!({"panel": "hyperlinks"}));
+            super::dialogs::open_hyperlink(app);
         }
         if big(ui, "bookmark", "Bookmark", doc).clicked() {
-            let _ = app.run("window.panel.activate", json!({"panel": "bookmarks"}));
+            super::taskpane::open(app, "bookmarks");
         }
     });
     group(ui, "Header & Footer", false, |ui| {
@@ -818,22 +947,31 @@ fn insert(app: &mut DesignApp, ui: &mut Ui) {
             super::edit_header_footer(app, false);
         }
         big_menu(ui, "page-number", "Page\nNumber", doc, |ui| {
+            for (label, top, align) in [
+                ("Top Left", true, "left"),
+                ("Top Center", true, "center"),
+                ("Top Right", true, "right"),
+                ("Bottom Left", false, "left"),
+                ("Bottom Center", false, "center"),
+                ("Bottom Right", false, "right"),
+            ] {
+                if item(ui, label) {
+                    super::page_number_at(app, top, align);
+                }
+            }
+            ui.separator();
             if item(ui, "Insert Page Number") {
                 act(app, "app.insertCurrentPageNumber");
             }
             if item(ui, "Page Number Format…") {
-                act(app, "layout.section");
+                super::dialogs::open_number_format(app);
             }
         });
     });
 }
 
 fn shapes_menu(app: &mut DesignApp, ui: &mut Ui) {
-    for (label, tool) in [("Rectangle", "rectangle"), ("Oval", "ellipse"), ("Line", "line"), ("Polygon", "polygon")] {
-        if item(ui, label) {
-            super::start_draw(app, tool);
-        }
-    }
+    super::shapes::gallery(app, ui, super::shapes::Use::Draw);
 }
 
 // ───────────────────────────── Page Design ─────────────────────────────
@@ -873,7 +1011,7 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
             }
             ui.separator();
             if item(ui, "Custom Margins…") {
-                act(app, "layout.marginsAndColumns");
+                super::dialogs::open_guides(app);
             }
         });
         big_menu(ui, "orientation", "Orientation", doc, |ui| {
@@ -897,11 +1035,11 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
             }
             ui.separator();
             if item(ui, "Page Setup…") {
-                act(app, "layout.documentSetup");
+                super::dialogs::open_setup(app);
             }
         });
     }) {
-        act(app, "layout.documentSetup");
+        super::dialogs::open_setup(app);
     }
     group(ui, "Layout", false, |ui| {
         big_menu(ui, "guides", "Guides", doc, |ui| {
@@ -915,7 +1053,7 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
             }
             ui.separator();
             if item(ui, "Grid and Baseline Guides…") {
-                act(app, "layout.marginsAndColumns");
+                super::dialogs::open_guides(app);
             }
             if item(ui, "Add Ruler Guides…") {
                 act(app, "layout.createGuides");
@@ -942,20 +1080,20 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
             super::delete_page(app, cur);
         }
         if big(ui, "page-move", "Move", doc && pages > 1).clicked() {
-            act(app, "layout.pages.move");
+            super::dialogs::open_move(app, cur);
         }
         if big(ui, "rename", "Rename", doc).clicked() {
-            act(app, "layout.section");
+            super::dialogs::open_rename(app, cur);
         }
         big_menu(ui, "master", "Master\nPages", doc, |ui| {
             if item(ui, "Edit Master Pages") {
                 super::set_master_view(app, true);
             }
             if item(ui, "Apply Master Page…") {
-                act(app, "layout.pages.applyParent");
+                super::dialogs::open_apply_master(app);
             }
             if item(ui, "Add Master Page…") {
-                act(app, "layout.parents.new");
+                super::dialogs::open_new_master(app);
             }
         });
     });
@@ -965,15 +1103,7 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
     });
     group(ui, "Page Background", false, |ui| {
         big_menu(ui, "background", "Background", doc, |ui| {
-            if item(ui, "No Background") {
-                super::set_background(app, None);
-            }
-            if let Some(d) = app.session.active().map(|d| d.doc.clone())
-                && let Some(name) = crate::panels::swatch_list(ui, &d, "")
-            {
-                super::set_background(app, Some(name));
-                ui.close();
-            }
+            super::colors::menu(app, ui, super::colors::Target::Background, Some("No Background"), "");
         });
     });
 }
@@ -985,10 +1115,45 @@ fn mailings(app: &mut DesignApp, ui: &mut Ui) {
     group(ui, "Start", false, |ui| {
         big_menu(ui, "mail-merge", "Mail\nMerge", doc, |ui| {
             if item(ui, "Step-by-Step Mail Merge Wizard…") {
-                let _ = app.run("window.panel.activate", json!({"panel": "datamerge"}));
+                super::taskpane::open(app, "dataMerge");
             }
         });
-        big(ui, "mail-merge", "E-mail\nMerge", false).on_hover_text("Not available in PressRoom");
+        if big(ui, "insert-file", "Select\nRecipients", doc).clicked()
+            && let Some(pick) = app.services.pick_open.as_mut()
+            && let Some(path) = pick("data")
+            && let Err(e) = app.run("data.source.select", json!({"path": path}))
+        {
+            app.status(format!("Couldn't read the list: {e}"));
+        }
+        if big(ui, "page-parts", "Edit\nRecipient List", doc).clicked() {
+            super::taskpane::open(app, "dataMerge");
+        }
+    });
+    group(ui, "Write & Insert Fields", false, |ui| {
+        big_menu(ui, "textbox", "Insert\nMerge Field", doc, |ui| {
+            let fields = app.session.execute("data.fields", &json!({})).unwrap_or(Value::Null);
+            let names: Vec<String> =
+                fields.as_array().map(|a| a.iter().filter_map(|f| f["name"].as_str().map(str::to_string)).collect()).unwrap_or_default();
+            if names.is_empty() {
+                ui.label("Select Recipients first.");
+            }
+            for name in names {
+                if item(ui, &name) {
+                    let _ = app.run("data.placeholder.add", json!({"field": name}));
+                }
+            }
+        });
+    });
+    group(ui, "Preview & Finish", false, |ui| {
+        if big(ui, "whole-page", "Preview\nResults", doc).clicked() {
+            super::taskpane::open(app, "dataMerge");
+        }
+        if big(ui, "mail-merge", "Finish &\nMerge", doc).clicked() {
+            match app.run("data.merge", json!({})) {
+                Ok(_) => app.status("The merged publication is ready: print it from File, Print."),
+                Err(e) => app.status(format!("Couldn't merge: {e}")),
+            }
+        }
     });
 }
 
@@ -996,14 +1161,12 @@ fn review(app: &mut DesignApp, ui: &mut Ui) {
     let doc = has_doc(app);
     group(ui, "Proofing", false, |ui| {
         if big(ui, "spelling", "Spelling", doc).clicked() {
-            act(app, "spelling.check");
+            super::spelling::open(app);
         }
-        big(ui, "research", "Research", false).on_hover_text("Not available in PressRoom");
-        big(ui, "thesaurus", "Thesaurus", false).on_hover_text("Not available in PressRoom");
-    });
-    group(ui, "Language", false, |ui| {
-        big(ui, "translate", "Translate", false).on_hover_text("Not available in PressRoom");
-        big(ui, "language", "Language", doc).clicked().then(|| act(app, "app.characterPanel"));
+        let mut on_spelling = app.ui.dynamic_spelling;
+        if ui.checkbox(&mut on_spelling, egui::RichText::new("Check spelling\nas you type").font(label_font())).changed() {
+            app.ui.dynamic_spelling = on_spelling;
+        }
     });
 }
 
@@ -1078,6 +1241,11 @@ fn view(app: &mut DesignApp, ui: &mut Ui) {
             }
         });
     });
+    group(ui, "Graphics", false, |ui| {
+        if big(ui, "picture", "Graphics\nManager", doc).clicked() {
+            super::taskpane::open(app, "links");
+        }
+    });
     group(ui, "Window", false, |ui| {
         let docs: Vec<(usize, String)> = app.session.documents().iter().enumerate().map(|(i, d)| (i, d.title())).collect();
         let active = app.session.active_index();
@@ -1098,21 +1266,58 @@ fn text_box_format(app: &mut DesignApp, ui: &mut Ui) {
     let frame = app.session.active().is_some_and(|d| !d.selection.items.is_empty() || d.selection.text.is_some());
     group(ui, "Text", false, |ui| {
         big_menu(ui, "text-fit", "Text\nFit", frame, |ui| {
-            if item(ui, "Grow Text Box to Fit") {
-                let ids = super::text_frame_ids(app);
-                act_with(app, "object.fit", json!({"mode": "fitFrameToContent", "ids": ids}));
-            }
-            if item(ui, "Do Not Autofit") {
-                let ids = super::text_frame_ids(app);
-                act_with(app, "object.textFrameOptions", json!({"autoSize": "off", "ids": ids}));
+            let (fit, grow) = app
+                .session
+                .active()
+                .and_then(|st| {
+                    st.doc
+                        .item(super::selected_text_frame(app)?)?
+                        .text_frame()
+                        .map(|t| (t.options.text_fit, t.options.auto_size != designcraft_doc::AutoSize::Off))
+                })
+                .unwrap_or_default();
+            use designcraft_doc::TextFit;
+            for (label, on, params) in [
+                ("Best Fit", fit == TextFit::Best, json!({"textFit": "best"})),
+                ("Shrink Text On Overflow", fit == TextFit::Shrink, json!({"textFit": "shrink"})),
+                ("Grow Text Box to Fit", grow, json!({"autoSize": "heightOnly", "autoSizeReference": "topLeft"})),
+                ("Do Not Autofit", fit == TextFit::None && !grow, json!({"textFit": "none", "autoSize": "off"})),
+            ] {
+                if ui.selectable_label(on, label).clicked() {
+                    let mut p = params;
+                    p["ids"] = super::text_frame_ids(app);
+                    act_with(app, "object.textFrameOptions", p);
+                    ui.close();
+                }
             }
         });
         column(ui, |ui| {
-            if small(ui, "columns", "Columns", frame).clicked() {
-                act(app, "object.textFrameOptions");
-            }
-            if small(ui, "margins", "Margins", frame).clicked() {
-                act(app, "object.textFrameOptions");
+            small_menu(ui, "columns", "Columns", frame, |ui| {
+                for n in 1..=3 {
+                    if item(ui, &format!("{n}")) {
+                        let ids = super::text_frame_ids(app);
+                        act_with(app, "object.textFrameOptions", json!({"columns": n, "ids": ids}));
+                    }
+                }
+                ui.separator();
+                if item(ui, "More Columns…") {
+                    super::dialogs::open_format(app);
+                }
+            });
+            small_menu(ui, "margins", "Margins", frame, |ui| {
+                for (label, pt) in [("None (0\")", 0.0), ("Narrow (0.04\")", 2.88), ("Moderate (0.1\")", 7.2), ("Wide (0.2\")", 14.4)] {
+                    if item(ui, label) {
+                        let ids = super::text_frame_ids(app);
+                        act_with(app, "object.textFrameOptions", json!({"inset": pt, "ids": ids}));
+                    }
+                }
+                ui.separator();
+                if item(ui, "Custom Margins…") {
+                    super::dialogs::open_format(app);
+                }
+            });
+            if small(ui, "hyphenation", "Hyphenation", frame).clicked() {
+                super::dialogs::open_hyphenation(app);
             }
         });
     });
@@ -1165,9 +1370,121 @@ fn text_box_format(app: &mut DesignApp, ui: &mut Ui) {
                 }
             }
         });
+        big_menu(ui, "font-color", "Text\nEffects", frame, |ui| {
+            ui.menu_button("Text Fill", |ui| super::colors::menu(app, ui, super::colors::Target::Font, None, ""));
+            ui.menu_button("Text Outline", |ui| super::colors::menu(app, ui, super::colors::Target::TextOutline, Some("No Outline"), ""));
+            effect_rows(app, ui);
+        });
+        column(ui, |ui| {
+            small_menu(ui, "fonts", "Number Style", frame, |ui| {
+                for (label, figures) in [
+                    ("Default", "default"),
+                    ("Lining", "proportionalLining"),
+                    ("Tabular Lining", "tabularLining"),
+                    ("Old-Style", "proportionalOldstyle"),
+                    ("Tabular Old-Style", "tabularOldstyle"),
+                ] {
+                    if item(ui, label) {
+                        act_with(app, "type.openType", json!({"figures": figures}));
+                    }
+                }
+            });
+            small_menu(ui, "fonts", "Ligatures", frame, |ui| {
+                for (label, on) in [("Use Ligatures", true), ("No Ligatures", false)] {
+                    if item(ui, label) {
+                        let _ = app.run("type.char", json!({"attrs": {"ligatures": on}}));
+                    }
+                }
+            });
+            if small(ui, "fonts", "Small Caps", frame).clicked() {
+                let cur = crate::panels::text_attrs(app).and_then(|a| a["chars"]["capitalization"].as_str().map(str::to_string)).unwrap_or_default();
+                let to = if cur == "smallCaps" { "normal" } else { "smallCaps" };
+                let _ = app.run("type.char", json!({"attrs": {"capitalization": to}}));
+            }
+        });
     });
     shape_styles_group(app, ui);
     arrange_group(app, ui);
+    size_group(app, ui);
+}
+
+/// Height and Width, as the Format tabs have them.
+fn size_group(app: &mut DesignApp, ui: &mut Ui) {
+    let info = crate::panels::sel_info(app);
+    let unit = app.session.active().map_or(designcraft_geom::units::Unit::Inches, |d| d.doc.settings.horizontal_units);
+    let (h, w) = info.as_ref().map_or((None, None), |i| (Some(i.page_rect.height()), Some(i.page_rect.width())));
+    group(ui, "Size", false, |ui| {
+        column(ui, |ui| {
+            ui.add_enabled_ui(info.is_some(), |ui| {
+                for (label, id, value, key) in [("Height:", "pr_size_h", h, "height"), ("Width:", "pr_size_w", w, "width")] {
+                    row(ui, |ui| {
+                        ui.add_sized(vec2(44.0, ROW_H), egui::Label::new(egui::RichText::new(label).font(label_font())));
+                        if let Some(v) = crate::widgets::NumField::measure(id, value, unit).width(66.0).range(0.5, 15_552.0).show(ui) {
+                            let mut p = json!({"ref": 0});
+                            p[key] = json!(v);
+                            act_with(app, "transform.set", p);
+                        }
+                    });
+                }
+            });
+        });
+    });
+}
+
+/// Shadow, Glow, Soft Edges and Bevel, on a shape, a picture or a text box's text.
+fn effect_rows(app: &mut DesignApp, ui: &mut Ui) {
+    let ids = if crate::panels::sel_info(app).is_some() { Value::Null } else { super::text_frame_ids(app) };
+    let with_ids = |mut p: Value| {
+        if !ids.is_null() {
+            p["ids"] = ids.clone();
+        }
+        p
+    };
+    ui.menu_button("Shadow", |ui| {
+        if item(ui, "No Shadow") {
+            act_with(app, "object.effects", with_ids(json!({"effects": {"dropShadow": {"on": false}}})));
+        }
+        for (label, distance, size, angle, opacity) in
+            [("Soft, Lower Right", 4.0, 5.0, 135.0, 0.4), ("Sharp, Lower Right", 3.0, 0.0, 135.0, 0.6), ("Soft, Below", 4.0, 6.0, 90.0, 0.4), ("Soft All Around", 0.0, 8.0, 90.0, 0.5)]
+        {
+            if item(ui, label) {
+                act_with(app, "object.effects", with_ids(json!({"effects": {"dropShadow": {"on": true, "distance": distance, "size": size, "angle": angle, "opacity": opacity, "color": "[Black]"}}})));
+            }
+        }
+    });
+    ui.menu_button("Glow", |ui| {
+        if item(ui, "No Glow") {
+            act_with(app, "object.effects", with_ids(json!({"effects": {"outerGlow": {"on": false}}})));
+        }
+        for (label, size) in [("Small", 5.0), ("Medium", 10.0), ("Large", 18.0)] {
+            if item(ui, label) {
+                let color =
+                    if app.session.active().is_some_and(|d| d.doc.swatch("Scheme Accent 1").is_some()) { "Scheme Accent 1" } else { "[Black]" };
+                act_with(
+                    app,
+                    "object.effects",
+                    with_ids(json!({"effects": {"outerGlow": {"on": true, "color": color, "opacity": 0.7, "size": size, "mode": "Normal"}}})),
+                );
+            }
+        }
+    });
+    ui.menu_button("Soft Edges", |ui| {
+        for (label, w) in [("No Soft Edges", 0.0), ("2.5 pt", 2.5), ("5 pt", 5.0), ("10 pt", 10.0), ("25 pt", 25.0)] {
+            if item(ui, label) {
+                act_with(app, "object.feather", with_ids(json!({"width": w})));
+            }
+        }
+    });
+    ui.menu_button("Bevel", |ui| {
+        if item(ui, "No Bevel") {
+            act_with(app, "object.bevel", with_ids(json!({"on": false})));
+        }
+        for (label, size) in [("Soft", 3.0), ("Round", 6.0), ("Wide", 12.0)] {
+            if item(ui, label) {
+                act_with(app, "object.bevel", with_ids(json!({"on": true, "size": size})));
+            }
+        }
+    });
 }
 
 fn shape_styles_group(app: &mut DesignApp, ui: &mut Ui) {
@@ -1175,12 +1492,7 @@ fn shape_styles_group(app: &mut DesignApp, ui: &mut Ui) {
     group(ui, "Shape Styles", false, |ui| {
         column(ui, |ui| {
             small_menu(ui, "shape-fill", "Shape Fill", sel, |ui| {
-                if let Some(d) = app.session.active().map(|d| d.doc.clone())
-                    && let Some(name) = crate::panels::swatch_list(ui, &d, "")
-                {
-                    act_with(app, "object.fill", json!({"swatch": name}));
-                    ui.close();
-                }
+                super::colors::menu(app, ui, super::colors::Target::Fill, Some("No Fill"), "");
             });
             small_menu(ui, "shape-outline", "Shape Outline", sel, |ui| {
                 ui.menu_button("Weight", |ui| {
@@ -1200,17 +1512,23 @@ fn shape_styles_group(app: &mut DesignApp, ui: &mut Ui) {
                         act_with(app, "object.stroke", json!({"type": {"kind": "dashed", "pattern": [4.0, 3.0]}}));
                     }
                 });
-                if item(ui, "No Outline") {
-                    act_with(app, "object.stroke", json!({"swatch": "[None]"}));
-                }
+                ui.menu_button("Arrows", |ui| {
+                    for (label, start, end) in [
+                        ("No Arrows", "none", "none"),
+                        ("Arrow at the End", "none", "triangle"),
+                        ("Arrow at the Start", "triangle", "none"),
+                        ("Arrows at Both Ends", "triangle", "triangle"),
+                        ("Round Ends", "circleSolid", "circleSolid"),
+                    ] {
+                        if item(ui, label) {
+                            act_with(app, "object.stroke", json!({"start": start, "end": end}));
+                        }
+                    }
+                });
                 ui.separator();
-                if let Some(d) = app.session.active().map(|d| d.doc.clone())
-                    && let Some(name) = crate::panels::swatch_list(ui, &d, "")
-                {
-                    act_with(app, "object.stroke", json!({"swatch": name}));
-                    ui.close();
-                }
+                super::colors::menu(app, ui, super::colors::Target::Line, Some("No Outline"), "");
             });
+            small_menu(ui, "wrap", "Shape Effects", sel, |ui| effect_rows(app, ui));
         });
     });
 }
@@ -1230,22 +1548,52 @@ fn picture_format(app: &mut DesignApp, ui: &mut Ui) {
             }
             // Corrections and recolouring off, and the picture fitted to its frame again.
             if small(ui, "reset-picture", "Reset Picture", sel).clicked() {
-                act(app, "picture.reset");
-                act(app, "fit.contentProportionally");
+                let steps = json!([{"command": "picture.reset", "params": {}}, {"command": "object.fit", "params": {"mode": "fitProportionally"}}]);
+                let _ = app.run("script.run", json!({"text": steps.to_string()}));
             }
         });
     });
     group(ui, "Picture Styles", false, |ui| {
-        small_menu(ui, "shape-outline", "Picture Border", sel, |ui| {
-            for w in [0.5, 1.0, 2.25, 4.5] {
-                if item(ui, &format!("{w} pt")) {
-                    act_with(app, "object.stroke", json!({"weight": w, "swatch": "[Black]"}));
+        big_menu(ui, "picture", "Picture\nStyles", sel, |ui| {
+            for (label, steps) in picture_styles() {
+                if item(ui, label) {
+                    let _ = app.run("script.run", json!({"text": steps.to_string()}));
                 }
             }
-            if item(ui, "No Outline") {
-                act_with(app, "object.stroke", json!({"swatch": "[None]"}));
-            }
         });
+        column(ui, |ui| {
+            small_menu(ui, "shape-outline", "Picture Border", sel, |ui| {
+                for w in [0.5, 1.0, 2.25, 4.5] {
+                    if item(ui, &format!("{w} pt")) {
+                        act_with(app, "object.stroke", json!({"weight": w, "swatch": "[Black]"}));
+                    }
+                }
+                ui.separator();
+                super::colors::menu(app, ui, super::colors::Target::Line, Some("No Outline"), "");
+            });
+            small_menu(ui, "wrap", "Picture Effects", sel, |ui| effect_rows(app, ui));
+            small_menu(ui, "textbox", "Caption", sel, |ui| {
+                for (label, position) in [("Below the Picture", "below"), ("Above the Picture", "above")] {
+                    if item(ui, label) {
+                        act_with(app, "object.caption", json!({"text": "Caption", "position": position, "offset": 4, "height": 24}));
+                    }
+                }
+            });
+        });
+    });
+    let two_pictures = app.session.active().is_some_and(|d| {
+        d.selection.items.len() == 2
+            && d.selection.items.iter().all(|id| d.doc.item(*id).is_some_and(|it| matches!(it.content, designcraft_doc::Content::Graphic(_))))
+    });
+    group(ui, "Switch", false, |ui| {
+        if big(ui, "change-picture", "Swap", two_pictures).clicked() {
+            let ids: Vec<u64> = app.session.active().map(|d| d.selection.items.iter().map(|i| i.0).collect()).unwrap_or_default();
+            let steps = json!([
+                {"command": "picture.swap", "params": {"ids": ids}},
+                {"command": "object.fit", "params": {"mode": "fillProportionally", "ids": ids}},
+            ]);
+            let _ = app.run("script.run", json!({"text": steps.to_string()}));
+        }
     });
     arrange_group(app, ui);
     group(ui, "Crop", false, |ui| {
@@ -1261,20 +1609,155 @@ fn picture_format(app: &mut DesignApp, ui: &mut Ui) {
             if small(ui, "picture", "Fill", sel).clicked() {
                 act(app, "fit.fillFrameProportionally");
             }
-            if small(ui, "align-to", "Center", sel).clicked() {
-                act(app, "fit.centerContent");
+            if small(ui, "align-to", "Clear Crop", sel).clicked() {
+                let _ = app.run("object.fit", json!({"mode": "fitFrameToContent"}));
             }
         });
     });
+    size_group(app, ui);
+}
+
+/// Picture Styles: PressRoom's own, each one undo step.
+fn picture_styles() -> Vec<(&'static str, Value)> {
+    let step = |c: &str, p: Value| json!({"command": c, "params": p});
+    let clear = || {
+        vec![
+            step("object.convertShape", json!({"to": "rectangle"})),
+            step("object.stroke", json!({"swatch": "[None]"})),
+            step("object.effects", json!({"effects": {"dropShadow": {"on": false}, "outerGlow": {"on": false}}})),
+        ]
+    };
+    let with = |more: Vec<Value>| {
+        let mut v = clear();
+        v.extend(more);
+        Value::Array(v)
+    };
+    vec![
+        ("No Style", Value::Array(clear())),
+        ("Thin Black Frame", with(vec![step("object.stroke", json!({"swatch": "[Black]", "weight": 1.0, "type": {"kind": "solid"}}))])),
+        (
+            "Thick White Frame",
+            with(vec![
+                step("object.stroke", json!({"swatch": "[Paper]", "weight": 6.0, "align": "inside"})),
+                step(
+                    "object.effects",
+                    json!({"effects": {"dropShadow": {"on": true, "distance": 3.0, "size": 5.0, "angle": 135.0, "opacity": 0.45, "color": "[Black]"}}}),
+                ),
+            ]),
+        ),
+        (
+            "Soft Shadow",
+            with(vec![step(
+                "object.effects",
+                json!({"effects": {"dropShadow": {"on": true, "distance": 4.0, "size": 7.0, "angle": 135.0, "opacity": 0.4, "color": "[Black]"}}}),
+            )]),
+        ),
+        ("Rounded Corners", with(vec![step("object.convertShape", json!({"to": "roundedRectangle"}))])),
+        ("Oval", with(vec![step("object.convertShape", json!({"to": "ellipse"}))])),
+    ]
 }
 
 fn drawing_format(app: &mut DesignApp, ui: &mut Ui) {
     let doc = has_doc(app);
     group(ui, "Insert Shapes", false, |ui| {
         big_menu(ui, "shapes", "Shapes", doc, |ui| shapes_menu(app, ui));
+        let sel = app.session.active().is_some_and(|d| !d.selection.items.is_empty());
+        big_menu(ui, "rotate", "Change\nShape", sel, |ui| super::shapes::gallery(app, ui, super::shapes::Use::Change));
     });
     shape_styles_group(app, ui);
     arrange_group(app, ui);
+    size_group(app, ui);
+}
+
+/// Table Tools › Design: the cell's fill, its lines, and ready-made looks.
+fn table_design(app: &mut DesignApp, ui: &mut Ui) {
+    let in_table = on(app, "table.deleteRow");
+    group(ui, "Table Formats", false, |ui| {
+        big_menu(ui, "table", "Table\nFormats", in_table, |ui| {
+            for (label, format) in [("Plain Grid", 0), ("Header Row", 1), ("Banded Rows", 2), ("No Lines", 3)] {
+                if item(ui, label) {
+                    apply_table_format(app, format);
+                }
+            }
+        });
+    });
+    group(ui, "Fill", false, |ui| {
+        big_menu(ui, "shape-fill", "Fill", in_table, |ui| {
+            super::colors::menu(app, ui, super::colors::Target::Cell, Some("No Fill"), "");
+        });
+    });
+    group(ui, "Borders", false, |ui| {
+        column(ui, |ui| {
+            small_menu(ui, "shape-outline", "Line Weight", in_table, |ui| {
+                for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
+                    if item(ui, &format!("{w} pt")) {
+                        act_with(app, "table.setCell", json!({"stroke": {"weight": w, "edges": "all"}}));
+                    }
+                }
+            });
+            small_menu(ui, "shape-outline", "Line Color", in_table, |ui| {
+                let doc = app.session.active().map(|d| d.doc.clone());
+                if let Some(d) = doc
+                    && let Some(name) = crate::panels::swatch_list(ui, &d, "")
+                {
+                    act_with(app, "table.setCell", json!({"stroke": {"color": name, "edges": "all"}}));
+                }
+            });
+            small_menu(ui, "shape-outline", "Borders", in_table, |ui| {
+                for (label, edges, weight) in [
+                    ("All Borders", "all", 0.75),
+                    ("Outside Borders", "outer", 0.75),
+                    ("Inside Borders", "inner", 0.75),
+                    ("Top Border", "top", 0.75),
+                    ("Bottom Border", "bottom", 0.75),
+                    ("Left Border", "left", 0.75),
+                    ("Right Border", "right", 0.75),
+                    ("No Borders", "all", 0.0),
+                ] {
+                    if item(ui, label) {
+                        act_with(app, "table.setCell", json!({"stroke": {"weight": weight, "edges": edges}}));
+                    }
+                }
+            });
+        });
+    });
+}
+
+/// A ready-made look over the whole table, as one undo step, keeping the selection.
+fn apply_table_format(app: &mut DesignApp, format: u8) {
+    let Some((rows, cols)) = app
+        .session
+        .execute("table.get", &json!({}))
+        .ok()
+        .map(|t| (t["rows"].as_u64().unwrap_or(0), t["columns"].as_u64().or_else(|| t["cols"].as_u64()).unwrap_or(0)))
+    else {
+        return;
+    };
+    if rows == 0 || cols == 0 {
+        return;
+    }
+    let all = json!({"rows": [0, rows - 1], "cols": [0, cols - 1]});
+    let set = |extra: Value, region: &Value| {
+        let mut p = region.clone();
+        if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                p.insert(k.clone(), v.clone());
+            }
+        }
+        json!({"command": "table.setCell", "params": p})
+    };
+    let mut steps =
+        vec![set(json!({"fill": "[None]", "stroke": {"weight": if format == 3 { 0.0 } else { 0.75 }, "color": "[Black]", "edges": "all"}}), &all)];
+    let shade = if app.session.active().is_some_and(|d| d.doc.swatch("Scheme Accent 1").is_some()) { "Scheme Accent 1" } else { "[Black]" };
+    if format == 1 {
+        steps.push(set(json!({"fill": shade, "tint": 0.3}), &json!({"rows": [0, 0], "cols": [0, cols - 1]})));
+    }
+    if format == 2 {
+        for r in (0..rows).step_by(2) {
+            steps.push(set(json!({"fill": shade, "tint": 0.15}), &json!({"rows": [r, r], "cols": [0, cols - 1]})));
+        }
+    }
+    let _ = app.run("script.run", json!({"text": Value::Array(steps).to_string()}));
 }
 
 /// Table Tools › Layout, as in Publisher: select, delete and insert rows and columns, merge and
@@ -1290,7 +1773,7 @@ fn table_layout(app: &mut DesignApp, ui: &mut Ui) {
             }
         });
         if big(ui, "table", "Table\nOptions", true).clicked() {
-            act(app, "app.tablePanel");
+            super::taskpane::open(app, "table");
         }
     });
     group(ui, "Rows & Columns", false, |ui| {

@@ -205,6 +205,15 @@ impl Session {
         if ev.kind == PointerKind::Up && self.temp_tool.as_ref().is_some_and(|t| !t.busy()) {
             self.temp_tool = None;
         }
+        // PressRoom: a shape drawn, the pointer is back to selecting, as Publisher's is.
+        if view.publisher
+            && ev.kind == PointerKind::Up
+            && !self.tool.busy()
+            && !self.tool_armed
+            && !matches!(self.tool.id(), "selection" | "type" | "directSelection")
+        {
+            self.set_tool("selection");
+        }
         r
     }
 
@@ -232,6 +241,10 @@ impl Session {
     /// cursor inside a text box, the four-way move arrow on a text box's border and on other
     /// objects, and the handles' arrows on the handles, also while typing.
     fn publisher_cursor(&mut self, tool_cursor: Cursor, p: designcraft_geom::Point, mods: Mods, view: ViewInfo) -> Cursor {
+        // Draw Text Box ready: the cross where it would draw, as Publisher's shows.
+        if self.tool_armed && self.tool.id() == "type" {
+            return self.with_ctx(view, |_, cx| if cx.hit_text_frame(p).is_some() { Cursor::Text } else { Cursor::Crosshair }).unwrap_or(tool_cursor);
+        }
         if mods.cmd || self.temp_tool.is_some() || self.tool.busy() || self.tool_armed {
             return tool_cursor;
         }

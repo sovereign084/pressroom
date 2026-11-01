@@ -26,6 +26,9 @@ pub struct Services {
     pub pick_save: Option<PickFn>,
     pub read: Option<ReadFn>,
     pub write: Option<WriteFn>,
+    /// The picture on the system clipboard, when it holds one and no text: width, height and
+    /// straight RGBA.
+    pub clipboard_image: Option<Box<dyn FnMut() -> Option<(u32, u32, Vec<u8>)>>>,
     /// Asynchronous open dialog for a purpose (`open`, `place`); the chosen file arrives later
     /// through [`Services::inbox`]. Used when `pick_open` is unset (web).
     pub open_async: Option<OpenAsyncFn>,

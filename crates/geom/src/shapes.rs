@@ -83,6 +83,240 @@ pub fn star(center: Point, r1: f64, r2: f64, points: u32, rotation_deg: f64) -> 
     PathData::single(SubPath::polyline(&pts, true))
 }
 
+/// The names [`preset`] draws.
+pub const PRESETS: &[&str] = &[
+    "roundedRect",
+    "snippedRect",
+    "pill",
+    "triangle",
+    "rightTriangle",
+    "parallelogram",
+    "trapezoid",
+    "diamond",
+    "pentagon",
+    "hexagon",
+    "octagon",
+    "cross",
+    "heart",
+    "lightning",
+    "sun",
+    "moon",
+    "cloud",
+    "arrowRight",
+    "arrowLeft",
+    "arrowUp",
+    "arrowDown",
+    "arrowLeftRight",
+    "arrowUpDown",
+    "chevron",
+    "homePlate",
+    "notchedArrow",
+    "star4",
+    "star5",
+    "star6",
+    "star8",
+    "star12",
+    "star16",
+    "star24",
+    "ribbon",
+    "wave",
+    "speech",
+    "roundSpeech",
+    "ovalSpeech",
+    "flowDocument",
+];
+
+/// A closed polygon through points given in the unit square, mapped onto `r`.
+fn unit_poly(r: Rect, pts: &[(f64, f64)]) -> PathData {
+    let at = |(x, y): (f64, f64)| Point::new(r.x0 + x * r.width(), r.y0 + y * r.height());
+    let pts: Vec<Point> = pts.iter().copied().map(at).collect();
+    PathData::single(SubPath::polyline(&pts, true))
+}
+
+/// A closed curve through anchors given in the unit square: (point, handle in, handle out).
+fn unit_curve(r: Rect, anchors: &[((f64, f64), (f64, f64), (f64, f64))]) -> PathData {
+    let at = |(x, y): (f64, f64)| Point::new(r.x0 + x * r.width(), r.y0 + y * r.height());
+    let anchors = anchors.iter().map(|&(p, i, o)| Anchor { p: at(p), h_in: at(i), h_out: at(o), kind: AnchorKind::Corner }).collect();
+    PathData::single(SubPath::new(anchors, true))
+}
+
+/// A star with `points` tips filling `r`, its inner radius `inner` of the outer.
+fn star_in(r: Rect, points: u32, inner: f64) -> PathData {
+    let mut p = star(Point::ZERO, 1.0, inner, points, 0.0);
+    if let Some(b) = p.bounds() {
+        let a = kurbo::Affine::translate(r.center().to_vec2())
+            * kurbo::Affine::scale_non_uniform(r.width() / b.width().max(1e-9), r.height() / b.height().max(1e-9))
+            * kurbo::Affine::translate(-b.center().to_vec2());
+        p.transform(a);
+    }
+    p
+}
+
+/// A scalloped ring of bumps, the cloud's outline, in the unit square.
+fn cloud_anchors() -> Vec<((f64, f64), (f64, f64), (f64, f64))> {
+    const BUMPS: usize = 9;
+    let dir = |t: f64| (t.cos(), t.sin());
+    (0..BUMPS)
+        .map(|i| {
+            let t = TAU * i as f64 / BUMPS as f64;
+            let step = TAU / BUMPS as f64;
+            let (cx, cy) = dir(t);
+            let (bx, by) = dir(t - step * 0.45);
+            let (ax, ay) = dir(t + step * 0.45);
+            let on = |x: f64, y: f64, k: f64| (0.5 + 0.5 * k * x, 0.5 + 0.5 * k * y);
+            (on(cx, cy, 0.72), on(bx, by, 1.02), on(ax, ay, 1.02))
+        })
+        .collect()
+}
+
+/// A named shape filling `r`: PressRoom's own drawings for the Shapes gallery. None for an unknown
+/// name.
+pub fn preset(name: &str, r: Rect) -> Option<PathData> {
+    let r = r.abs();
+    let short = r.width().min(r.height());
+    Some(match name {
+        "roundedRect" => rounded_rectangle(r, short / 6.0),
+        "pill" => rounded_rectangle(r, short / 2.0),
+        "snippedRect" => unit_poly(r, &[(0.0, 0.0), (0.82, 0.0), (1.0, 0.18), (1.0, 1.0), (0.0, 1.0)]),
+        "triangle" => unit_poly(r, &[(0.5, 0.0), (1.0, 1.0), (0.0, 1.0)]),
+        "rightTriangle" => unit_poly(r, &[(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)]),
+        "parallelogram" => unit_poly(r, &[(0.25, 0.0), (1.0, 0.0), (0.75, 1.0), (0.0, 1.0)]),
+        "trapezoid" => unit_poly(r, &[(0.2, 0.0), (0.8, 0.0), (1.0, 1.0), (0.0, 1.0)]),
+        "diamond" => unit_poly(r, &[(0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5)]),
+        "pentagon" => unit_poly(r, &[(0.5, 0.0), (1.0, 0.38), (0.81, 1.0), (0.19, 1.0), (0.0, 0.38)]),
+        "hexagon" => unit_poly(r, &[(0.25, 0.0), (0.75, 0.0), (1.0, 0.5), (0.75, 1.0), (0.25, 1.0), (0.0, 0.5)]),
+        "octagon" => unit_poly(r, &[(0.29, 0.0), (0.71, 0.0), (1.0, 0.29), (1.0, 0.71), (0.71, 1.0), (0.29, 1.0), (0.0, 0.71), (0.0, 0.29)]),
+        "cross" => unit_poly(
+            r,
+            &[
+                (0.33, 0.0),
+                (0.67, 0.0),
+                (0.67, 0.33),
+                (1.0, 0.33),
+                (1.0, 0.67),
+                (0.67, 0.67),
+                (0.67, 1.0),
+                (0.33, 1.0),
+                (0.33, 0.67),
+                (0.0, 0.67),
+                (0.0, 0.33),
+                (0.33, 0.33),
+            ],
+        ),
+        "heart" => unit_curve(
+            r,
+            &[
+                ((0.5, 0.22), (0.45, 0.08), (0.55, 0.08)),
+                ((0.75, 0.0), (0.62, 0.0), (0.9, 0.0)),
+                ((1.0, 0.3), (1.0, 0.12), (1.0, 0.55)),
+                ((0.5, 1.0), (0.75, 0.75), (0.25, 0.75)),
+                ((0.0, 0.3), (0.0, 0.55), (0.0, 0.12)),
+                ((0.25, 0.0), (0.1, 0.0), (0.38, 0.0)),
+            ],
+        ),
+        "lightning" => unit_poly(r, &[(0.55, 0.0), (0.2, 0.5), (0.45, 0.5), (0.3, 1.0), (0.85, 0.38), (0.55, 0.38), (0.75, 0.0)]),
+        "sun" => star_in(r, 12, 0.72),
+        "moon" => unit_curve(
+            r,
+            &[
+                ((0.8, 0.0), (0.55, 0.15), (0.36, 0.0)),
+                ((0.0, 0.5), (0.0, 0.22), (0.0, 0.78)),
+                ((0.8, 1.0), (0.36, 1.0), (0.55, 0.85)),
+                ((0.4, 0.5), (0.4, 0.7), (0.4, 0.3)),
+            ],
+        ),
+        "cloud" => unit_curve(r, &cloud_anchors()),
+        "arrowRight" => unit_poly(r, &[(0.0, 0.25), (0.6, 0.25), (0.6, 0.0), (1.0, 0.5), (0.6, 1.0), (0.6, 0.75), (0.0, 0.75)]),
+        "arrowLeft" => unit_poly(r, &[(1.0, 0.25), (0.4, 0.25), (0.4, 0.0), (0.0, 0.5), (0.4, 1.0), (0.4, 0.75), (1.0, 0.75)]),
+        "arrowUp" => unit_poly(r, &[(0.25, 1.0), (0.25, 0.4), (0.0, 0.4), (0.5, 0.0), (1.0, 0.4), (0.75, 0.4), (0.75, 1.0)]),
+        "arrowDown" => unit_poly(r, &[(0.25, 0.0), (0.25, 0.6), (0.0, 0.6), (0.5, 1.0), (1.0, 0.6), (0.75, 0.6), (0.75, 0.0)]),
+        "arrowLeftRight" => unit_poly(
+            r,
+            &[(0.0, 0.5), (0.25, 0.0), (0.25, 0.25), (0.75, 0.25), (0.75, 0.0), (1.0, 0.5), (0.75, 1.0), (0.75, 0.75), (0.25, 0.75), (0.25, 1.0)],
+        ),
+        "arrowUpDown" => unit_poly(
+            r,
+            &[(0.5, 0.0), (1.0, 0.25), (0.75, 0.25), (0.75, 0.75), (1.0, 0.75), (0.5, 1.0), (0.0, 0.75), (0.25, 0.75), (0.25, 0.25), (0.0, 0.25)],
+        ),
+        "chevron" => unit_poly(r, &[(0.0, 0.0), (0.7, 0.0), (1.0, 0.5), (0.7, 1.0), (0.0, 1.0), (0.3, 0.5)]),
+        "homePlate" => unit_poly(r, &[(0.0, 0.0), (0.7, 0.0), (1.0, 0.5), (0.7, 1.0), (0.0, 1.0)]),
+        "notchedArrow" => unit_poly(r, &[(0.0, 0.25), (0.6, 0.25), (0.6, 0.0), (1.0, 0.5), (0.6, 1.0), (0.6, 0.75), (0.0, 0.75), (0.15, 0.5)]),
+        "star4" => star_in(r, 4, 0.35),
+        "star5" => star_in(r, 5, 0.382),
+        "star6" => star_in(r, 6, 0.55),
+        "star8" => star_in(r, 8, 0.6),
+        "star12" => star_in(r, 12, 0.7),
+        "star16" => star_in(r, 16, 0.75),
+        "star24" => star_in(r, 24, 0.8),
+        "ribbon" => unit_poly(
+            r,
+            &[
+                (0.15, 0.0),
+                (0.85, 0.0),
+                (0.85, 0.2),
+                (1.0, 0.2),
+                (0.9, 0.5),
+                (1.0, 0.8),
+                (0.7, 0.8),
+                (0.7, 0.7),
+                (0.3, 0.7),
+                (0.3, 0.8),
+                (0.0, 0.8),
+                (0.1, 0.5),
+                (0.0, 0.2),
+                (0.15, 0.2),
+            ],
+        ),
+        "wave" => unit_curve(
+            r,
+            &[
+                ((0.0, 0.2), (0.0, 0.2), (0.3, -0.1)),
+                ((1.0, 0.2), (0.7, 0.5), (1.0, 0.2)),
+                ((1.0, 0.8), (1.0, 0.8), (0.7, 1.1)),
+                ((0.0, 0.8), (0.3, 0.5), (0.0, 0.8)),
+            ],
+        ),
+        "speech" => unit_poly(r, &[(0.0, 0.0), (1.0, 0.0), (1.0, 0.75), (0.45, 0.75), (0.2, 1.0), (0.25, 0.75), (0.0, 0.75)]),
+        "roundSpeech" => unit_curve(
+            r,
+            &[
+                ((0.1, 0.0), (0.04, 0.0), (0.1, 0.0)),
+                ((0.9, 0.0), (0.9, 0.0), (0.96, 0.0)),
+                ((1.0, 0.1), (1.0, 0.04), (1.0, 0.1)),
+                ((1.0, 0.65), (1.0, 0.65), (1.0, 0.71)),
+                ((0.9, 0.75), (0.96, 0.75), (0.9, 0.75)),
+                ((0.45, 0.75), (0.45, 0.75), (0.45, 0.75)),
+                ((0.2, 1.0), (0.2, 1.0), (0.2, 1.0)),
+                ((0.25, 0.75), (0.25, 0.75), (0.25, 0.75)),
+                ((0.1, 0.75), (0.1, 0.75), (0.04, 0.75)),
+                ((0.0, 0.65), (0.0, 0.71), (0.0, 0.65)),
+                ((0.0, 0.1), (0.0, 0.1), (0.0, 0.04)),
+            ],
+        ),
+        "ovalSpeech" => unit_curve(
+            r,
+            &[
+                ((0.5, 0.0), (0.22, 0.0), (0.78, 0.0)),
+                ((1.0, 0.4), (1.0, 0.18), (1.0, 0.62)),
+                ((0.5, 0.8), (0.78, 0.8), (0.5, 0.8)),
+                ((0.15, 1.0), (0.15, 1.0), (0.15, 1.0)),
+                ((0.27, 0.74), (0.27, 0.74), (0.1, 0.68)),
+                ((0.0, 0.4), (0.0, 0.58), (0.0, 0.18)),
+            ],
+        ),
+        "flowDocument" => unit_curve(
+            r,
+            &[
+                ((0.0, 0.0), (0.0, 0.0), (0.0, 0.0)),
+                ((1.0, 0.0), (1.0, 0.0), (1.0, 0.0)),
+                ((1.0, 0.82), (1.0, 0.82), (0.72, 0.7)),
+                ((0.0, 0.9), (0.3, 1.1), (0.0, 0.9)),
+            ],
+        ),
+        _ => return None,
+    })
+}
+
 /// Inner radius of a "straight-armed" star (InDesign's Alt-drag behaviour): shoulders aligned.
 pub fn straight_star_inner_radius(r1: f64, points: u32) -> f64 {
     let n = points.max(3) as f64;
@@ -242,5 +476,30 @@ mod tests {
     fn arc_open_and_closed() {
         assert_eq!(arc(Point::ZERO, Point::new(10.0, 10.0), 0.0, false).anchor_count(), 2);
         assert!(arc(Point::ZERO, Point::new(10.0, 10.0), 0.0, true).subpaths[0].closed);
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+
+    #[test]
+    fn every_preset_fills_its_box() {
+        let r = Rect::new(10.0, 20.0, 110.0, 80.0);
+        for name in PRESETS {
+            let p = preset(name, r).unwrap_or_else(|| panic!("{name}"));
+            let b = p.bounds().unwrap_or_else(|| panic!("{name}: empty"));
+            assert!(b.x0 >= 9.0 && b.y0 >= 15.0 && b.x1 <= 111.0 && b.y1 <= 90.0, "{name}: {b:?}");
+            assert!(b.width() > 50.0 && b.height() > 25.0, "{name}: {b:?}");
+        }
+        assert!(preset("blob", r).is_none());
+    }
+
+    #[test]
+    fn a_tiny_or_backwards_box_doesnt_panic() {
+        for name in PRESETS {
+            assert!(preset(name, Rect::new(5.0, 5.0, 5.0, 5.0)).is_some(), "{name}");
+            assert!(preset(name, Rect::new(50.0, 60.0, 10.0, 20.0)).is_some(), "{name}");
+        }
     }
 }

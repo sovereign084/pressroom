@@ -310,6 +310,15 @@ pub fn start(app: &mut DesignApp, path: &str) {
         Err(e) => return app.status(e),
     };
     let src = PathBuf::from(path);
+    // Already brought in: open that copy, with its edits, rather than make a second one.
+    let existing = first_output(&src);
+    if io::exists(&existing) {
+        let name = existing.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        return match app.open_file("file.open", json!({"path": existing.to_string_lossy()})) {
+            Ok(_) => app.status(format!("Opened {name}, the copy brought in earlier. To bring the Publisher file in again, rename {name} first.")),
+            Err(e) => app.status(format!("Couldn't open {name}: {e}")),
+        };
+    }
     let out = free_output(&src);
     // The converter reads the Publisher file and writes the publication beside it: inside the
     // automation roots when they are in force.

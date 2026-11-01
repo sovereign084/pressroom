@@ -21,6 +21,7 @@ pub mod recovery;
 pub mod sample;
 pub mod script;
 pub mod separations;
+pub mod textfit;
 mod tooling;
 
 use std::sync::Arc;
@@ -632,6 +633,12 @@ impl Session {
         {
             let prev = before.filter(|(uid, _, _)| *uid == st.uid).map(|(_, d, _)| d.as_ref());
             if prev.is_none_or(|p| !std::ptr::eq(p, st.doc.as_ref())) {
+                let mut fitted = (*st.doc).clone();
+                if textfit::apply(&mut fitted, prev) {
+                    st.doc = Arc::new(fitted);
+                    st.bump_revision();
+                }
+                let prev = before.filter(|(uid, _, _)| *uid == st.uid).map(|(_, d, _)| d.as_ref());
                 let todo = autosize::candidates(&st.doc, prev);
                 if !todo.is_empty() {
                     let mut d = (*st.doc).clone();

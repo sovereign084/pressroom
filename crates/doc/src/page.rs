@@ -208,6 +208,10 @@ pub struct Page {
     /// page holds it).
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     pub view_rotation: u8,
+    /// The page's name, as Publisher's Rename Page gives it. It names the page in the Pages pane
+    /// and doesn't print.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 fn is_zero_u8(v: &u8) -> bool {
@@ -525,6 +529,7 @@ mod tests {
             liquid: Default::default(),
             transition: None,
             view_rotation: 0,
+            title: None,
             show_parent_overlay: false,
         }
     }

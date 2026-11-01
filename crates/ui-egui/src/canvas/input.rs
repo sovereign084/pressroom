@@ -138,6 +138,21 @@ fn context_target(app: &mut DesignApp, p: Point, zoom: f64) -> crate::menus::Con
                 let _ = app.run("text.release", json!({"frame": id.0, "point": [sp.x, sp.y], "moved": true}));
             }
         }
+        if app.ui.pressroom_shell {
+            crate::pressroom::spelling::capture(app);
+        }
+        return ContextMenu::Text;
+    }
+    // PressRoom has one pointer: a right-click on a text box that isn't selected as an object lands
+    // in its text, with the word's spelling suggestions.
+    if app.ui.pressroom_shell
+        && let Some((id, sp)) = hit
+        && app.session.active().is_some_and(|st| st.doc.item(id).is_some_and(Item::is_text_frame) && !st.selection.contains(id))
+        && app.run("text.placeCaret", json!({"frame": id.0, "point": [sp.x, sp.y]})).is_ok()
+    {
+        let _ = app.run("text.release", json!({"frame": id.0, "point": [sp.x, sp.y], "moved": true}));
+        app.session.set_tool("type");
+        crate::pressroom::spelling::capture(app);
         return ContextMenu::Text;
     }
     let Some((id, _)) = hit else { return ContextMenu::Canvas };

@@ -410,6 +410,25 @@ mod page_numbering_view_tests {
     }
 
     #[test]
+    fn a_page_keeps_its_title_through_a_save_and_undo() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 2})).unwrap();
+        s.execute("layout.pages.setTitle", &json!({"page": 1, "title": "  Back cover  "})).unwrap();
+        let title = |s: &Session, i: usize| s.doc().unwrap().doc.page(i).unwrap().title.clone();
+        assert_eq!(title(&s, 1).as_deref(), Some("Back cover"));
+        assert_eq!(title(&s, 0), None);
+        let bytes = serde_json::to_string(&*s.doc().unwrap().doc).unwrap();
+        let back: designcraft_doc::Document = serde_json::from_str(&bytes).unwrap();
+        assert_eq!(back.page(1).unwrap().title.as_deref(), Some("Back cover"));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(title(&s, 1), None);
+        s.execute("layout.pages.setTitle", &json!({"page": 1, "title": "x"})).unwrap();
+        s.execute("layout.pages.setTitle", &json!({"page": 1, "title": ""})).unwrap();
+        assert_eq!(title(&s, 1), None, "an empty title removes it");
+        assert!(s.execute("layout.pages.setTitle", &json!({"page": 9, "title": "x"})).is_err());
+    }
+
+    #[test]
     fn numbering_options_apply_in_one_undo_step_or_not_at_all() {
         let mut s = crate::Session::new();
         s.execute("file.new", &json!({"pages": 4})).unwrap();

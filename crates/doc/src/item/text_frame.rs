@@ -36,6 +36,26 @@ pub enum AutoSize {
     HeightAndWidthProportionally,
 }
 
+/// Text Fit: how text changes size to suit its box (the box stays as it is).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextFit {
+    #[default]
+    None,
+    /// Shrinks only when the text doesn't fit.
+    Shrink,
+    /// Shrinks or grows to fill the box.
+    Best,
+}
+
+fn is_no_fit(f: &TextFit) -> bool {
+    *f == TextFit::None
+}
+
+fn is_full_size(k: &f64) -> bool {
+    (*k - 1.0).abs() < 1e-9
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ColumnsKind {
@@ -63,6 +83,13 @@ pub struct TextFrameOptions {
     pub first_baseline_min: f64,
     pub ignore_wrap: bool,
     pub auto_size: AutoSize,
+    /// Text Fit, kept from auto-size: a box does one or the other.
+    #[serde(skip_serializing_if = "is_no_fit")]
+    pub text_fit: TextFit,
+    /// The scale Text Fit has found: every size in the box is drawn this much bigger or smaller.
+    /// The story's own sizes stay as they were set.
+    #[serde(skip_serializing_if = "is_full_size")]
+    pub fit_scale: f64,
     /// Reference point (0..9, row-major from the top left) that stays fixed when auto-sizing.
     pub auto_size_ref: u8,
     /// Auto-size never makes the frame shorter than `auto_size_min_height` while this is on.
@@ -221,6 +248,8 @@ impl Default for TextFrameOptions {
             first_baseline_min: 0.0,
             ignore_wrap: false,
             auto_size: AutoSize::Off,
+            text_fit: TextFit::None,
+            fit_scale: 1.0,
             auto_size_ref: 4,
             auto_size_use_min_height: false,
             auto_size_min_height: 0.0,

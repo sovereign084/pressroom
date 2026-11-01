@@ -375,6 +375,14 @@ fn services() -> Services {
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| designcraft_engine::atomic::write_atomic(std::path::Path::new(p), b).map_err(|e| e.to_string()))),
         clipboard_text: Some(Box::new(|| arboard::Clipboard::new().and_then(|mut c| c.get_text()).ok())),
+        clipboard_image: Some(Box::new(|| {
+            let mut c = arboard::Clipboard::new().ok()?;
+            if c.get_text().is_ok_and(|t| !t.is_empty()) {
+                return None;
+            }
+            let img = c.get_image().ok()?;
+            Some((u32::try_from(img.width).ok()?, u32::try_from(img.height).ok()?, img.bytes.into_owned()))
+        })),
         ..Default::default()
     }
 }

@@ -886,6 +886,36 @@ pub fn compose(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &Compo
 }
 
 fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &ComposeOptions, db: &FontDb) -> ComposedStory {
+    // Text Fit: the box's scale over the story's own sizes, which stay as they were set.
+    let k = frames.first().map_or(1.0, |f| f.opts.fit_scale);
+    if k.is_finite() && k > 0.0 && (k - 1.0).abs() > 1e-9 {
+        return compose_at_size(doc, &scaled_story(doc, story, k), frames, opts, db);
+    }
+    compose_at_size(doc, story, frames, opts, db)
+}
+
+/// The story with every run's size and fixed leading multiplied by `k`: a copy for composing.
+fn scaled_story(doc: &Document, story: &Story, k: f64) -> Story {
+    let mut out = story.clone();
+    let mut at = 0;
+    for run in &mut out.chars {
+        let pi = story.para_at(at.min(story.text.len()));
+        let (_, base) =
+            story.paras.get(pi).map_or_else(|| doc.styles.resolve_para_style(designcraft_doc::BASIC_PARAGRAPH), |p| doc.styles.resolve_para(p));
+        let props = doc.styles.resolve_char(&base, &run.format);
+        run.format.over.size = Some(props.size * k);
+        if let designcraft_doc::Leading::Points(v) = props.leading {
+            run.format.over.leading = Some(designcraft_doc::Leading::Points(v * k));
+        }
+        if props.baseline_shift != 0.0 {
+            run.format.over.baseline_shift = Some(props.baseline_shift * k);
+        }
+        at += run.len;
+    }
+    out
+}
+
+fn compose_at_size(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &ComposeOptions, db: &FontDb) -> ComposedStory {
     let db = &db.scoped(doc.font_scope);
     let mut out = ComposedStory { story: story.id, rev: story.rev, text_len: story.text.len(), ..Default::default() };
     let mut styles_tab: Vec<RunStyle> = Vec::new();

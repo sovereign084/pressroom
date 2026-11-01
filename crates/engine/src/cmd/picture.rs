@@ -22,6 +22,15 @@ const MAX_PIXELS: u64 = 120_000_000;
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
+            "picture.swap",
+            "Swap Pictures",
+            [],
+            None,
+            "{ids?} — the two picture boxes (the selection by default) exchange pictures, each keeping its place and size",
+            has_selection,
+            swap
+        ),
+        cmd!(
             "picture.adjust",
             "Picture Corrections",
             ["Object"],
@@ -85,6 +94,25 @@ fn neutral(adj: &Adjusted) -> bool {
 }
 
 /// The picture frames among `ids`: (item, its graphic).
+/// Exchanges two picture boxes' pictures. Each box stays where it is.
+fn swap(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "picture.swap";
+    let ids = targets(s, p)?;
+    let [a, b] = ids.as_slice() else { return Err(bad(ID, "select two pictures to swap")) };
+    let (a, b) = (*a, *b);
+    s.edit(|d, _| {
+        let content = |d: &Document, id: ItemId| d.item(id).map(|it| it.content.clone()).filter(|c| matches!(c, Content::Graphic(_)));
+        let (Some(ca), Some(cb)) = (content(d, a), content(d, b)) else { return Err(bad(ID, "select two pictures to swap")) };
+        if let Some(it) = d.item_mut(a) {
+            it.content = cb;
+        }
+        if let Some(it) = d.item_mut(b) {
+            it.content = ca;
+        }
+        Ok(json!({"swapped": [a.0, b.0]}))
+    })
+}
+
 fn pictures(d: &Document, ids: &[ItemId]) -> Vec<(ItemId, Graphic)> {
     ids.iter().filter_map(|id| d.item(*id).and_then(|it| it.graphic().cloned()).map(|g| (*id, g))).collect()
 }
@@ -374,4 +402,22 @@ fn compress_pictures(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok((json!({"pictures": n, "before": before, "after": after}), n))
     })
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn swap_needs_two_pictures() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let a = s.execute("frame.create", &json!({"rect": [10, 10, 50, 50], "content": "graphic"})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("frame.create", &json!({"rect": [60, 10, 90, 50], "content": "graphic"})).unwrap()["id"].as_u64().unwrap();
+        // Empty boxes hold no picture to swap, and one box isn't two.
+        assert!(s.execute("picture.swap", &json!({"ids": [a, b]})).is_err());
+        assert!(s.execute("picture.swap", &json!({"ids": [a]})).is_err());
+    }
 }

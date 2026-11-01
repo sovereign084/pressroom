@@ -352,6 +352,18 @@ pub struct UiState {
     /// changes keep merging; PressRoom's have tests of their own (`pressroom::tests`).
     #[serde(skip, default = "pressroom_shell")]
     pub pressroom_shell: bool,
+    /// The panel open in PressRoom's task pane (its window has no dock).
+    #[serde(skip)]
+    pub pressroom_pane: Option<String>,
+    /// Words Ignore All set aside until PressRoom closes.
+    #[serde(skip)]
+    pub pressroom_ignored: Vec<String>,
+    /// The misspelled word a right-click landed on.
+    #[serde(skip)]
+    pub pressroom_spell: Option<crate::pressroom::SpellClick>,
+    /// Spelling underlines have been turned on once for a person who hasn't chosen.
+    #[serde(default)]
+    pub pressroom_spelling_set: bool,
     /// PressRoom's Office Theme (File › Account), as Publisher's: "system" (the default, as
     /// Office's: White on a light Windows, Black on a dark one), "white", "colorful" (the top in
     /// Publisher's teal), "darkgray" or "black".
@@ -479,6 +491,10 @@ impl Default for UiState {
             formatting_affects_text: false,
             task_bar: true,
             pressroom_shell: pressroom_shell(),
+            pressroom_pane: None,
+            pressroom_ignored: Vec::new(),
+            pressroom_spell: None,
+            pressroom_spelling_set: false,
             pressroom_theme: "system".into(),
             pressroom_qat: ["save", "undo", "redo"].map(String::from).to_vec(),
             task_bar_pin: None,

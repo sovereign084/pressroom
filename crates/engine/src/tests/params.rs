@@ -65,7 +65,7 @@ fn an_unknown_key_is_named_with_the_nearest_accepted_one() {
     assert_eq!(refusal("file.new", json!({"Width": 300})), "unknown parameter `Width`; did you mean `width`?");
     assert_eq!(
         refusal("line.create", json!({"a": [0, 0], "b": [5, 5], "colour": "red"})),
-        "unknown parameter `colour`; the command takes: spread, a, b"
+        "unknown parameter `colour`; the command takes: spread, a, b, preset"
     );
     for (id, ok) in [
         ("file.new", json!({"width": 300, "title": "a", "margins": {"anything": 1}})),

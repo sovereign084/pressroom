@@ -49,7 +49,8 @@ mod pdfx;
 mod pdfx1a;
 mod transitions;
 pub use export::{
-    BookletKind, BookletOptions, booklet_pairs, export_booklet, export_pdf, export_pdf_with_report, merge_pdfs, print_color, sheet_spreads,
+    BookletKind, BookletOptions, Placed, SheetSide, booklet_pairs, booklet_sides, copies_per_sheet_sides, export_booklet, export_pdf,
+    export_pdf_with_report, export_sheets, merge_pdfs, one_up_sides, pages_per_sheet_sides, print_color, sheet_spreads,
 };
 pub use pdfx::{check_pdfx4, has_rgb_groups, make_pdfx4};
 pub use pdfx1a::check_pdfx1a;

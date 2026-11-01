@@ -15,10 +15,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "Print…",
             ["File"],
             Some("Cmd+P"),
-            "{printer?, copies?: 1, pages?: \"1-3,5\", sides?: default|one|longEdge|shortEdge, grayscale?: bool, layout?: pages|booklet (booklet: two pages a sheet in folding order), dryRun?: bool (export and preview submission without printing), …the PDF settings of file.exportPdf (the PDF it writes is what prints)} → {printer, copies, pages, command, bytes, warnings}",
+            "{printer?, copies?: 1, pages?: \"1-3,5\", sides?: default|one|longEdge|shortEdge, grayscale?: bool, layout?: pages|booklet|copiesPerSheet|pagesPerSheet (booklet: two pages a sheet in folding order), paper?: [w, h] (points, Letter by default: the sheet copiesPerSheet and pagesPerSheet fill), sheets?: \"1-2\" (physical sheets, when imposed), sheetSides?: front|back (one side of each sheet, for printing both sides by hand), reverse?: bool (the sides last first), turned?: bool (upside down), dryRun?: bool (export and preview submission without printing), …the PDF settings of file.exportPdf (the PDF it writes is what prints; imposed sheets use its defaults)} → {printer, copies, pages, command, bytes, warnings, plan?: [[1-based pages of each side]]}",
             has_doc,
             print
         ),
+        cmd!(query "file.printPlan", "Print Plan", [], None,
+            "{layout?, pages?, paper?, sheets?, sheetSides?, reverse?, turned?} → {sides: [{width, height, placed: [{page (0-based), x, y, scale}], turned}]}, the sides a print job with these settings makes",
+            has_doc, print_plan),
     ]
 }
 
@@ -31,14 +34,111 @@ pub fn printer_list() -> Value {
 fn printers() -> Value {
     let printers = craft_print::printers();
     let default = printers.iter().find(|p| p.default).map(|p| p.name.clone());
+    let two_sided: serde_json::Map<String, Value> = printers.iter().filter_map(|p| Some((p.name.clone(), json!(p.two_sided?)))).collect();
     let names: Vec<_> = printers.into_iter().map(|p| p.name).collect();
-    json!({"printers": names, "default": default})
+    json!({"printers": names, "default": default, "twoSided": two_sided})
+}
+
+/// The physical sides these settings print, or None for plain pages (the path Export PDF shares).
+fn plan_sides(s: &Session, p: &Value) -> Result<Option<Vec<designcraft_pdf::SheetSide>>> {
+    use designcraft_pdf::{BookletKind, booklet_sides, copies_per_sheet_sides, one_up_sides, pages_per_sheet_sides};
+    const ID: &str = "file.print";
+    let d = &s.doc()?.doc;
+    let manual = p.get("sheetSides").is_some() || p.get("sheets").is_some();
+    let layout = p.get("layout").and_then(Value::as_str).unwrap_or("pages");
+    if layout == "pages" && !manual {
+        return Ok(None);
+    }
+    let sizes: Vec<(f64, f64)> = (0..d.page_count()).filter_map(|i| d.page(i).map(|pg| (pg.width, pg.height))).collect();
+    let order: Vec<usize> = super::export::options(p, d.page_count())?.pages.unwrap_or_else(|| (0..sizes.len()).collect());
+    let paper = match p.get("paper").and_then(Value::as_array).map(Vec::as_slice) {
+        None => (612.0, 792.0),
+        Some([w, h]) => match (w.as_f64(), h.as_f64()) {
+            (Some(w), Some(h)) if w.is_finite() && h.is_finite() && w >= 36.0 && h >= 36.0 => (w, h),
+            _ => return Err(bad(ID, "`paper` must be a width and height in points, at least half an inch")),
+        },
+        Some(_) => return Err(bad(ID, "`paper` must be [width, height]")),
+    };
+    let mut sides = match layout {
+        "booklet" => booklet_sides(&sizes, BookletKind::SaddleStitch, 0.0),
+        "copiesPerSheet" => copies_per_sheet_sides(&sizes, &order, paper),
+        "pagesPerSheet" => pages_per_sheet_sides(&sizes, &order, paper),
+        "pages" => one_up_sides(&sizes, &order),
+        other => return Err(bad(ID, format!("unknown layout `{other}` (pages, booklet, copiesPerSheet, pagesPerSheet)"))),
+    };
+    // Both sides of a sheet: a sheet is two sides, and a lone front keeps a blank back.
+    let by_sheet = layout == "booklet" || manual;
+    if by_sheet && sides.len() % 2 == 1 {
+        let (width, height) = sides.first().map_or((612.0, 792.0), |s| (s.width, s.height));
+        sides.push(designcraft_pdf::SheetSide { width, height, placed: vec![], turned: false });
+    }
+    if let Some(range) = p.get("sheets").and_then(Value::as_str) {
+        let per = if by_sheet { 2 } else { 1 };
+        let wanted = parse_sheets(range, sides.len().div_ceil(per)).ok_or_else(|| bad(ID, format!("`sheets`: no such sheets as `{range}`")))?;
+        let mut chosen = Vec::new();
+        for sheet in wanted {
+            chosen.extend(sides.iter().skip(sheet * per).take(per).cloned());
+        }
+        sides = chosen;
+    }
+    match p.get("sheetSides").and_then(Value::as_str) {
+        None => {}
+        Some("front") => sides = sides.into_iter().step_by(2).collect(),
+        Some("back") => sides = sides.into_iter().skip(1).step_by(2).collect(),
+        Some(o) => return Err(bad(ID, format!("unknown sheetSides `{o}` (front, back)"))),
+    }
+    if p.get("reverse").and_then(Value::as_bool).unwrap_or(false) {
+        sides.reverse();
+    }
+    if p.get("turned").and_then(Value::as_bool).unwrap_or(false) {
+        for side in &mut sides {
+            side.turned = true;
+        }
+    }
+    if sides.is_empty() {
+        return Err(bad(ID, "nothing to print with these settings"));
+    }
+    Ok(Some(sides))
+}
+
+/// `1-3,5` as 0-based sheet indices, each one in range; None if any isn't.
+fn parse_sheets(text: &str, count: usize) -> Option<Vec<usize>> {
+    let mut out = Vec::new();
+    for part in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+        let (a, b) = part.split_once('-').map_or((part, part), |(a, b)| (a.trim(), b.trim()));
+        let (a, b) = (a.parse::<usize>().ok()?, b.parse::<usize>().ok()?);
+        if a == 0 || b < a || b > count {
+            return None;
+        }
+        out.extend((a - 1)..b);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn print_plan(s: &mut Session, p: &Value) -> Result<Value> {
+    let sides = match plan_sides(s, p)? {
+        Some(sides) => sides,
+        None => {
+            let d = &s.doc()?.doc;
+            let order = super::export::options(p, d.page_count())?.pages.unwrap_or_else(|| (0..d.page_count()).collect());
+            let sizes: Vec<(f64, f64)> = (0..d.page_count()).filter_map(|i| d.page(i).map(|pg| (pg.width, pg.height))).collect();
+            designcraft_pdf::one_up_sides(&sizes, &order)
+        }
+    };
+    let list: Vec<Value> = sides
+        .iter()
+        .map(|side| {
+            let placed: Vec<Value> = side.placed.iter().map(|q| json!({"page": q.page, "x": q.x, "y": q.y, "scale": q.scale})).collect();
+            json!({"width": side.width, "height": side.height, "placed": placed, "turned": side.turned})
+        })
+        .collect();
+    Ok(json!({"sides": list}))
 }
 
 fn print(s: &mut Session, p: &Value) -> Result<Value> {
     #[cfg(target_arch = "wasm32")]
     {
-        super::export::options(p, s.doc()?.doc.page_count())?;
+        plan_sides(s, p)?;
         Err(bad("file.print", "printing isn't available on the web: export a PDF and print it"))
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -72,11 +172,12 @@ fn print_with(
         ..craft_print::Job::default()
     };
     let dry = p.get("dryRun").and_then(Value::as_bool).unwrap_or(false);
-    // A booklet prints the pages two to a sheet in folding order (Publisher's "Booklet, side-fold").
-    let booklet = str_param(p, "layout") == Some("booklet");
-    let (bytes, pages, warnings) = if booklet {
-        let bo = designcraft_pdf::BookletOptions { kind: designcraft_pdf::BookletKind::SaddleStitch, space_between: 0.0, title: None };
-        let r = designcraft_pdf::export_booklet(&crate::cmd::interchange::with_pdf_boxes(d), &s.cache, &bo)
+    // Imposed: a booklet prints the pages two to a sheet in folding order (Publisher's "Booklet,
+    // side-fold"), and the sides can go one at a time for printing both sides by hand.
+    let sides = plan_sides(s, p)?;
+    let plan = sides.as_ref().map(|sides| sides.iter().map(|side| side.placed.iter().map(|q| q.page + 1).collect::<Vec<_>>()).collect::<Vec<_>>());
+    let (bytes, pages, warnings) = if let Some(sides) = &sides {
+        let r = designcraft_pdf::export_sheets(&crate::cmd::interchange::with_pdf_boxes(d), &s.cache, sides, None)
             .map_err(|e| bad("file.print", e.to_string()))?;
         (r.bytes, r.pages, serde_json::to_value(r.warnings).unwrap_or_default())
     } else {
@@ -86,7 +187,10 @@ fn print_with(
         (pdf.bytes, pages, serde_json::to_value(pdf.warnings).unwrap_or_default())
     };
     let command = craft_print::command_preview(&job).map_err(|e| bad("file.print", e.to_string()))?;
-    let out = json!({"printer": job.printer, "copies": copies, "pages": pages, "command": command, "bytes": bytes.len(), "warnings": warnings});
+    let mut out = json!({"printer": job.printer, "copies": copies, "pages": pages, "command": command, "bytes": bytes.len(), "warnings": warnings});
+    if let Some(plan) = plan {
+        out["plan"] = json!(plan);
+    }
     if !dry {
         submit(&bytes, &job).map_err(|e| bad("file.print", e.to_string()))?;
     }
@@ -96,6 +200,64 @@ fn print_with(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_two_sided_prints_fronts_then_backs_in_the_order_asked() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 8, "facingPages": true})).unwrap();
+        let dry = |s: &mut Session, extra: Value| {
+            let mut p = json!({"layout": "booklet", "dryRun": true});
+            for (k, v) in extra.as_object().unwrap() {
+                p[k] = v.clone();
+            }
+            s.execute("file.print", &p).unwrap()["plan"].clone()
+        };
+        assert_eq!(dry(&mut s, json!({})), json!([[8, 1], [2, 7], [6, 3], [4, 5]]));
+        assert_eq!(dry(&mut s, json!({"sheetSides": "front"})), json!([[8, 1], [6, 3]]));
+        assert_eq!(dry(&mut s, json!({"sheetSides": "back"})), json!([[2, 7], [4, 5]]));
+        assert_eq!(dry(&mut s, json!({"sheetSides": "back", "reverse": true})), json!([[4, 5], [2, 7]]));
+        // One jammed sheet again: its two sides, and just its back.
+        assert_eq!(dry(&mut s, json!({"sheets": "2"})), json!([[6, 3], [4, 5]]));
+        assert_eq!(dry(&mut s, json!({"sheets": "2", "sheetSides": "back"})), json!([[4, 5]]));
+    }
+
+    #[test]
+    fn plain_pages_can_also_go_one_side_at_a_time_with_a_blank_back_for_the_last() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 3})).unwrap();
+        let plan = |s: &mut Session, side: &str| s.execute("file.print", &json!({"sheetSides": side, "dryRun": true})).unwrap()["plan"].clone();
+        assert_eq!(plan(&mut s, "front"), json!([[1], [3]]));
+        assert_eq!(plan(&mut s, "back"), json!([[2], []]));
+    }
+
+    #[test]
+    fn bad_print_settings_are_refused_before_any_paper_goes() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 4})).unwrap();
+        for bad in [
+            json!({"layout": "tiled"}),
+            json!({"layout": "booklet", "sheets": "9"}),
+            json!({"layout": "booklet", "sheets": "0"}),
+            json!({"layout": "booklet", "sheets": "2-1"}),
+            json!({"layout": "booklet", "sheets": "x"}),
+            json!({"layout": "booklet", "sheetSides": "edge"}),
+            json!({"layout": "copiesPerSheet", "paper": [1, 2]}),
+            json!({"layout": "copiesPerSheet", "paper": [612]}),
+        ] {
+            assert!(print_with(&mut s, &bad, |_, _| panic!("{bad}: refused settings must not spool")).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_print_plan_says_what_a_job_would_print() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"pages": 2, "width": 252, "height": 144})).unwrap();
+        let r = s.execute("file.printPlan", &json!({"layout": "copiesPerSheet"})).unwrap();
+        assert_eq!(r["sides"].as_array().unwrap().len(), 2);
+        assert_eq!(r["sides"][0]["placed"].as_array().unwrap().len(), 10);
+        let r = s.execute("file.printPlan", &json!({})).unwrap();
+        assert_eq!(r["sides"][1]["placed"][0]["page"], 1);
+    }
 
     #[test]
     fn print_builds_the_spool_command() {

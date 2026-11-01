@@ -511,6 +511,12 @@ fn shared_id(id: &str) -> Option<&'static str> {
 }
 
 pub(crate) fn command(app: &mut DesignApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    // PressRoom has no dock: its panels open in the task pane, or as Publisher's dialogs.
+    if app.ui.pressroom_shell
+        && let Some(result) = crate::pressroom::taskpane::command(app, id, params)
+    {
+        return Some(result);
+    }
     if id == "app.tablePanel" {
         // A Table flyout closes; the panel stays in its icon group.
         if flyout_open(app, "table") {

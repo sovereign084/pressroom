@@ -36,6 +36,11 @@ pub fn specs() -> Vec<CommandSpec> {
             s.tool_armed = t != "selection";
             Ok(json!({"tool": s.tool_id()}))
         }),
+        cmd!(noundo "tool.shapePreset", "Shape to Draw", [], None, "{name?} — a shape in geom::shapes::PRESETS, or arrow or doubleArrow for the line tool; none: its plain shape", always, |s, p| {
+            let name = p.get("name").and_then(Value::as_str).map(str::to_string);
+            s.tool.set_preset(name);
+            Ok(Value::Null)
+        }),
         cmd!(query "tool.list", "List Tools", [], None, "{}", always, |_, _| Ok(serde_json::to_value(designcraft_tools::TOOL_GROUPS).unwrap_or_default())),
         cmd!(query "document.history", "History", [], None, "{}", has_doc, |s, _| {
             let st = s.doc()?;

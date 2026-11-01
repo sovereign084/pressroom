@@ -12,6 +12,10 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "spelling.check", "Check Spelling…", ["Edit", "Spelling"], Some("Cmd+I"),
             "{story?, suggestions?: true} → [{story, start, end, word, suggestions}]", has_doc, check),
+        cmd!(query "spelling.suggest", "Spelling Suggestions", [], None, "{word} → [word] — up to 6, closest first", has_doc, |_, p| {
+            let w = str_param(p, "word").ok_or_else(|| bad("spelling.suggest", "missing word"))?;
+            Ok(json!(suggest(Dictionary::en_us(), &w.to_lowercase())))
+        }),
         cmd!(
             "hyphenation.addException",
             "Add Hyphenation Exception",
@@ -81,12 +85,63 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// Everyday words the dictionary leaves out. It comes from a hyphenation list, so it's strongest on
+/// long words and misses a few short ones and anything recent.
+const COMMON_WORDS: &[&str] = &[
+    "we",
+    "us",
+    "if",
+    "heard",
+    "ok",
+    "okay",
+    "yourselves",
+    "email",
+    "emails",
+    "website",
+    "websites",
+    "webpage",
+    "webpages",
+    "online",
+    "internet",
+    "blog",
+    "blogs",
+    "download",
+    "downloads",
+    "upload",
+    "uploads",
+    "wifi",
+    "laptop",
+    "laptops",
+    "smartphone",
+    "smartphones",
+    "facebook",
+    "google",
+    "youtube",
+];
+
+/// Contractions whose first part isn't a word on its own.
+const IRREGULAR_CONTRACTIONS: &[&str] = &["can't", "won't", "shan't", "ain't"];
+
 /// Is `w` (lowercase) a known word, allowing common inflections of dictionary stems?
 pub fn known(dict: &Dictionary, user: &[String], w: &str) -> bool {
-    if w.len() <= 1 || dict.get(w).is_some() || user.iter().any(|u| u == w) {
+    // A typed apostrophe is often the curly one.
+    let straight = w.replace('’', "'");
+    let w = straight.as_str();
+    if w.len() <= 1 || dict.get(w).is_some() || COMMON_WORDS.contains(&w) || user.iter().any(|u| u.replace('’', "'") == w) {
         return true;
     }
-    let w = w.trim_end_matches("'s").trim_end_matches("’s");
+    // Contractions: the word they're made from.
+    if IRREGULAR_CONTRACTIONS.contains(&w) {
+        return true;
+    }
+    for ending in ["n't", "'re", "'ve", "'ll", "'d", "'m", "'s"] {
+        if let Some(base) = w.strip_suffix(ending)
+            && (dict.get(base).is_some() || COMMON_WORDS.contains(&base))
+        {
+            return true;
+        }
+    }
+    let w = w.trim_end_matches("'s");
     if dict.get(w).is_some() {
         return true;
     }
@@ -193,8 +248,25 @@ pub fn misspellings(doc: &designcraft_doc::Document, story: &designcraft_doc::St
         }
         let end = bytes.get(j).map(|b| b.0).unwrap_or(text.len());
         let word = &text[start..end];
+        // Part of a web or e-mail address, or joined to a number: left alone, as Word leaves them.
+        let before = i.checked_sub(1).and_then(|k| bytes.get(k)).map(|b| b.1);
+        let after = bytes.get(j).map(|b| b.1);
+        let after2 = bytes.get(j + 1).map(|b| b.1);
+        let address = matches!(before, Some('@' | '/'))
+            || (before == Some('.') && i >= 2 && bytes.get(i - 2).is_some_and(|b| b.1.is_alphanumeric()))
+            || after == Some('@')
+            || (after == Some('.') && after2.is_some_and(char::is_alphanumeric))
+            || (after == Some(':') && after2 == Some('/'));
+        let with_number = before.is_some_and(|c| c.is_ascii_digit()) || after.is_some_and(|c| c.is_ascii_digit());
+        if address || with_number {
+            i = j.max(i + 1);
+            continue;
+        }
         let acronym = word.chars().all(|c| c.is_uppercase()) && word.chars().count() <= 5;
-        if !acronym && !foreign.iter().any(|r| r.contains(&start)) && !known(dict, user, &word.to_lowercase()) {
+        // The dictionary is English: a word in Hebrew or Greek isn't a misspelling of one, whatever
+        // language its run is tagged with.
+        let latin = word.chars().any(|c| c.is_alphabetic() && u32::from(c) < 0x250);
+        if !acronym && latin && !foreign.iter().any(|r| r.contains(&start)) && !known(dict, user, &word.to_lowercase()) {
             out.push(start..end);
         }
         i = j.max(i + 1);
@@ -226,6 +298,30 @@ fn check(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn everyday_words_and_contractions_arent_flagged() {
+        let d = Dictionary::en_us();
+        for w in
+            ["we", "us", "if", "heard", "email", "website", "don't", "don’t", "isn’t", "we’re", "you’ve", "can’t", "won't", "doesn’t", "couldn’t"]
+        {
+            assert!(known(d, &[], w), "{w}");
+        }
+        for w in ["thsi", "speling", "wez", "qwrtyx"] {
+            assert!(!known(d, &[], w), "{w}");
+        }
+    }
+
+    #[test]
+    fn addresses_and_numbers_are_left_alone() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let text = "Write to qwrtyx@zxcvb.ca or see https://qqwweer.zxcvb.com/asdfg today. The 5787th qwrtyz.";
+        let story = s.execute("frame.create", &json!({"rect": [10, 10, 500, 200], "content": "text", "text": text})).unwrap()["story"].clone();
+        let found = s.execute("spelling.check", &json!({"story": story, "suggestions": false})).unwrap();
+        let words: Vec<&str> = found.as_array().unwrap().iter().map(|w| w["word"].as_str().unwrap()).collect();
+        assert_eq!(words, ["qwrtyz"], "only the plain word at the end");
+    }
 
     #[test]
     fn known_words_and_suggestions() {

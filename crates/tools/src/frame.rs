@@ -16,12 +16,14 @@ pub struct FrameTool {
     /// Gridify: columns and rows (arrow keys while dragging), and the last drawn rect.
     grid: (u32, u32),
     last: Option<(serde_json::Value, Rect)>,
+    /// The named shape being drawn (`designcraft_geom::shapes::preset`), or a line's arrowheads.
+    preset: Option<String>,
 }
 
 impl FrameTool {
     pub fn new(id: &str) -> Self {
         let id = crate::tool_info(id).map(|t| t.id).unwrap_or("rectangleFrame");
-        Self { id, start: None, cur: Point::ZERO, active: false, guides: vec![], grid: (1, 1), last: None }
+        Self { id, start: None, cur: Point::ZERO, active: false, guides: vec![], grid: (1, 1), last: None, preset: None }
     }
 
     /// The preview for `r`: one frame, or a grid of them.
@@ -34,7 +36,11 @@ impl FrameTool {
                 json!({"spread": spread, "shape": shape, "content": content, "rect": rect_json(r), "cols": c, "rows": rw}),
             )
         } else {
-            Action::Preview("frame.create".into(), json!({"spread": spread, "shape": shape, "content": content, "rect": rect_json(r)}))
+            let mut params = json!({"spread": spread, "shape": shape, "content": content, "rect": rect_json(r)});
+            if let Some(preset) = &self.preset {
+                params["preset"] = json!(preset);
+            }
+            Action::Preview("frame.create".into(), params)
         }
     }
     fn kind(&self) -> (&'static str, &'static str) {
@@ -405,7 +411,11 @@ impl Tool for FrameTool {
                             snap_free_line(cx, sr, sa, b, &mut self.guides)
                         };
                     }
-                    out.push(Action::Preview("line.create".into(), json!({"spread": spread_json(sr), "a": [sa.x, sa.y], "b": [b.x, b.y]})));
+                    let mut params = json!({"spread": spread_json(sr), "a": [sa.x, sa.y], "b": [b.x, b.y]});
+                    if let Some(preset) = &self.preset {
+                        params["preset"] = json!(preset);
+                    }
+                    out.push(Action::Preview("line.create".into(), params));
                 } else {
                     let end = cx.layout.to_spread(sr, ev.pos);
                     let (r, guides) = snapped_drag_rect(cx, sr, sa, end, ev.mods);
@@ -422,6 +432,26 @@ impl Tool for FrameTool {
                 let start = self.start.take();
                 if was {
                     return vec![Action::Commit];
+                }
+                // PressRoom: a click puts a shape of the default size there, as in Office.
+                if cx.publisher
+                    && let Some(a) = start
+                    && let Some((sr, sa)) = cx.layout.spread_at(a)
+                {
+                    const SIZE: f64 = 72.0;
+                    if shape == "line" {
+                        let mut params = json!({"spread": spread_json(sr), "a": [sa.x, sa.y], "b": [sa.x + SIZE, sa.y]});
+                        if let Some(preset) = &self.preset {
+                            params["preset"] = json!(preset);
+                        }
+                        return vec![Action::Exec("line.create".into(), params)];
+                    }
+                    let mut params =
+                        json!({"spread": spread_json(sr), "shape": shape, "content": content, "rect": [sa.x, sa.y, sa.x + SIZE, sa.y + SIZE]});
+                    if let Some(preset) = &self.preset {
+                        params["preset"] = json!(preset);
+                    }
+                    return vec![Action::Exec("frame.create".into(), params)];
                 }
                 // Click: size dialog.
                 if let Some(a) = start
@@ -470,6 +500,10 @@ impl Tool for FrameTool {
 
     fn cursor(&self, _cx: &ToolContext, _p: Point, _m: Mods) -> Cursor {
         Cursor::Crosshair
+    }
+
+    fn set_preset(&mut self, preset: Option<String>) {
+        self.preset = preset;
     }
 
     fn busy(&self) -> bool {

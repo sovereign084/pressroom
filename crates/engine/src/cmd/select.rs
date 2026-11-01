@@ -180,7 +180,10 @@ fn convert(it: &mut Item, to: &str, sides: u32, inset: f64) -> std::result::Resu
             }
             (path, Shape::Path, it.corners)
         }
-        o => return Err(format!("unknown shape `{o}`")),
+        o => match shapes::preset(o, r) {
+            Some(path) => (path, Shape::Polygon, CornerOptions::default()),
+            None => return Err(format!("unknown shape `{o}`")),
+        },
     };
     it.path = path;
     it.shape = shape;

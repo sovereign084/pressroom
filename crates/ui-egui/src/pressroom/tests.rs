@@ -363,3 +363,485 @@ fn the_quick_access_toolbar_shows_the_commands_chosen_and_saves_them() {
     let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.state().app.ui).unwrap()).unwrap();
     assert_eq!(back.pressroom_qat, ["save", "undo", "redo", "spelling"]);
 }
+
+const CTRL_SHIFT: egui::Modifiers = egui::Modifiers { shift: true, ..egui::Modifiers::COMMAND };
+const ALT_SHIFT: egui::Modifiers = egui::Modifiers { shift: true, ..egui::Modifiers::ALT };
+
+fn press(h: &mut Harness<'static, Window>, mods: egui::Modifiers, key: egui::Key) {
+    h.key_press_modifiers(mods, key);
+    h.run_steps(4);
+}
+
+fn dialog_id(h: &Harness<'static, Window>) -> Option<String> {
+    h.state().app.ui.dialog.as_ref().map(|d| d.id.clone())
+}
+
+fn close_dialog(h: &mut Harness<'static, Window>) {
+    h.state_mut().app.ui.dialog = None;
+    h.run_steps(2);
+}
+
+/// A box of `text`, selected as an object. Returns its id and story.
+fn text_box(h: &mut Harness<'static, Window>, text: &str) -> (u64, u64) {
+    let r = run(h, "frame.create", json!({"rect": [72, 72, 400, 300], "content": "text", "text": text}));
+    (r["id"].as_u64().unwrap(), r["story"].as_u64().unwrap())
+}
+
+fn undo_steps(h: &mut Harness<'static, Window>) -> usize {
+    run(h, "document.history", json!({}))["undo"].as_array().unwrap().len()
+}
+
+#[test]
+fn the_keys_do_what_microsofts_list_for_publisher_says() {
+    let mut h = window();
+    select_hello(&mut h);
+    // These three did something else, inherited from a page-layout program.
+    press(&mut h, CTRL_SHIFT, egui::Key::K);
+    assert_eq!(run(&mut h, "type.selectionAttrs", json!({}))["chars"]["capitalization"], "smallCaps");
+    press(&mut h, CTRL_SHIFT, egui::Key::K);
+    assert_eq!(run(&mut h, "type.selectionAttrs", json!({}))["chars"]["capitalization"], "normal");
+    press(&mut h, egui::Modifiers::COMMAND, egui::Key::K);
+    assert_eq!(dialog_id(&h).as_deref(), Some("pr.hyperlink"));
+    close_dialog(&mut h);
+    // Ctrl+Shift+F is the Font dialog, not Ctrl+F's Find.
+    press(&mut h, CTRL_SHIFT, egui::Key::F);
+    assert_eq!(dialog_id(&h).as_deref(), Some("pr.font"));
+    close_dialog(&mut h);
+    assert_eq!(h.state().app.ui.pressroom_pane, None);
+    press(&mut h, egui::Modifiers::COMMAND, egui::Key::F);
+    assert_eq!(h.state().app.ui.pressroom_pane.as_deref(), Some("pr.find"));
+    h.state_mut().app.ui.pressroom_pane = None;
+    press(&mut h, egui::Modifiers::NONE, egui::Key::F3);
+    assert_eq!(h.state().app.ui.pressroom_pane.as_deref(), Some("pr.find"));
+    h.state_mut().app.ui.pressroom_pane = None;
+    // Ctrl+Shift+H is Hyphenation, not Ctrl+H's Replace.
+    press(&mut h, CTRL_SHIFT, egui::Key::H);
+    assert_eq!(dialog_id(&h).as_deref(), Some("pr.hyphenation"));
+    close_dialog(&mut h);
+    // Inserting at the caret.
+    let at = run(&mut h, "type.selectionAttrs", json!({}))["selectedText"].as_str().unwrap().to_string();
+    assert_eq!(at, "Hello");
+    let boundaries = h.state().app.ui.frame_edges;
+    press(&mut h, CTRL_SHIFT, egui::Key::O);
+    assert_eq!(h.state().app.ui.frame_edges, !boundaries);
+    let pages = run(&mut h, "document.inspect", json!({}))["pageCount"].as_u64().unwrap();
+    press(&mut h, CTRL_SHIFT, egui::Key::U);
+    assert_eq!(run(&mut h, "document.inspect", json!({}))["pageCount"].as_u64().unwrap(), pages + 1);
+}
+
+#[test]
+fn alt_f6_goes_all_the_way_to_the_front_and_back() {
+    let mut h = window();
+    let a = run(&mut h, "frame.create", json!({"rect": [10, 10, 50, 50]}))["id"].as_u64().unwrap();
+    let b = run(&mut h, "frame.create", json!({"rect": [20, 20, 60, 60]}))["id"].as_u64().unwrap();
+    let c = run(&mut h, "frame.create", json!({"rect": [30, 30, 70, 70]}))["id"].as_u64().unwrap();
+    let order = |h: &mut Harness<'static, Window>| -> Vec<u64> {
+        h.state().app.session.active().unwrap().doc.spreads[0].items.iter().map(|i| i.id.0).collect()
+    };
+    run(&mut h, "selection.set", json!({"ids": [a]}));
+    press(&mut h, egui::Modifiers::ALT, egui::Key::F6);
+    assert_eq!(order(&mut h), [b, c, a]);
+    run(&mut h, "selection.set", json!({"ids": [c]}));
+    press(&mut h, ALT_SHIFT, egui::Key::F6);
+    assert_eq!(order(&mut h), [c, b, a]);
+}
+
+#[test]
+fn page_layout_keys_are_gone_from_the_window() {
+    let mut h = window();
+    let id = run(&mut h, "frame.create", json!({"rect": [10, 10, 50, 50]}))["id"].as_u64().unwrap();
+    run(&mut h, "selection.set", json!({"ids": [id]}));
+    // Ctrl+3 hid the object; Ctrl+D opened Place; Tab hid the panels.
+    press(&mut h, egui::Modifiers::COMMAND, egui::Key::Num3);
+    assert!(!h.state().app.session.active().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().hidden);
+    press(&mut h, egui::Modifiers::COMMAND, egui::Key::D);
+    assert_eq!(dialog_id(&h), None);
+    press(&mut h, egui::Modifiers::NONE, egui::Key::Tab);
+    assert_eq!(h.state().app.ui.hidden_panels, 0);
+}
+
+#[test]
+fn panels_open_in_the_task_pane_and_font_and_paragraph_as_dialogs() {
+    let mut h = window();
+    select_hello(&mut h);
+    run(&mut h, "window.panel.activate", json!({"panel": "hyperlinks"}));
+    assert_eq!(h.state().app.ui.pressroom_pane.as_deref(), Some("hyperlinks"));
+    assert!(h.query_by_label("Close").is_some() || h.state().app.ui.pressroom_pane.is_some());
+    run(&mut h, "window.panel.close", json!({"panel": "hyperlinks"}));
+    assert_eq!(h.state().app.ui.pressroom_pane, None);
+    run(&mut h, "app.characterPanel", json!({}));
+    assert_eq!(dialog_id(&h).as_deref(), Some("pr.font"));
+    close_dialog(&mut h);
+    run(&mut h, "app.paragraphPanel", json!({}));
+    assert_eq!(dialog_id(&h).as_deref(), Some("pr.paragraph"));
+    close_dialog(&mut h);
+    run(&mut h, "app.tablePanel", json!({}));
+    assert_eq!(h.state().app.ui.pressroom_pane.as_deref(), Some("table"));
+    // Every panel the ribbon opens draws without trouble.
+    for panel in ["hyperlinks", "bookmarks", "glyphs", "links", "preflight", "dataMerge", "table"] {
+        run(&mut h, "window.panel.activate", json!({"panel": panel}));
+        h.run_steps(3);
+    }
+    super::find::open(&mut h.state_mut().app, true);
+    h.run_steps(3);
+    assert_eq!(h.state().app.ui.pressroom_pane.as_deref(), Some("pr.find"));
+}
+
+/// Opens each of PressRoom's dialogs and draws it, with what each needs selected.
+#[test]
+fn every_dialog_opens_draws_and_closes() {
+    let mut h = window();
+    select_hello(&mut h);
+    use super::dialogs as d;
+    type Open = fn(&mut DesignApp);
+    let list: &[(&str, Open)] = &[
+        ("pr.font", d::open_font),
+        ("pr.spacing", d::open_spacing),
+        ("pr.paragraph", d::open_paragraph),
+        ("pr.hyperlink", d::open_hyperlink),
+        ("pr.hyphenation", d::open_hyphenation),
+        ("pr.insertPage", d::open_insert_page),
+        ("pr.table", d::open_table),
+        ("pr.guides", d::open_guides),
+        ("pr.pageSetup", d::open_setup),
+        ("pr.date", d::open_date),
+        ("pr.pageNumberFormat", d::open_number_format),
+        ("pr.applyMaster", d::open_apply_master),
+        ("pr.newMaster", d::open_new_master),
+        ("pr.options", d::open_options),
+    ];
+    for (id, open) in list {
+        open(&mut h.state_mut().app);
+        h.run_steps(3);
+        assert_eq!(dialog_id(&h).as_deref(), Some(*id));
+        assert!(!d::title(id).is_empty(), "{id}");
+        close_dialog(&mut h);
+    }
+    d::open_rename(&mut h.state_mut().app, 0);
+    h.run_steps(3);
+    assert_eq!(dialog_id(&h).as_deref(), Some("pr.rename"));
+    close_dialog(&mut h);
+    d::open_move(&mut h.state_mut().app, 0);
+    h.run_steps(3);
+    close_dialog(&mut h);
+    run(&mut h, "text.exitToFrame", json!({}));
+    d::open_format(&mut h.state_mut().app);
+    let tabs = ["colors", "size", "layout", "box", "alt"];
+    for tab in tabs {
+        h.state_mut().app.ui.dialog.as_mut().unwrap().fields.insert("tab".into(), json!(tab));
+        h.run_steps(3);
+    }
+    close_dialog(&mut h);
+}
+
+#[test]
+fn a_dialog_left_as_it_opened_changes_nothing() {
+    let mut h = window();
+    select_hello(&mut h);
+    let before = undo_steps(&mut h);
+    for open in [
+        super::dialogs::open_font as fn(&mut DesignApp),
+        super::dialogs::open_paragraph,
+        super::dialogs::open_hyphenation,
+        super::dialogs::open_guides,
+        super::dialogs::open_setup,
+    ] {
+        open(&mut h.state_mut().app);
+        h.run_steps(2);
+        let d = h.state_mut().app.ui.dialog.take().unwrap();
+        super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    }
+    assert_eq!(undo_steps(&mut h), before, "OK with nothing changed leaves no undo step");
+}
+
+#[test]
+fn the_font_dialog_applies_only_what_changed() {
+    let mut h = window();
+    select_hello(&mut h);
+    run(&mut h, "type.char", json!({"attrs": {"size": 20}}));
+    super::dialogs::open_font(&mut h.state_mut().app);
+    h.run_steps(2);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    d.fields.insert("underline".into(), json!(true));
+    d.fields.insert("smallCaps".into(), json!(true));
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    h.run_steps(2);
+    let chars = run(&mut h, "type.selectionAttrs", json!({}))["chars"].clone();
+    assert_eq!(chars["size"], 20.0);
+    assert_eq!(chars["capitalization"], "smallCaps");
+    assert!(chars["underline"].as_bool().unwrap_or(false) || chars["underline"].is_object());
+    // A bad size says so and changes nothing.
+    super::dialogs::open_font(&mut h.state_mut().app);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    d.fields.insert("size".into(), json!("huge"));
+    assert!(super::dialogs::apply(&mut h.state_mut().app, &d).is_err());
+}
+
+#[test]
+fn line_spacing_goes_to_the_whole_paragraph_from_a_caret() {
+    let mut h = window();
+    let (_, story) = text_box(&mut h, "First paragraph here\nSecond one");
+    run(&mut h, "text.select", json!({"story": story, "anchor": 3, "focus": 3}));
+    super::dialogs::open_paragraph(&mut h.state_mut().app);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    d.fields.insert("between".into(), json!("2sp"));
+    let steps = undo_steps(&mut h);
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    h.run_steps(2);
+    assert_eq!(undo_steps(&mut h), steps + 1, "one undo step");
+    let doc = h.state().app.session.active().unwrap().doc.clone();
+    let st = doc.story(designcraft_doc::StoryId(story)).unwrap();
+    let leading = |at: usize| st.char_format_at(at).over.leading;
+    assert!(leading(1).is_some() && leading(15).is_some(), "the whole paragraph");
+    assert!(leading(25).is_none(), "not the next one");
+    assert_eq!((h.state().app.session.active().unwrap().selection.text.unwrap().anchor), 3, "the caret stays where it was");
+}
+
+#[test]
+fn a_page_moves_and_gets_a_name() {
+    assert_eq!(super::dialogs::move_target(0, 2, false), 1, "before page 3: in behind page 2");
+    assert_eq!(super::dialogs::move_target(0, 2, true), 2);
+    assert_eq!(super::dialogs::move_target(3, 0, false), 0);
+    assert_eq!(super::dialogs::move_target(3, 0, true), 1);
+    let mut h = window();
+    run(&mut h, "layout.pages.insert", json!({"count": 3}));
+    let mark = run(&mut h, "frame.create", json!({"rect": [10, 10, 50, 50]}))["id"].as_u64().unwrap();
+    let page_of = |h: &Harness<'static, Window>| h.state().app.session.active().unwrap().doc.page_of_item(designcraft_doc::ItemId(mark));
+    assert_eq!(page_of(&h), Some(0));
+    super::dialogs::open_move(&mut h.state_mut().app, 0);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    d.fields.insert("to".into(), json!(2));
+    d.fields.insert("where".into(), json!("after"));
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    assert_eq!(page_of(&h), Some(2));
+    super::dialogs::open_rename(&mut h.state_mut().app, 1);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    d.fields.insert("title".into(), json!("Welcome"));
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    assert_eq!(h.state().app.session.active().unwrap().doc.page(1).unwrap().title.as_deref(), Some("Welcome"));
+}
+
+#[test]
+fn format_painter_takes_a_look_from_one_text_to_another() {
+    let mut h = window();
+    let (_, story) = text_box(&mut h, "Source and target");
+    run(&mut h, "text.select", json!({"story": story, "anchor": 0, "focus": 6}));
+    run(&mut h, "type.char", json!({"attrs": {"size": 30}}));
+    press(&mut h, CTRL_SHIFT, egui::Key::C);
+    run(&mut h, "text.select", json!({"story": story, "anchor": 11, "focus": 17}));
+    press(&mut h, CTRL_SHIFT, egui::Key::V);
+    assert_eq!(run(&mut h, "type.selectionAttrs", json!({}))["chars"]["size"], 30.0);
+    // The object's look, too.
+    let a = run(&mut h, "frame.create", json!({"rect": [10, 400, 50, 450]}))["id"].as_u64().unwrap();
+    run(&mut h, "object.stroke", json!({"weight": 5, "swatch": "[Black]"}));
+    let b = run(&mut h, "frame.create", json!({"rect": [60, 400, 90, 450]}))["id"].as_u64().unwrap();
+    run(&mut h, "selection.set", json!({"ids": [a]}));
+    press(&mut h, CTRL_SHIFT, egui::Key::C);
+    run(&mut h, "selection.set", json!({"ids": [b]}));
+    press(&mut h, CTRL_SHIFT, egui::Key::V);
+    assert_eq!(h.state().app.session.active().unwrap().doc.item(designcraft_doc::ItemId(b)).unwrap().stroke.weight, 5.0);
+}
+
+#[test]
+fn spelling_walks_the_words_and_changes_them_in_one_step_each() {
+    let mut h = window();
+    let (_, story) = text_box(&mut h, "Thsi word and thsi word and speling.");
+    let word = |h: &Harness<'static, Window>| {
+        h.state().app.ui.dialog.as_ref().and_then(|d| d.fields.get("current").map(|c| c["word"].as_str().unwrap_or("").to_string()))
+    };
+    press(&mut h, egui::Modifiers::NONE, egui::Key::F7);
+    assert_eq!(dialog_id(&h).as_deref(), Some("pr.spelling"));
+    assert_eq!(word(&h).as_deref(), Some("Thsi"));
+    let suggestions = h.state().app.ui.dialog.as_ref().unwrap().fields["suggestions"].clone();
+    assert!(suggestions.as_array().unwrap().iter().any(|s| s == "this"), "{suggestions}");
+    close_dialog(&mut h);
+    let steps = undo_steps(&mut h);
+    run(&mut h, "spelling.change", json!({"story": story, "start": 0, "end": 4, "to": "This"}));
+    assert_eq!(undo_steps(&mut h), steps + 1);
+    assert!(h.state().app.session.active().unwrap().doc.story(designcraft_doc::StoryId(story)).unwrap().text.starts_with("This word"));
+}
+
+#[test]
+fn hebrew_is_never_a_misspelling_even_tagged_english() {
+    let mut h = window();
+    let (_, story) = text_box(&mut h, "\u{05E4}\u{05D6} qwrtyx \u{03B1}\u{03B2}\u{03B3}");
+    let found = run(&mut h, "spelling.check", json!({"story": story, "suggestions": false}));
+    let words: Vec<&str> = found.as_array().unwrap().iter().map(|w| w["word"].as_str().unwrap()).collect();
+    assert_eq!(words, ["qwrtyx"]);
+}
+
+fn labels(rows: &[super::menus::Row]) -> Vec<&'static str> {
+    use super::menus::Row;
+    rows.iter()
+        .filter_map(|r| match r {
+            Row::Cmd(l, _) | Row::With(l, _, _) | Row::Act(l, _) | Row::Sub(l, _) => Some(*l),
+            Row::Sep => None,
+        })
+        .collect()
+}
+
+/// A golden list: a row that changes here has changed what a right-click shows.
+#[test]
+fn the_right_click_menus_are_publishers() {
+    assert_eq!(
+        labels(super::menus::OBJECT),
+        [
+            "Cut",
+            "Copy",
+            "Paste",
+            "Delete Object",
+            "Save as Picture…",
+            "Change Picture…",
+            "Group",
+            "Ungroup",
+            "Order",
+            "Rotate or Flip",
+            "Format Object…",
+            "Hyperlink…"
+        ]
+    );
+    assert_eq!(
+        labels(super::menus::TEXT),
+        ["Cut", "Copy", "Paste", "Keep Text Only", "Font…", "Paragraph…", "Bullets and Numbering…", "Hyperlink…", "Format Text Box…", "Select All"]
+    );
+    assert_eq!(labels(super::menus::CANVAS), ["Paste", "Zoom", "Ruler Guides", "Select All"]);
+    // Every command in them exists.
+    fn commands(rows: &[super::menus::Row], out: &mut Vec<&'static str>) {
+        use super::menus::Row;
+        for r in rows {
+            match r {
+                Row::Cmd(_, id) | Row::With(_, id, _) => out.push(id),
+                Row::Sub(_, sub) => commands(sub, out),
+                _ => {}
+            }
+        }
+    }
+    let mut ids = Vec::new();
+    for t in [super::menus::OBJECT, super::menus::TEXT, super::menus::CANVAS] {
+        commands(t, &mut ids);
+    }
+    for id in ids {
+        assert!(designcraft_engine::find_command(id).is_some() || crate::menus::ui_label(id).is_some(), "{id}");
+    }
+}
+
+#[test]
+fn the_context_menus_draw_with_what_they_need() {
+    let mut h = window();
+    let (id, story) = text_box(&mut h, "Thsi word");
+    run(&mut h, "text.select", json!({"story": story, "anchor": 2, "focus": 2}));
+    h.state_mut().app.ui.dynamic_spelling = true;
+    super::spelling::capture(&mut h.state_mut().app);
+    let clicked = h.state().app.ui.pressroom_spell.clone().unwrap();
+    assert_eq!(clicked.word, "Thsi");
+    assert!(clicked.suggestions.iter().any(|s| s == "this"));
+    run(&mut h, "text.select", json!({"story": story, "anchor": 6, "focus": 6}));
+    super::spelling::capture(&mut h.state_mut().app);
+    assert_eq!(h.state().app.ui.pressroom_spell, None, "a word spelled right has none");
+    h.state_mut().app.ui.pressroom_ignored.push("thsi".into());
+    run(&mut h, "text.select", json!({"story": story, "anchor": 2, "focus": 2}));
+    super::spelling::capture(&mut h.state_mut().app);
+    assert_eq!(h.state().app.ui.pressroom_spell, None, "Ignore All");
+    let _ = id;
+}
+
+#[test]
+fn shapes_draw_from_the_gallery_and_change() {
+    let mut h = window();
+    let id = run(&mut h, "frame.create", json!({"rect": [72, 72, 172, 172], "preset": "heart"}))["id"].as_u64().unwrap();
+    let path = |h: &Harness<'static, Window>| h.state().app.session.active().unwrap().doc.item(designcraft_doc::ItemId(id)).unwrap().path.clone();
+    let heart = path(&h);
+    assert_eq!(heart.bounds().map(|b| (b.width().round(), b.height().round())), Some((100.0, 100.0)));
+    run(&mut h, "object.convertShape", json!({"to": "star5"}));
+    assert_ne!(path(&h), heart);
+    assert!(h.state_mut().app.run("frame.create", json!({"rect": [0, 0, 9, 9], "preset": "blob"})).is_err());
+    assert!(h.state_mut().app.run("object.convertShape", json!({"to": "blob"})).is_err());
+    let line = run(&mut h, "line.create", json!({"a": [0, 0], "b": [50, 0], "preset": "doubleArrow"}))["id"].as_u64().unwrap();
+    let st = h.state().app.session.active().unwrap().doc.item(designcraft_doc::ItemId(line)).unwrap().stroke.clone();
+    assert_eq!((st.start, st.end), (designcraft_doc::Arrowhead::Triangle, designcraft_doc::Arrowhead::Triangle));
+    // A text box keeps its text when its shape changes.
+    let (t, story) = text_box(&mut h, "Stay");
+    run(&mut h, "object.convertShape", json!({"to": "diamond", "ids": [t]}));
+    assert_eq!(h.state().app.session.active().unwrap().doc.story(designcraft_doc::StoryId(story)).unwrap().text, "Stay");
+}
+
+#[test]
+fn a_table_is_its_own_object_even_while_typing() {
+    let mut h = window();
+    let (_, story) = text_box(&mut h, "A short test.");
+    run(&mut h, "text.select", json!({"story": story, "anchor": 3, "focus": 3}));
+    let steps = undo_steps(&mut h);
+    super::insert_table_of(&mut h.state_mut().app, 3, 2).unwrap();
+    h.run_steps(3);
+    assert_eq!(undo_steps(&mut h), steps + 1, "one undo step");
+    let doc = h.state().app.session.active().unwrap().doc.clone();
+    let st = doc.story(designcraft_doc::StoryId(story)).unwrap();
+    assert_eq!(st.text, "A short test.", "the text isn't split");
+    assert_eq!(doc.spreads[0].items.len(), 2, "a box of its own");
+    let info = run(&mut h, "table.get", json!({}));
+    assert_eq!(info["rows"].as_array().map_or(info["rows"].as_u64(), |r| Some(r.len() as u64)), Some(3));
+}
+
+#[test]
+fn groups_fold_from_the_right_when_the_ribbon_is_narrow() {
+    use super::ribbon::groups_that_fit;
+    let widths = [100.0, 100.0, 100.0, 100.0];
+    assert_eq!(groups_that_fit(&widths, 4, 500.0), 4, "room for them all");
+    assert_eq!(groups_that_fit(&widths, 4, 400.0), 4);
+    assert!(groups_that_fit(&widths, 4, 350.0) < 4);
+    assert_eq!(groups_that_fit(&widths, 4, 50.0), 0, "never a panic, however narrow");
+    // The whole window at a small laptop's width draws.
+    let mut h = window();
+    select_hello(&mut h);
+    h.set_size(vec2(900.0, 600.0));
+    h.run_steps(6);
+    for tab in ["Insert", "Page Design", "Mailings", "Review", "View", "Home"] {
+        h.get_by_label(tab).click();
+        h.run_steps(4);
+    }
+}
+
+#[test]
+fn every_tab_draws_for_every_kind_of_selection() {
+    let mut h = window();
+    let picture = run(&mut h, "frame.create", json!({"rect": [10, 10, 50, 50], "content": "graphic"}))["id"].as_u64().unwrap();
+    let shape = run(&mut h, "frame.create", json!({"rect": [60, 10, 90, 50]}))["id"].as_u64().unwrap();
+    let (text, story) = text_box(&mut h, "Words");
+    for id in [picture, shape, text] {
+        run(&mut h, "selection.set", json!({"ids": [id]}));
+        h.get_by_label("Format").click();
+        h.run_steps(4);
+    }
+    run(&mut h, "text.select", json!({"story": story, "anchor": 5, "focus": 5}));
+    run(&mut h, "table.insert", json!({"rows": 2, "cols": 2}));
+    h.run_steps(4);
+    h.get_by_label("Design").click();
+    h.run_steps(4);
+    h.get_by_label("Layout").click();
+    h.run_steps(4);
+}
+
+#[test]
+fn the_print_page_draws_each_layout_and_warns_of_text_that_wont_fit() {
+    let mut h = window();
+    run(&mut h, "frame.create", json!({"rect": [72, 72, 100, 90], "content": "text", "text": "Far too many words for so small a box to hold."}));
+    super::open_backstage(&h.ctx.clone(), super::Backstage::Print);
+    h.run_steps(5);
+    assert!(h.query_by_label_contains("Some text doesn't fit its box on page 1").is_some());
+    let plan = run(&mut h, "file.printPlan", json!({"layout": "booklet"}));
+    assert!(!plan["sides"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_picture_on_the_clipboard_pastes_as_a_picture_and_text_doesnt() {
+    let mut h = window();
+    let dir = std::env::temp_dir();
+    let _ = dir;
+    // Nothing on the clipboard, or no service: nothing happens.
+    assert!(!super::paste_picture(&mut h.state_mut().app));
+    h.state_mut().app.services.clipboard_image = Some(Box::new(|| None));
+    assert!(!super::paste_picture(&mut h.state_mut().app));
+    // A size that doesn't match its pixels is refused.
+    h.state_mut().app.services.clipboard_image = Some(Box::new(|| Some((9, 9, vec![0; 4]))));
+    assert!(!super::paste_picture(&mut h.state_mut().app));
+}

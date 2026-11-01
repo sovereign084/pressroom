@@ -305,6 +305,10 @@ impl SelectionTool {
 
     /// Ports and the loaded text cursor. None: not a threading event.
     fn thread_pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Option<Vec<Action>> {
+        // PressRoom has no text ports: its text boxes link through Create Link and the overflow mark.
+        if cx.publisher {
+            return None;
+        }
         let p = ev.pos;
         let exec = |c: Option<(&'static str, Value)>| c.map(|(id, params)| Action::Exec(id.into(), params)).into_iter().collect::<Vec<_>>();
         // A double click: sent as such, or the canvas's second press.
@@ -673,6 +677,18 @@ fn resize_edges_rect(from: Rect, handle: usize, p: Point) -> Rect {
     Rect::new(x0, y0, x1, y1)
 }
 
+/// The key that copies what a drag moves: Ctrl in PressRoom, as in Office; Alt in DesignCraft, as
+/// in InDesign.
+fn copy_key(cx: &ToolContext, m: Mods) -> bool {
+    if cx.publisher { m.cmd || m.ctrl } else { m.alt }
+}
+
+/// The keys held on a selection handle, as the resize reads them: PressRoom's Ctrl grows the object
+/// from its centre, as in Office, where DesignCraft's Alt does.
+fn resize_mods(cx: &ToolContext, m: Mods) -> Mods {
+    if cx.publisher { Mods { alt: m.cmd || m.ctrl, cmd: false, ctrl: false, ..m } } else { m }
+}
+
 fn finish_resize(from: Rect, handle: usize, rect: Rect, m: Mods) -> Rect {
     // Alt first: Shift then measures the drag from the centre and keeps it there.
     let rect = if m.alt { apply_alt(from, handle, rect) } else { rect };
@@ -873,6 +889,7 @@ impl Tool for SelectionTool {
         // The second press of a double click on a selection handle: Fit Frame to Content, along
         // that handle's side (a corner fits both).
         if !self.direct
+            && !cx.publisher
             && matches!(ev.kind, PointerKind::Down | PointerKind::DoubleClick)
             && ev.click_count() == 2
             && let Some(h) = handle_at(cx, p)
@@ -891,6 +908,7 @@ impl Tool for SelectionTool {
         // The second press of a double click on a frame with content: toggle between the frame and
         // its content.
         if !self.direct
+            && !cx.publisher
             && matches!(ev.kind, PointerKind::Down | PointerKind::DoubleClick)
             && ev.click_count() == 2
             && let Some(id) = cx.hit(p).map(|(_, id)| cx.doc.top_level_of(id).unwrap_or(id))
@@ -1003,7 +1021,8 @@ impl Tool for SelectionTool {
                     Some((sr, id)) => {
                         let id = if self.direct { id } else { selected_member_at(cx, p).unwrap_or_else(|| cx.doc.top_level_of(id).unwrap_or(id)) };
                         let mut out = vec![];
-                        if ev.mods.shift {
+                        // PressRoom: Ctrl adds to the selection too, as in Office.
+                        if ev.mods.shift || (cx.publisher && ev.mods.cmd) {
                             if cx.selection.contains(id) {
                                 // Keep it selected so a Shift-drag can constrain. A click still toggles, on release.
                                 self.shift_release = Some(id.0);
@@ -1059,7 +1078,7 @@ impl Tool for SelectionTool {
                         }
                         let label = if content {
                             "Move Content"
-                        } else if ev.mods.alt {
+                        } else if copy_key(cx, ev.mods) {
                             "Duplicate"
                         } else {
                             "Move"
@@ -1102,7 +1121,7 @@ impl Tool for SelectionTool {
                     // Same corner conversion transform.move already uses when the spread changes.
                     let mut landed = cx.layout.to_spread(target, cx.layout.to_canvas(origin_spread, q0 + ds));
                     // Command suspends snapping. A Shift-locked spread axis is not offered.
-                    if !ev.mods.cmd
+                    if !(if cx.publisher { ev.mods.alt } else { ev.mods.cmd })
                         && cx.snap.any()
                         && let Some(b0) = b0s
                     {
@@ -1122,7 +1141,7 @@ impl Tool for SelectionTool {
                                 y_edges,
                                 exclude: &exclude,
                                 exclude_guides: &[],
-                                copying: ev.mods.alt && !content,
+                                copying: copy_key(cx, ev.mods) && !content,
                                 lengths: [None, None],
                                 angle: None,
                                 radius: 0.0,
@@ -1158,15 +1177,17 @@ impl Tool for SelectionTool {
                         let ids: Vec<u64> = exclude.iter().map(|i| i.0).collect();
                         return vec![Action::Preview("transform.move".into(), json!({"dx": dx, "dy": dy, "ids": ids, "content": true}))];
                     }
-                    let mut params = json!({"dx": dx, "dy": dy, "copy": ev.mods.alt});
+                    let copy = copy_key(cx, ev.mods);
+                    let mut params = json!({"dx": dx, "dy": dy, "copy": copy});
                     if target != origin_spread {
-                        params = json!({"dx": dx, "dy": dy, "copy": ev.mods.alt, "toSpread": spread_json(target)});
+                        params = json!({"dx": dx, "dy": dy, "copy": copy, "toSpread": spread_json(target)});
                     }
                     vec![Action::Preview("transform.move".into(), params)]
                 }
                 Drag::Resize { handle, start, from, spread, stretch, lock } => {
                     let _ = start;
-                    let mods = if lock { Mods { shift: true, ..ev.mods } } else { ev.mods };
+                    let held = resize_mods(cx, ev.mods);
+                    let mods = if lock { Mods { shift: true, ..held } } else { held };
                     let pointer = cx.layout.to_spread(spread, p);
                     let raw = resize_edges_rect(from, handle, pointer);
                     let mut to = resize_rect(from, handle, pointer, mods);
@@ -1210,16 +1231,17 @@ impl Tool for SelectionTool {
                     }
                     vec![Action::Preview(
                         "transform.resize".into(),
-                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "distribute": distribute, "pictures": stretch}),
+                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd && !cx.publisher, "distribute": distribute, "pictures": stretch}),
                     )]
                 }
                 Drag::TurnedResize { handle, to_canvas, from, stretch, lock } => {
                     // No snapping: guides and other objects' edges lie square to the page.
-                    let mods = if lock { Mods { shift: true, ..ev.mods } } else { ev.mods };
+                    let held = resize_mods(cx, ev.mods);
+                    let mods = if lock { Mods { shift: true, ..held } } else { held };
                     let to = resize_rect(from, handle, to_canvas.inverse() * p, mods);
                     vec![Action::Preview(
                         "transform.resize".into(),
-                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd, "local": true, "pictures": stretch}),
+                        json!({"from": rect_json(from), "to": rect_json(to), "content": ev.mods.cmd && !cx.publisher, "local": true, "pictures": stretch}),
                     )]
                 }
                 Drag::ContentResize { id, handle, from, spread } => {
@@ -1383,11 +1405,14 @@ impl Tool for SelectionTool {
             self.drag = Drag::None;
             return vec![Action::Cancel];
         }
-        let inc = cx.doc.settings.keyboard_increment * if mods.shift { 10.0 } else { 1.0 };
+        // PressRoom: Alt nudges a little, and never copies.
+        let fine = if cx.publisher && mods.alt { 0.1 } else { 1.0 };
+        let inc = cx.doc.settings.keyboard_increment * fine * if mods.shift { 10.0 } else { 1.0 };
+        let copy = mods.alt && !cx.publisher;
         if key == ToolKey::Escape && self.live.take().is_some_and(|id| cx.selection.items == [id]) {
             return vec![Action::Handled];
         }
-        let mv = |dx: f64, dy: f64| vec![Action::Exec("transform.move".into(), json!({"dx": dx, "dy": dy, "copy": mods.alt}))];
+        let mv = |dx: f64, dy: f64| vec![Action::Exec("transform.move".into(), json!({"dx": dx, "dy": dy, "copy": copy}))];
         if cx.selection.items.is_empty() {
             // Selected ruler guides: the arrows nudge them, Delete deletes them.
             if cx.selection.guides.is_empty() {
@@ -1482,7 +1507,13 @@ impl Tool for SelectionTool {
             let over_content = matches!(self.drag, Drag::None)
                 && anchor_at(cx, p).is_none()
                 && cx.hit(p).is_some_and(|(_, id)| cx.doc.item(id).is_some_and(holds_content));
-            return if over_content { Cursor::Hand } else { Cursor::ArrowHollow };
+            return if over_content {
+                Cursor::Hand
+            } else if cx.publisher {
+                Cursor::Arrow
+            } else {
+                Cursor::ArrowHollow
+            };
         }
         if let Some(l) = self.loaded.and_then(|l| l.resolve(cx.doc)) {
             return if crate::thread::port_at(cx, p).is_some() { Cursor::LoadedText } else { l.cursor(cx, p) };
