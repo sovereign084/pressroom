@@ -1098,6 +1098,144 @@ fn the_pointer_types_in_text_boxes_and_selects_elsewhere_as_in_publisher() {
     assert_eq!(s.doc().unwrap().doc.spreads[0].items.len(), before + 1, "a box was drawn");
 }
 
+/// A text box's border, as Publisher's: within five screen pixels of its edge a press takes the
+/// box, also while typing in it, so it can be moved or deleted whole; the pointer shows which.
+#[test]
+fn a_text_box_border_takes_the_box_also_while_typing_as_in_publisher() {
+    use designcraft_tools::{Cursor, Mods, PointerEvent, PointerKind, SnapView, ToolKey};
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 612, "height": 792, "facingPages": false})).unwrap();
+    s.execute("frame.create", &json!({"rect": [100, 100, 300, 300], "content": "text", "text": "Hello"})).unwrap();
+    let frame = s.doc().unwrap().doc.spreads[0].items.last().unwrap().id;
+    s.execute("edit.deselectAll", &json!({})).unwrap();
+    s.execute("tool.select", &json!({"tool": "selection"})).unwrap();
+    // At 200% the border is 2.5 pt deep.
+    let v = ViewInfo { snap: SnapView::OFF, publisher: true, ..ViewInfo::at_zoom(2.0) };
+    let at = |s: &Session, x: f64, y: f64| s.layout().to_canvas(designcraft_doc::SpreadRef::Doc(0), designcraft_geom::Point::new(x, y));
+    let press = |s: &mut Session, from: (f64, f64), to: (f64, f64)| {
+        let (a, b) = (at(s, from.0, from.1), at(s, to.0, to.1));
+        s.pointer(&PointerEvent::new(PointerKind::Down, a.x, a.y), v).unwrap();
+        if a != b {
+            s.pointer(&PointerEvent::new(PointerKind::Drag, (a.x + b.x) / 2.0, (a.y + b.y) / 2.0), v).unwrap();
+            s.pointer(&PointerEvent::new(PointerKind::Drag, b.x, b.y), v).unwrap();
+        }
+        s.pointer(&PointerEvent::new(PointerKind::Up, b.x, b.y), v).unwrap();
+    };
+    let cursor = |s: &mut Session, x: f64, y: f64| {
+        let p = at(s, x, y);
+        s.cursor(p, Mods::default(), v)
+    };
+    // The text cursor inside; the move arrow on the border, inside and just outside the edge.
+    assert_eq!(cursor(&mut s, 200.0, 200.0), Cursor::Text);
+    assert_eq!(cursor(&mut s, 102.0, 150.0), Cursor::Move);
+    assert_eq!(cursor(&mut s, 99.0, 150.0), Cursor::Move);
+    assert_eq!(cursor(&mut s, 450.0, 600.0), Cursor::Arrow);
+    // DesignCraft's window keeps the Selection tool's own pointer.
+    let p = at(&s, 200.0, 200.0);
+    assert_eq!(s.cursor(p, Mods::default(), ViewInfo { publisher: false, ..v }), Cursor::Arrow);
+    // A press on the border selects the box; a little further in, it types.
+    press(&mut s, (102.0, 150.0), (102.0, 150.0));
+    assert_eq!(s.tool_id(), "selection");
+    assert_eq!(s.doc().unwrap().selection.items, vec![frame]);
+    press(&mut s, (104.0, 150.0), (104.0, 150.0));
+    assert_eq!(s.tool_id(), "type");
+    assert!(s.doc().unwrap().selection.text.is_some(), "a caret in the box");
+    // Typing, the border still shows the move arrow and the handles their arrows.
+    assert_eq!(cursor(&mut s, 102.0, 150.0), Cursor::Move);
+    assert_eq!(cursor(&mut s, 100.0, 200.0), Cursor::ResizeH);
+    assert_eq!(cursor(&mut s, 100.0, 100.0), Cursor::ResizeNwSe);
+    assert_eq!(cursor(&mut s, 200.0, 200.0), Cursor::Text);
+    assert_eq!(cursor(&mut s, 450.0, 600.0), Cursor::Arrow);
+    // Dragging the border moves the box.
+    press(&mut s, (102.0, 150.0), (132.0, 180.0));
+    let r = s.doc().unwrap().doc.item(frame).unwrap().bounds();
+    assert!((r.x0 - 130.0).abs() < 1e-6 && (r.y0 - 130.0).abs() < 1e-6, "moved to {r:?}");
+    // Typing again, a click on the border selects the whole box, and Delete deletes it.
+    press(&mut s, (200.0, 200.0), (200.0, 200.0));
+    assert_eq!(s.tool_id(), "type");
+    press(&mut s, (132.0, 180.0), (132.0, 180.0));
+    let sel = &s.doc().unwrap().selection;
+    assert!(sel.text.is_none(), "no caret any more");
+    assert_eq!(sel.items, vec![frame]);
+    s.tool_key(ToolKey::Delete, Mods::default(), v).unwrap();
+    assert!(s.doc().unwrap().doc.item(frame).is_none(), "the box is gone");
+}
+
+/// A text box inside a group, as in Publisher: the first click selects the group, the second
+/// puts the text cursor in the box, and clicks in its text then move the cursor; a double click
+/// gets there at once. Its border takes the box itself, which Delete deletes from the group.
+#[test]
+fn a_text_box_inside_a_group_types_on_the_second_click_as_in_publisher() {
+    use designcraft_tools::{Mods, PointerEvent, PointerKind, SnapView, ToolKey};
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 612, "height": 792, "facingPages": false})).unwrap();
+    s.execute("frame.create", &json!({"rect": [100, 100, 300, 300], "content": "text", "text": "Hello there, grouped words"})).unwrap();
+    let frame = s.doc().unwrap().doc.spreads[0].items.last().unwrap().id;
+    s.execute("frame.create", &json!({"rect": [350, 100, 450, 200]})).unwrap();
+    let other = s.doc().unwrap().doc.spreads[0].items.last().unwrap().id;
+    s.execute("frame.create", &json!({"rect": [100, 400, 300, 500], "content": "text", "text": "Alone"})).unwrap();
+    s.execute("selection.set", &json!({"ids": [frame.0, other.0]})).unwrap();
+    s.execute("object.group", &json!({})).unwrap();
+    let group = s.doc().unwrap().doc.top_level_of(frame).unwrap();
+    s.execute("edit.deselectAll", &json!({})).unwrap();
+    s.execute("tool.select", &json!({"tool": "selection"})).unwrap();
+    let v = ViewInfo { snap: SnapView::OFF, publisher: true, ..ViewInfo::at_zoom(1.0) };
+    let at = |s: &Session, x: f64, y: f64| s.layout().to_canvas(designcraft_doc::SpreadRef::Doc(0), designcraft_geom::Point::new(x, y));
+    let press = |s: &mut Session, x: f64, y: f64, clicks: u8| {
+        let p = at(s, x, y);
+        s.pointer(&PointerEvent { clicks, ..PointerEvent::new(PointerKind::Down, p.x, p.y) }, v).unwrap();
+        s.pointer(&PointerEvent { clicks, ..PointerEvent::new(PointerKind::Up, p.x, p.y) }, v).unwrap();
+    };
+    let caret = |s: &Session| s.doc().unwrap().selection.text.map(|t| (t.frame, t.focus));
+    // The first click selects the group; the second puts the text cursor in the box.
+    press(&mut s, 180.0, 110.0, 1);
+    assert_eq!((s.tool_id(), s.doc().unwrap().selection.items.clone()), ("selection", vec![group]));
+    press(&mut s, 180.0, 110.0, 1);
+    assert_eq!(s.tool_id(), "type");
+    let first = caret(&s).expect("a caret in the grouped box");
+    assert_eq!(first.0, Some(frame));
+    // A click further along its text moves the cursor there.
+    press(&mut s, 110.0, 110.0, 1);
+    let moved = caret(&s).expect("still typing");
+    assert_eq!(moved.0, Some(frame));
+    assert!(moved.1 < first.1, "the cursor moved back along the line: {first:?} -> {moved:?}");
+    // Its border takes the box itself: a drag moves the box alone, and Delete deletes it from
+    // the group.
+    let other_at = s.doc().unwrap().doc.item(other).unwrap().bounds();
+    let (a, b) = (at(&s, 102.0, 150.0), at(&s, 122.0, 170.0));
+    s.pointer(&PointerEvent::new(PointerKind::Down, a.x, a.y), v).unwrap();
+    assert_eq!((s.tool_id(), s.doc().unwrap().selection.items.clone()), ("selection", vec![frame]));
+    s.pointer(&PointerEvent::new(PointerKind::Drag, (a.x + b.x) / 2.0, (a.y + b.y) / 2.0), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Drag, b.x, b.y), v).unwrap();
+    s.pointer(&PointerEvent::new(PointerKind::Up, b.x, b.y), v).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    let r = doc.item(frame).unwrap().bounds();
+    assert!((r.x0 - 120.0).abs() < 1e-6 && (r.y0 - 120.0).abs() < 1e-6, "the box moved to {r:?}");
+    assert_eq!(doc.item(other).unwrap().bounds(), other_at, "the rest of the group stayed");
+    assert_eq!(doc.top_level_of(frame), Some(group), "still in its group");
+    press(&mut s, 122.0, 170.0, 1);
+    assert_eq!(s.doc().unwrap().selection.items, vec![frame], "a click on it keeps the box, not its group");
+    s.tool_key(ToolKey::Delete, Mods::default(), v).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    assert!(doc.item(frame).is_none(), "the box is gone");
+    assert!(doc.item(other).is_some(), "the rest of the group stays");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.item(frame).unwrap().bounds().x0, 100.0, "back in place");
+    // Typing in another box, a click on the grouped box selects its group first.
+    s.execute("edit.deselectAll", &json!({})).unwrap();
+    press(&mut s, 200.0, 450.0, 1);
+    assert_eq!(s.tool_id(), "type");
+    press(&mut s, 180.0, 110.0, 1);
+    assert_eq!((s.tool_id(), s.doc().unwrap().selection.items.clone()), ("selection", vec![group]));
+    // A double click gets into its text at once.
+    s.execute("edit.deselectAll", &json!({})).unwrap();
+    press(&mut s, 180.0, 110.0, 1);
+    press(&mut s, 180.0, 110.0, 2);
+    assert_eq!(s.tool_id(), "type");
+    assert_eq!(caret(&s).and_then(|c| c.0), Some(frame));
+}
+
 #[test]
 fn preflight_distinguishes_unplaced_stories_and_locates_footnote_overset() {
     use designcraft_doc::{AnchorPosition, AnchoredObject, ParaFormat, SpreadRef, Story, StoryId};

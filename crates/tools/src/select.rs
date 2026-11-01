@@ -1001,7 +1001,7 @@ impl Tool for SelectionTool {
                 }
                 match cx.hit(p) {
                     Some((sr, id)) => {
-                        let id = if self.direct { id } else { cx.doc.top_level_of(id).unwrap_or(id) };
+                        let id = if self.direct { id } else { selected_member_at(cx, p).unwrap_or_else(|| cx.doc.top_level_of(id).unwrap_or(id)) };
                         let mut out = vec![];
                         if ev.mods.shift {
                             if cx.selection.contains(id) {
@@ -1540,8 +1540,23 @@ fn handle_cursor(h: usize) -> Cursor {
 }
 
 /// Switch to the Type tool with the caret at `p` when it is over a text frame.
+/// PressRoom: the selected object inside a group under `p` (as when the border of a grouped text
+/// box being typed in is clicked). A press on it keeps that object selected, not its group, as
+/// in Publisher.
+fn selected_member_at(cx: &ToolContext, p: Point) -> Option<ItemId> {
+    if !cx.publisher {
+        return None;
+    }
+    let (_, top) = cx.hit(p)?;
+    let (_, sp) = cx.layout.spread_at(p)?;
+    let group = cx.doc.item(top)?;
+    designcraft_doc::hit_descendant(group, sp, cx.tol(4.0), &|c| cx.selection.contains(c.id)).filter(|m| *m != top)
+}
+
 fn edit_text_at(cx: &ToolContext, p: Point) -> Option<Vec<Action>> {
-    let (_, id) = cx.hit(p)?;
+    // In PressRoom a double click reaches a text box inside a group too: its first click selects
+    // the group and its second lands in the box, as in Publisher.
+    let (_, id) = if cx.publisher { cx.hit_text_frame(p)? } else { cx.hit(p)? };
     if !cx.doc.item(id).is_some_and(|i| i.is_text_frame()) {
         return None;
     }

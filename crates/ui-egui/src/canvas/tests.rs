@@ -922,6 +922,44 @@ fn a_selected_group_paints_both_ports_of_its_text_frame() {
     }
 }
 
+/// PressRoom shows a text box's handles while the text cursor is in it, as Publisher does, so its
+/// border and handles can be seen and grabbed; DesignCraft's window shows only the caret.
+#[test]
+fn pressroom_shows_the_box_handles_while_typing_in_it() {
+    let mut app = DesignApp::new(designcraft_engine::Session::new(), crate::Services::default());
+    app.run("file.new", json!({})).unwrap();
+    let s = &mut app.session;
+    let a = s.execute("frame.create", &json!({"rect": [100, 100, 300, 300], "content": "text", "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+    s.set_tool("type");
+    s.execute("text.placeCaret", &json!({"frame": a, "point": [200, 120]})).unwrap();
+    assert!(app.session.doc().unwrap().selection.items.is_empty(), "typing, no object is selected");
+    let doc = app.session.doc().unwrap().doc.clone();
+    let layout = CanvasLayout::new(&doc, false);
+    let xf = Xf { min: pos2(0.0, 0.0), origin: Point::new(0.0, 0.0), zoom: 1.0, rot: 0, pivot: pos2(0.0, 0.0) };
+    let corners = [(100.0, 100.0), (300.0, 100.0), (300.0, 300.0), (100.0, 300.0)]
+        .map(|(x, y)| xf.to_screen(layout.to_canvas(designcraft_doc::SpreadRef::Doc(0), Point::new(x, y))));
+    let round_handles = |app: &DesignApp| {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            draw_selection(app, ui.painter(), &xf, &doc, &layout);
+        });
+        output.textures_delta.clear();
+        let circles: Vec<Pos2> = output
+            .shapes
+            .into_iter()
+            .filter_map(|s| match s.shape {
+                egui::Shape::Circle(c) if c.fill == Color32::WHITE => Some(c.center),
+                _ => None,
+            })
+            .collect();
+        corners.iter().filter(|c| circles.iter().any(|h| (*h - **c).length() < 0.01)).count()
+    };
+    app.ui.pressroom_shell = true;
+    assert_eq!(round_handles(&app), 4, "a round handle on each corner");
+    app.ui.pressroom_shell = false;
+    assert_eq!(round_handles(&app), 0);
+}
+
 fn out_frame(doc: &Document, id: u64) -> &Item {
     doc.item(designcraft_doc::ItemId(id)).unwrap()
 }

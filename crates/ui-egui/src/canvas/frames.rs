@@ -198,6 +198,7 @@ fn publisher_crop_handles(painter: &egui::Painter, xf: &Xf, b: HandleBox) {
 pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, doc: &Document, layout: &CanvasLayout) -> Option<Rect> {
     let st = app.session.active()?;
     let sel: &Selection = &st.selection;
+    let publisher = app.ui.pressroom_shell;
     let mut text_rect = None;
     // Text selection / caret.
     if let Some(ts) = sel.text {
@@ -210,6 +211,15 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
             && let (Some(it), Some((a, _))) = (doc.item(fid), item_canvas_xf(doc, layout, fid))
         {
             text_rect = Some(xf.rect(a.transform_rect_bbox(it.bounds())));
+            // Publisher shows the box's outline and handles while the text cursor is in it: its
+            // border can be grabbed to move the box, or to select it and delete it.
+            if publisher && sel.items.is_empty() {
+                let b = designcraft_tools::select::turned_box(it, a).unwrap_or_else(|| HandleBox::square(a.transform_rect_bbox(it.bounds())));
+                let mut outline: Vec<Pos2> = b.corners().into_iter().map(|c| xf.to_screen(c)).collect();
+                outline.extend(outline.first().copied());
+                painter.add(egui::Shape::line(outline, Stroke::new(1.0, PUBLISHER_SELECTION)));
+                publisher_handles(painter, xf, b, PUBLISHER_SELECTION);
+            }
         }
     }
     let mut union: Option<Rect> = None;
@@ -217,7 +227,6 @@ pub(super) fn draw_selection(app: &DesignApp, painter: &egui::Painter, xf: &Xf, 
     let mut canvas_union: Option<DRect> = None;
     // One turned object's own box: PressRoom turns its outline and handles with it, as Publisher does.
     let mut turned: Option<HandleBox> = None;
-    let publisher = app.ui.pressroom_shell;
     let mut color = Color32::from_rgb(79, 153, 255);
     for id in &sel.items {
         let (Some(it), Some((a, _))) = (doc.item(*id), item_canvas_xf(doc, layout, *id)) else { continue };

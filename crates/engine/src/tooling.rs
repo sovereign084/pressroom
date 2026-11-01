@@ -3,7 +3,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use designcraft_doc::{CellAddr, StoryId};
+use designcraft_doc::{CellAddr, Document, Selection, StoryId};
 use designcraft_geom::Unit;
 pub use designcraft_tools::SnapView;
 use designcraft_tools::{Action, CanvasLayout, Cursor, Mods, Overlay, PointerEvent, PointerKind, ToolContext, ToolKey};
@@ -12,17 +12,48 @@ use serde_json::{Value, json};
 
 use crate::{EngineError, HistoryEntry, Interaction, Result, Session, record_undo};
 
+/// How far inside a text box's edge (screen pixels) a press still takes the box rather than its
+/// text: Publisher's border, where the pointer becomes the move arrow. With the few pixels the
+/// hit reaches outside the edge, the border is about ten pixels wide.
+const BOX_EDGE_PX: f64 = 5.0;
+
 /// Whether `p` is well inside a text box (not on or near its edge, where a press moves or resizes
-/// it). Text boxes inside groups don't count: a click selects the group first.
+/// it). A text box inside a group counts as in Publisher: the first click selects the group, and
+/// once the group (or the box) is selected, or while typing in the box, a press in its text types.
 fn text_interior_at(cx: &ToolContext, p: designcraft_geom::Point) -> bool {
     let Some((_, id)) = cx.hit_text_frame(p) else { return false };
-    if cx.doc.top_level_of(id).is_some_and(|top| top != id) {
-        return false;
+    if let Some(top) = cx.doc.top_level_of(id).filter(|top| *top != id) {
+        let story = cx.doc.item(id).and_then(|it| it.text_frame()).map(|t| t.story);
+        let typing_in = cx.selection.text.is_some_and(|t| Some(t.story) == story);
+        if !(typing_in || cx.selection.contains(top) || cx.selection.contains(id)) {
+            return false;
+        }
     }
-    let d = cx.tol(6.0);
-    [(d, 0.0), (-d, 0.0), (0.0, d), (0.0, -d)]
-        .into_iter()
-        .all(|(dx, dy)| cx.hit_text_frame(designcraft_geom::Point::new(p.x + dx, p.y + dy)).is_some_and(|(_, h)| h == id))
+    let (Some(it), Some(xf)) = (cx.doc.item(id), cx.item_canvas_xf(id)) else { return false };
+    // Type on a path has no inside: its letters are the text.
+    if !it.path.is_closed() {
+        return true;
+    }
+    let to_box = (xf * it.xf).inverse();
+    let path = it.path.to_bezpath();
+    let d = cx.tol(BOX_EDGE_PX);
+    let s = d * std::f64::consts::FRAC_1_SQRT_2;
+    [(d, 0.0), (-d, 0.0), (0.0, d), (0.0, -d), (s, s), (s, -s), (-s, s), (-s, -s)].into_iter().all(|(dx, dy)| {
+        designcraft_geom::hit::fill_contains(&path, designcraft_geom::FillRule::NonZero, to_box * designcraft_geom::Point::new(p.x + dx, p.y + dy))
+    })
+}
+
+/// The selection as the Selection tool takes it over from the Type tool: the text's frame,
+/// selected as an object.
+fn object_selection(doc: &Document, sel: &Selection) -> Selection {
+    let mut sel = sel.clone();
+    if let Some(t) = sel.text.take()
+        && let Some(f) = t.frame.or_else(|| doc.story(t.story).and_then(|s| s.frames.first().copied()))
+    {
+        sel.items = vec![f];
+        sel.cells = None;
+    }
+    sel
 }
 
 /// Something the UI should do in response to a tool or command.
@@ -93,11 +124,8 @@ impl Session {
         // Leaving the Type tool keeps the text frame selected.
         if id != "type"
             && let Some(st) = self.active_mut()
-            && let Some(t) = st.selection.text.take()
-            && let Some(f) = t.frame.or_else(|| st.doc.story(t.story).and_then(|s| s.frames.first().copied()))
         {
-            st.selection.items = vec![f];
-            st.selection.cells = None;
+            st.selection = object_selection(&st.doc, &st.selection);
         }
     }
 
@@ -109,9 +137,15 @@ impl Session {
     }
 
     fn with_ctx<T>(&mut self, view: ViewInfo, f: impl FnOnce(&mut Self, &ToolContext) -> T) -> Option<T> {
+        self.with_ctx_as(view, false, f)
+    }
+
+    /// `with_ctx`; with `object`, the selection is as the Selection tool takes it over from the
+    /// Type tool (the text's frame).
+    fn with_ctx_as<T>(&mut self, view: ViewInfo, object: bool, f: impl FnOnce(&mut Self, &ToolContext) -> T) -> Option<T> {
         let st = self.active()?;
         let doc = st.doc.clone();
-        let sel = st.selection.clone();
+        let sel = if object { object_selection(&doc, &st.selection) } else { st.selection.clone() };
         let layer = st.active_layer;
         let layout = CanvasLayout::new(&doc, st.editing_parents);
         let cache = self.cache.clone();
@@ -185,11 +219,36 @@ impl Session {
         if std::mem::take(&mut self.tool_armed) {
             return;
         }
-        let in_text = self.with_ctx(view, |_, cx| text_interior_at(cx, ev.pos)).unwrap_or(false);
         match self.tool.id() {
-            "selection" if in_text => self.set_tool("type"),
-            "type" if !in_text && !self.with_ctx(view, |_, cx| cx.hit_text_frame(ev.pos).is_some()).unwrap_or(false) => self.set_tool("selection"),
+            "selection" if self.with_ctx(view, |_, cx| text_interior_at(cx, ev.pos)).unwrap_or(false) => self.set_tool("type"),
+            // Typing, a press on a text box's border takes the box (to move it, or to delete it),
+            // as on Publisher's border; so does a press on its handles or off it.
+            "type" if !self.with_ctx(view, |_, cx| text_interior_at(cx, ev.pos)).unwrap_or(false) => self.set_tool("selection"),
             _ => {}
+        }
+    }
+
+    /// The pointer Publisher shows where a press would act (see `publisher_pointer`): the text
+    /// cursor inside a text box, the four-way move arrow on a text box's border and on other
+    /// objects, and the handles' arrows on the handles, also while typing.
+    fn publisher_cursor(&mut self, tool_cursor: Cursor, p: designcraft_geom::Point, mods: Mods, view: ViewInfo) -> Cursor {
+        if mods.cmd || self.temp_tool.is_some() || self.tool.busy() || self.tool_armed {
+            return tool_cursor;
+        }
+        let object = |cx: &ToolContext, c: Cursor| match c {
+            Cursor::Arrow if cx.hit(p).is_some() => Cursor::Move,
+            c => c,
+        };
+        match self.tool.id() {
+            "selection" if tool_cursor == Cursor::Arrow => {
+                self.with_ctx(view, |_, cx| if text_interior_at(cx, p) { Cursor::Text } else { object(cx, Cursor::Arrow) }).unwrap_or(tool_cursor)
+            }
+            "type" if !self.with_ctx(view, |_, cx| text_interior_at(cx, p)).unwrap_or(true) => {
+                // What the Selection tool shows once the press has made the text's box the selection.
+                let select = designcraft_tools::create("selection");
+                self.with_ctx_as(view, true, |_, cx| object(cx, select.cursor(cx, p, mods))).unwrap_or(tool_cursor)
+            }
+            _ => tool_cursor,
         }
     }
 
@@ -225,7 +284,8 @@ impl Session {
             let borrowed = designcraft_tools::create(id);
             return self.with_ctx(view, |_, cx| borrowed.cursor(cx, p, mods)).unwrap_or_default();
         }
-        self.with_ctx(view, |s, cx| s.gesture_tool().cursor(cx, p, mods)).unwrap_or_default()
+        let c = self.with_ctx(view, |s, cx| s.gesture_tool().cursor(cx, p, mods)).unwrap_or_default();
+        if view.publisher { self.publisher_cursor(c, p, mods, view) } else { c }
     }
 
     /// Canvas centres of the content grabbers the Selection tool shows: the selected frame's and

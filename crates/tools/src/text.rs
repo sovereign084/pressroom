@@ -234,12 +234,10 @@ impl TypeTool {
             self.border = Some(b);
             return vec![];
         }
-        // Text frames take the caret (locked ones too). PressRoom, like Publisher, never turns a
+        // Text frames take the caret (locked ones too, and ones inside groups, as InDesign's Type
+        // tool and Publisher's text cursor reach them). PressRoom, like Publisher, never turns a
         // picture box or shape into a text box: a press on one draws a new text box over it.
-        if let Some((_, id)) = cx.hit(ev.pos)
-            && let Some(it) = cx.doc.item(id)
-            && it.is_text_frame()
-        {
+        if let Some((_, id)) = cx.hit_text_frame(ev.pos) {
             let sp = cx.layout.spread_at(ev.pos).map(|(_, p)| p).unwrap_or(ev.pos);
             let clicks = ev.click_count();
             // Whole rows/columns selected: wait to see whether this is a drag.
