@@ -30,6 +30,7 @@ mod templates;
 mod tests;
 mod tips;
 pub mod update;
+pub mod update_job;
 mod wordart;
 
 use designcraft_doc::Content;

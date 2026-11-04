@@ -51,6 +51,11 @@ const ALLOWED: &[(&str, &str)] = &[
         "the reader writes a file's pictures into the folder `pubconvert` made for them, under names it makes from each picture's position in the file, never a name from the file",
     ),
     (
+        "ui-egui/src/pressroom/update.rs",
+        "PressRoom's update keeps its installer, helper and record in its own folder (`%LOCALAPPDATA%/PressRoom/Update`): no command parameter or document field names a path, and the installer comes from the update check or, for testing, `pressroom.update.ready`, which has its own switch",
+    ),
+    ("ui-egui/src/pressroom/update_job.rs", "the update's record, in the same folder as `update.rs` above"),
+    (
         "ui-egui/src/theme.rs",
         "PressRoom's window font is Segoe UI, read from the fixed Windows font folder (`%WINDIR%/Fonts`): no command parameter or document field names a path",
     ),

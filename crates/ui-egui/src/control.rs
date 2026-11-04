@@ -169,6 +169,30 @@ fn handle_request(app: &mut DesignApp, ctx: &egui::Context, req: &ControlRequest
             }
             wrap(app.run(id, params))
         }
+        // The real update path with an installer that isn't published: for testing an update
+        // without releasing it. The file named here gets run, so --control alone doesn't allow it.
+        "pressroom.update.ready" => {
+            if std::env::var_os("PRESSROOM_TEST_UPDATES").is_none() {
+                return err("pressroom.update.ready needs PRESSROOM_TEST_UPDATES set");
+            }
+            let (Some(version), Some(msi)) = (s("version"), s("msi")) else { return err("missing `version` or `msi`") };
+            app.updates_rt.pressroom.downloaded(version, std::path::PathBuf::from(msi));
+            ok(json!({"phase": format!("{:?}", app.updates_rt.pressroom.phase())}))
+        }
+        "pressroom.update.install" => {
+            let updates = app.updates_rt.pressroom.clone();
+            updates.install(app, ctx);
+            ok(json!({"phase": format!("{:?}", updates.phase()), "dialog": app.ui.dialog.as_ref().map(|d| d.fields.clone())}))
+        }
+        "pressroom.update.retry" => {
+            let updates = app.updates_rt.pressroom.clone();
+            updates.retry(app, ctx);
+            ok(json!({"phase": format!("{:?}", updates.phase())}))
+        }
+        "pressroom.update.phase" => {
+            let open: Vec<Option<String>> = app.session.documents().iter().map(|d| d.path.clone()).collect();
+            ok(json!({"phase": format!("{:?}", app.updates_rt.pressroom.phase()), "version": crate::pressroom::update::VERSION, "open": open}))
+        }
         "engine.commands" => ok(all_commands(app)),
         "document.inspect" => wrap(app.run("document.inspect", json!({}))),
         "ui.inspect" => ok(inspect(app, ctx)),
@@ -546,6 +570,19 @@ mod automation_contract_tests {
             Outcome::Done(v) => v,
             Outcome::Screenshot { .. } => panic!("unexpected screenshot"),
         }
+    }
+
+    /// The control channel alone can't offer an update: the file it names gets run.
+    #[test]
+    fn a_test_update_needs_its_own_switch() {
+        if std::env::var_os("PRESSROOM_TEST_UPDATES").is_some() {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let mut a = app();
+        let _ = call(&mut a, &ctx, "pressroom.update.ready", json!({"version": "9.9.9", "msi": "C:/not-published.msi"}));
+        let phase = format!("{:?}", a.updates_rt.pressroom.phase());
+        assert!(!phase.contains("not-published") && !phase.contains("Ready"), "{phase}");
     }
 
     /// On a scaled display a screenshot's pixels aren't points: clicking where a screenshot shows

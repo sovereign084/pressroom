@@ -22,6 +22,8 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod profile;
+#[cfg(windows)]
+mod update_helper;
 
 use designcraft_engine::Session;
 use designcraft_ui_egui::{DesignApp, Services};
@@ -412,6 +414,11 @@ fn control_port_from(source: &str, value: Option<String>) -> Option<u16> {
 }
 
 fn main() -> std::process::ExitCode {
+    // Windows: PressRoom's update helper is a copy of this program (see `update_helper`).
+    #[cfg(windows)]
+    if let Some(code) = update_helper::run(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     // Windows: the update helper is a copy of this program started with `--finish-update`.
     #[cfg(windows)]
     if let Some(result) = craft_update::self_update::finish(&craft_update::suite::DESIGNCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {

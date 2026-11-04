@@ -209,6 +209,10 @@ fn restart_and_update_waits_for_unsaved_work() {
     // Nothing installs over unsaved work: the update stays ready and PressRoom says why.
     assert!(matches!(h.state().app.updates_rt.pressroom.phase(), crate::pressroom::update::Phase::Ready { .. }));
     assert!(h.state().app.ui.status.contains("Save your publications first"), "{}", h.state().app.ui.status);
+    // And not only in the status line: a message says so, and what happens to the publications.
+    let dialog = h.state().app.ui.dialog.as_ref().expect("a message");
+    assert_eq!(dialog.id, "alert");
+    assert!(dialog.fields["message"].as_str().unwrap().contains("opens your saved publications again"), "{:?}", dialog.fields);
 }
 
 #[test]

@@ -59,6 +59,8 @@ merged document; the template stays as it was ([agents.md](agents.md#data-merge)
 
 Headless window screenshots (locked screen, hidden window): `cargo run -p designcraft-ui-egui --example ui_shot -- script.jsonl`, where each line is one of the requests above, `{"shot": "/abs/out.png"}` or `{"steps": n}` (renders the whole UI offscreen with wgpu).
 
+PressRoom's update can be tested for real without a release: `pressroom.update.ready` (`version`, `msi`) offers an installer, `pressroom.update.install` and `pressroom.update.retry` press the bar's buttons, and `pressroom.update.phase` says where it stands. `pressroom.update.ready` is refused unless `PRESSROOM_TEST_UPDATES` is set, because the file it names gets run.
+
 The MCP server (`designcraft-cli mcp`) wraps the same methods for Claude and other agents.
 
 ### Click and drag limits

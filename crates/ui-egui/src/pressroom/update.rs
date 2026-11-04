@@ -1,15 +1,20 @@
 //! PressRoom's updates. At start, and from File › Account › Check for Updates, PressRoom asks
 //! GitHub for its newest release (`REPO`); a newer one shows in a message bar under the ribbon, the
 //! way Office offers its updates. Update Now downloads the installer, checked against the SHA-256
-//! GitHub publishes for it; Restart and Update closes PressRoom (once everything is saved), runs the
-//! installer and opens PressRoom again. DesignCraft's own updater stays off (`updates_ui`): it only
-//! installs the Craft App Suite's packages.
+//! GitHub publishes for it; Restart and Update (once everything is saved) starts the update helper,
+//! closes PressRoom when the helper says it is running, and the helper installs and opens PressRoom
+//! again (`update_job`). The next start says how it went, here in the bar, and opens again what was
+//! open. DesignCraft's own updater stays off (`updates_ui`): it only installs the Craft App Suite's
+//! packages.
 
-use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use egui::{Color32, Sense, Stroke, Ui, vec2};
 
+use super::update_job::{self as job, Arrival};
 use crate::DesignApp;
 
 /// PressRoom's version, stamped in by `packaging/pressroom/build-installer.ps1`. Developer builds
@@ -53,6 +58,18 @@ pub enum Phase {
         version: String,
         msi: PathBuf,
     },
+    /// Restart and Update was clicked: PressRoom closes when the helper says it is running.
+    Starting {
+        version: String,
+    },
+    /// An update that didn't go in, with the installer it kept: Try Again runs it again.
+    NotInstalled {
+        message: String,
+        version: String,
+        msi: PathBuf,
+    },
+    /// The last update worked, or is still going: words for the bar.
+    Note(String),
     Failed(String),
 }
 
@@ -72,6 +89,8 @@ struct Inner {
     installer: Option<Installer>,
     /// The bar was closed; a new check shows it again.
     dismissed: bool,
+    /// The last update's record has been looked at.
+    arrived: bool,
     ctx: Option<egui::Context>,
 }
 
@@ -107,6 +126,13 @@ impl Updates {
         self.with(|s| !s.dismissed && !matches!(s.phase, Phase::Idle | Phase::Checking { manual: false }))
     }
 
+    /// A downloaded update, ready to install: the control channel's way in, for testing the real
+    /// update path with an installer that isn't published, and the tests'.
+    pub fn downloaded(&self, version: &str, msi: PathBuf) {
+        self.with(|s| s.dismissed = false);
+        self.set(Phase::Ready { version: version.into(), msi });
+    }
+
     /// A newer release, as a check would find it (tests).
     #[cfg(test)]
     pub fn offer(&self, version: &str) {
@@ -118,13 +144,6 @@ impl Updates {
         self.set(Phase::Available { version: version.into(), notes_url: None });
     }
 
-    /// A downloaded update, ready to install (tests).
-    #[cfg(test)]
-    pub fn downloaded(&self, version: &str, msi: PathBuf) {
-        self.with(|s| s.dismissed = false);
-        self.set(Phase::Ready { version: version.into(), msi });
-    }
-
     /// Ask GitHub for a newer release, in the background. `manual`: the user asked, so "you're up
     /// to date" and failures are shown too; the check at start stays quiet about them.
     pub fn check(&self, ctx: &egui::Context, manual: bool) {
@@ -133,8 +152,10 @@ impl Updates {
             if manual {
                 s.dismissed = false;
             }
-            matches!(s.phase, Phase::Checking { .. } | Phase::Downloading { .. })
-        });
+            // What the last update did stays in the bar until it is read: the check at start
+            // would otherwise replace it with the same offer again.
+            matches!(s.phase, Phase::Checking { .. } | Phase::Downloading { .. } | Phase::Starting { .. })
+        }) || (!manual && self.has_update_news());
         if busy {
             return;
         }
@@ -150,6 +171,11 @@ impl Updates {
             let me = self.clone();
             std::thread::spawn(move || {
                 let found = newest(current);
+                // The check at start begins before the last update's record is read: its answer
+                // doesn't replace what that update has to say.
+                if !manual && me.has_update_news() {
+                    return;
+                }
                 let quiet = |phase: Phase| if manual { phase } else { Phase::Idle };
                 match found {
                     Ok(Some((version, notes_url, installer))) => {
@@ -169,6 +195,11 @@ impl Updates {
             let _ = current;
             self.set(Phase::Failed("PressRoom can't update itself in a web browser.".into()));
         }
+    }
+
+    /// Whether the bar is saying what the last update did.
+    fn has_update_news(&self) -> bool {
+        self.with(|s| matches!(s.phase, Phase::NotInstalled { .. } | Phase::Note(_)))
     }
 
     /// Download the offered installer, in the background.
@@ -199,19 +230,176 @@ impl Updates {
         let _ = (version, installer);
     }
 
-    /// Close PressRoom and install the downloaded update, which opens PressRoom again when it's
-    /// done. Refused while a publication has unsaved changes.
+    /// Start the update: PressRoom closes when the helper says it is running, and the helper opens
+    /// it again. Refused while a publication has unsaved changes.
     pub fn install(&self, app: &mut DesignApp, ctx: &egui::Context) {
-        let Phase::Ready { msi, .. } = self.phase() else { return };
-        if app.session.documents().iter().any(|d| d.is_dirty()) {
+        let Phase::Ready { version, msi } = self.phase() else { return };
+        let unsaved: Vec<String> = app
+            .session
+            .documents()
+            .iter()
+            .filter(|d| d.is_dirty())
+            .map(|d| {
+                d.path
+                    .as_deref()
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .map_or_else(|| "a new publication".to_string(), |n| n.to_string_lossy().to_string())
+            })
+            .collect();
+        if !unsaved.is_empty() {
+            let message = format!(
+                "Please save your work first: {}.\n\nPressRoom closes to update, and opens your saved publications again afterwards.",
+                unsaved.join(", ")
+            );
             app.status("Save your publications first, then click Restart and Update.");
+            app.ui.dialog = Some(crate::dialogs::Dialog::new("alert", serde_json::json!({"title": "Restart and Update", "message": message})));
             return;
         }
-        match spawn_installer(&msi) {
-            Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            Err(e) => self.set(Phase::Failed(e)),
+        let publications: Vec<String> = app.session.documents().iter().filter_map(|d| d.path.clone()).collect();
+        self.with(|s| s.dismissed = false);
+        self.set(Phase::Starting { version: version.clone() });
+        match start_helper(&version, &msi, publications) {
+            Ok(handed) => self.watch_helper(handed, ctx.clone(), version, msi),
+            Err(e) => {
+                log::warn!("PressRoom's update couldn't start: {e}");
+                let message = format!("{COULDNT_START} You're still on {} and your work is safe.", VERSION.unwrap_or_default());
+                self.set(Phase::NotInstalled { message, version, msi });
+            }
         }
     }
+
+    /// Try Again: the installer the update kept, or a fresh check when it has gone.
+    pub fn retry(&self, app: &mut DesignApp, ctx: &egui::Context) {
+        let Phase::NotInstalled { version, msi, .. } = self.phase() else { return };
+        if !msi.is_file() {
+            self.set(Phase::Idle);
+            return self.check(ctx, true);
+        }
+        self.set(Phase::Ready { version, msi });
+        self.install(app, ctx);
+    }
+
+    /// Follows the helper: PressRoom closes once it says it is running. If it never does (something
+    /// stopped it, such as antivirus), PressRoom stays open and says so. Afterwards, if PressRoom
+    /// is somehow still open when the helper gives up on it, the bar says that too.
+    fn watch_helper(&self, handed: Handed, ctx: egui::Context, version: String, msi: PathBuf) {
+        let me = self.clone();
+        std::thread::spawn(move || {
+            let Handed { mut child, record } = handed;
+            let started = web_time::Instant::now();
+            let safe = format!("You're still on {} and your work is safe.", VERSION.unwrap_or_default());
+            loop {
+                let stage = job::read_record(&record).map(|r| r.stage).unwrap_or_default();
+                if stage != job::Stage::Started {
+                    break;
+                }
+                let exited = matches!(child.try_wait(), Ok(Some(_)) | Err(_));
+                if exited || started.elapsed() > HELPER_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_file(&record);
+                    if let Some(dir) = record.parent() {
+                        let _ = std::fs::remove_file(dir.join(job::HELPER_NAME));
+                    }
+                    me.set(Phase::NotInstalled { message: format!("{COULDNT_START} {safe}"), version, msi });
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            ctx.request_repaint();
+            // Normally this process ends here. If it doesn't, the helper's answer still reaches it.
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if let Some(r) = job::read_record(&record).filter(|r| r.stage == job::Stage::Finished) {
+                    if let Arrival::NotUpdated { message, version, msi, .. } = job::arrival(&r, VERSION.unwrap_or_default(), false) {
+                        let _ = std::fs::remove_file(&record);
+                        me.set(Phase::NotInstalled { message, version, msi });
+                    }
+                    return;
+                }
+            }
+        });
+    }
+
+    /// Once, at start: what the last update did, in the bar, and what was open opens again.
+    fn arrive(&self, app: &mut DesignApp, ctx: &egui::Context) {
+        if self.with(|s| std::mem::replace(&mut s.arrived, true)) {
+            return;
+        }
+        self.with(|s| s.ctx = Some(ctx.clone()));
+        // A developer's build (and the tests) has no update to report.
+        let Some(current) = VERSION else { return };
+        let dir = job::update_dir();
+        let path = job::record_path(&dir);
+        let Some(record) = job::read_record(&path) else { return };
+        let alive = record.helper_pid.is_some_and(helper_alive);
+        let reopen = match job::arrival(&record, current, alive) {
+            Arrival::Updated { message, publications } => {
+                self.set(Phase::Note(message));
+                clean_up_after_update(&dir);
+                publications
+            }
+            Arrival::NotUpdated { message, version, msi, publications } => {
+                self.set(Phase::NotInstalled { message, version, msi });
+                // The installer and its log stay, for Try Again and for finding out why.
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(dir.join(job::HELPER_NAME));
+                publications
+            }
+            Arrival::StillUpdating { message } => {
+                self.set(Phase::Note(message));
+                Vec::new()
+            }
+        };
+        for file in reopen {
+            if designcraft_engine::io::exists(&file)
+                && let Err(e) = app.open_file("file.open", serde_json::json!({"path": file}))
+            {
+                app.status(format!("Couldn't open {file} again: {e}"));
+            }
+        }
+    }
+}
+
+/// What the bar says when the helper never got going, whichever way it was stopped.
+const COULDNT_START: &str = "The update couldn't start. Something on this computer, such as antivirus, may have stopped it.";
+
+/// How long the helper has to say it is running: antivirus can hold a new program a good while.
+const HELPER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A helper that has been started: the process, and the record it will answer in.
+struct Handed {
+    child: std::process::Child,
+    record: PathBuf,
+}
+
+/// Whether the helper process is still running.
+#[cfg(windows)]
+fn helper_alive(pid: u32) -> bool {
+    !craft_update::process::wait_for_exit(pid, std::time::Duration::ZERO)
+}
+
+#[cfg(not(windows))]
+fn helper_alive(_pid: u32) -> bool {
+    false
+}
+
+/// The update worked: nothing it kept is needed any more. A file still held is removed next time.
+fn clean_up_after_update(dir: &std::path::Path) {
+    let dir = dir.to_path_buf();
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::spawn(move || {
+        for _ in 0..20 {
+            if std::fs::remove_dir_all(&dir).is_ok() || !dir.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("PressRoom updates"));
+    });
+    #[cfg(target_arch = "wasm32")]
+    let _ = dir;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -236,53 +424,54 @@ fn newest(current: &str) -> Result<Option<(String, Option<String>, Installer)>, 
     Ok(Some((release.version_label(), notes, Installer { url: asset.url.clone(), size: asset.size, sha256, name: asset.name.clone() })))
 }
 
-/// The PowerShell that waits for PressRoom (process `pid`) to close, runs the installer with a
-/// progress bar and no questions, and opens PressRoom again. The installer's log goes beside it
-/// (the .msi's name with .log), for when an update doesn't go in.
-pub fn helper_script(pid: u32, msi: &Path, exe: &Path) -> String {
-    // Single-quoted PowerShell strings: a quote inside is written twice.
-    let quote = |p: &Path| p.to_string_lossy().replace('\'', "''");
-    format!(
-        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i \"{}\" /passive /norestart /l*v \"{}\"' -Wait; Start-Process -FilePath '{}'",
-        quote(msi),
-        quote(&msi.with_extension("log")),
-        quote(exe)
-    )
-}
-
-/// `script` for PowerShell's `-EncodedCommand`: UTF-16LE in base64, which needs no quoting.
-pub fn encode_command(script: &str) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let at = |i: usize| u32::from(chunk.get(i).copied().unwrap_or(0));
-        let n = (at(0) << 16) | (at(1) << 8) | at(2);
-        for (k, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            out.push(if k <= chunk.len() { char::from(ALPHABET[((n >> shift) & 63) as usize]) } else { '=' });
+/// Keeps the installer and a copy of this program in the update's folder, writes the record, and
+/// starts the copy as the helper. The record is written first, so a helper that dies with nothing
+/// said is noticed at the next start.
+#[cfg(windows)]
+fn start_helper(version: &str, msi: &Path, publications: Vec<String>) -> Result<Handed, String> {
+    use std::os::windows::process::CommandExt;
+    let dir = job::update_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't make its folder ({e})"))?;
+    let name = msi.file_name().ok_or("the installer has no file name")?;
+    let kept = dir.join(name);
+    if kept != msi {
+        std::fs::copy(msi, &kept).map_err(|e| format!("couldn't keep the installer ({e})"))?;
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("couldn't find PressRoom's program file ({e})"))?;
+    let helper = dir.join(job::HELPER_NAME);
+    std::fs::copy(&exe, &helper).map_err(|e| format!("couldn't prepare it ({e})"))?;
+    let record = job::Record {
+        from: VERSION.unwrap_or_default().to_string(),
+        to: version.to_string(),
+        msi: kept,
+        exe,
+        pid: std::process::id(),
+        publications,
+        ..job::Record::default()
+    };
+    let path = job::record_path(&dir);
+    job::write_record(&path, &record).map_err(|e| format!("couldn't write down what it's doing ({e})"))?;
+    let spawned = std::process::Command::new(&helper)
+        .arg(job::HELPER_FLAG)
+        .arg(&path)
+        // Its own process group, so it outlives PressRoom.
+        .creation_flags(0x0000_0200)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match spawned {
+        Ok(child) => Ok(Handed { child, record: path }),
+        Err(e) => {
+            let _ = std::fs::remove_file(&path);
+            Err(format!("couldn't start it ({e})"))
         }
     }
-    out
-}
-
-#[cfg(windows)]
-fn spawn_installer(msi: &Path) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    let exe = std::env::current_exe().map_err(|e| format!("Couldn't find PressRoom's program file: {e}"))?;
-    let script = helper_script(std::process::id(), msi, &exe);
-    std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand"])
-        .arg(encode_command(&script))
-        // No console window, and its own process group so it outlives PressRoom.
-        .creation_flags(0x0800_0000 | 0x0000_0200)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Couldn't start the update: {e}"))
 }
 
 #[cfg(not(windows))]
-fn spawn_installer(_msi: &Path) -> Result<(), String> {
-    Err("PressRoom installs its updates on Windows only.".into())
+fn start_helper(_version: &str, _msi: &std::path::Path, _publications: Vec<String>) -> Result<Handed, String> {
+    Err("PressRoom installs its updates on Windows only".into())
 }
 
 /// A message-bar button: white, with a grey border, as in Office.
@@ -295,6 +484,7 @@ fn button(ui: &mut Ui, label: &str) -> bool {
 /// update to offer or a check's answer to give.
 pub fn bar(app: &mut DesignApp, ui: &mut Ui) {
     let updates = app.updates_rt.pressroom.clone();
+    updates.arrive(app, ui.ctx());
     if !updates.showing() {
         return;
     }
@@ -311,6 +501,9 @@ pub fn bar(app: &mut DesignApp, ui: &mut Ui) {
         Phase::Ready { version, .. } => {
             ("UPDATES READY", format!("PressRoom {version} is downloaded. PressRoom will close, update and open again with your publications saved."))
         }
+        Phase::Starting { version } => ("UPDATES READY", format!("Starting the update to PressRoom {version}\u{2026}")),
+        Phase::NotInstalled { message, .. } => ("UPDATE DIDN'T INSTALL", message.clone()),
+        Phase::Note(message) => ("UPDATES", message.clone()),
         Phase::Failed(e) => ("UPDATES", e.clone()),
     };
     let (bar_fill, bar_edge) = bar_colors();
@@ -339,6 +532,12 @@ pub fn bar(app: &mut DesignApp, ui: &mut Ui) {
                     let restart = button(ui, "Restart and Update");
                     if restart {
                         updates.install(app, ui.ctx());
+                    }
+                }
+                Phase::NotInstalled { .. } => {
+                    let again = button(ui, "Try Again");
+                    if again {
+                        updates.retry(app, ui.ctx());
                     }
                 }
                 Phase::Failed(_) => {
@@ -371,28 +570,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn commands_are_encoded_as_powershell_reads_them() {
-        assert_eq!(encode_command("a"), "YQA=");
-        assert_eq!(encode_command("Wait-Process -Id 42"), "VwBhAGkAdAAtAFAAcgBvAGMAZQBzAHMAIAAtAEkAZAAgADQAMgA=");
-        assert_eq!(encode_command(""), "");
-    }
-
-    #[test]
-    fn the_helper_waits_installs_and_reopens_with_quotes_doubled() {
-        let s = helper_script(
-            42,
-            Path::new(r"C:\Users\O'Brien\AppData\Local\Temp\PressRoom updates\pressroom-1.0.0-windows-x64.msi"),
-            Path::new(r"C:\Apps\PressRoom.exe"),
-        );
-        assert!(s.starts_with("Wait-Process -Id 42 "), "{s}");
-        assert!(
-            s.contains(r#"'/i "C:\Users\O''Brien\AppData\Local\Temp\PressRoom updates\pressroom-1.0.0-windows-x64.msi" /passive /norestart /l*v "C:\Users\O''Brien\AppData\Local\Temp\PressRoom updates\pressroom-1.0.0-windows-x64.log"' -Wait"#),
-            "{s}"
-        );
-        assert!(s.ends_with(r"Start-Process -FilePath 'C:\Apps\PressRoom.exe'"), "{s}");
-    }
-
-    #[test]
     fn a_build_without_a_version_never_looks_but_says_so_when_asked() {
         if VERSION.is_some() {
             return;
@@ -406,6 +583,24 @@ mod tests {
         asked.check(&ctx, true);
         assert!(matches!(asked.phase(), Phase::Failed(m) if m.contains("without a version")));
         assert!(asked.showing());
+    }
+
+    #[test]
+    fn the_check_at_start_doesnt_replace_what_the_last_update_said() {
+        let ctx = egui::Context::default();
+        let u = Updates::default();
+        let phase = Phase::NotInstalled { message: "didn't install".into(), version: "9.9.9".into(), msi: PathBuf::from("a.msi") };
+        u.set(phase.clone());
+        u.check(&ctx, false);
+        assert_eq!(u.phase(), phase);
+        u.set(Phase::Note("updated".into()));
+        u.check(&ctx, false);
+        assert_eq!(u.phase(), Phase::Note("updated".into()));
+        // The check that began before the record was read is what the thread looks at this for:
+        // on 0.7.90 its answer wiped the message a moment after it showed.
+        assert!(u.has_update_news());
+        u.set(Phase::UpToDate);
+        assert!(!u.has_update_news());
     }
 
     #[test]
