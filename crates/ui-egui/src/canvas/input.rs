@@ -223,6 +223,9 @@ pub(super) fn handle_input(app: &mut DesignApp, ui: &mut egui::Ui, resp: &egui::
         return;
     }
     let tool_drag: bool = ui.data(|d| d.get_temp(egui::Id::unique(("canvas_pointer_down", app.pane)))).unwrap_or(false);
+    if auto_scroll(app, ui, resp, &xf, tool_drag || menu_open) {
+        return;
+    }
     let hand = space && !ui.input(|i| i.modifiers.command);
     if !tool_drag && ((hand && resp.dragged()) || resp.dragged_by(egui::PointerButton::Middle)) {
         let d = xf.unrotate_delta(resp.drag_delta());

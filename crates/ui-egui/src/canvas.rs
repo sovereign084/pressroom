@@ -53,7 +53,7 @@ pub(crate) use rulers::fmt_tick;
 #[cfg(test)]
 use rulers::ruler_pieces;
 use rulers::{draw_rulers, ruler_units_menus};
-use scroll::{mods, navigation_space, scrollbars, spring_zoom_mode};
+use scroll::{auto_scroll, auto_scrolling, mods, navigation_space, scrollbars, spring_zoom_mode};
 pub use text_overlay::selected_text;
 use text_overlay::{draw_dynamic_spelling, draw_hidden_characters};
 #[cfg(test)]
@@ -69,6 +69,8 @@ pub use view::{
 pub const RULER: f32 = 15.0;
 /// Width of the view's scrollbars.
 pub const SCROLLBAR: f32 = 10.0;
+/// Width of PressRoom's: always there and wide enough to grab, with an arrow at each end, as Publisher's are.
+pub const PRESS_SCROLLBAR: f32 = 16.0;
 
 /// Canvas ↔ screen transform.
 #[derive(Clone, Copy, Debug)]
@@ -150,7 +152,8 @@ fn show_view(app: &mut DesignApp, ui: &mut egui::Ui) {
     let presenting = app.ui.screen_mode == ScreenMode::Presentation;
     // Scrollbars sit outside the view (right and bottom); rulers and the view share the rest.
     let bars = !presenting && app.session.active().is_some();
-    let full = if bars { Rect::from_min_max(outer.min, outer.max - vec2(SCROLLBAR, SCROLLBAR)) } else { outer };
+    let bar = if app.ui.pressroom_shell { PRESS_SCROLLBAR } else { SCROLLBAR };
+    let full = if bars { Rect::from_min_max(outer.min, outer.max - vec2(bar, bar)) } else { outer };
     // Rulers measure the unrotated layout, so they hide while the view is rotated.
     let rulers = app.ui.rulers && !presenting && rot == 0;
     let screen = if rulers { Rect::from_min_max(full.min + vec2(RULER, RULER), full.max) } else { full };
@@ -344,7 +347,8 @@ fn show_view(app: &mut DesignApp, ui: &mut egui::Ui) {
         let alt_hand: bool = ui.data(|d| d.get_temp(egui::Id::unique(("canvas_alt_hand", app.pane)))).unwrap_or(false);
         let tool_drag: bool = ui.data(|d| d.get_temp(egui::Id::unique(("canvas_pointer_down", app.pane)))).unwrap_or(false);
         let alt_text = wants_text && !tool_drag && ui.input(|i| i.modifiers.alt);
-        let c = if middle || alt_hand {
+        let auto = auto_scrolling(app, ui);
+        let c = if middle || alt_hand || auto {
             Cursor::HandGrab
         } else if zoom {
             if ui.input(|i| i.modifiers.alt) { Cursor::ZoomOut } else { Cursor::ZoomIn }
@@ -367,7 +371,7 @@ fn show_view(app: &mut DesignApp, ui: &mut egui::Ui) {
             None => c,
         };
         let icon = crate::cursors::show(ui.ctx(), &mut app.cursors, c, p);
-        ui.ctx().set_cursor_icon(icon);
+        ui.ctx().set_cursor_icon(if auto { egui::CursorIcon::AllScroll } else { icon });
         draw_cursor_badge(&painter, p, c, &t);
     }
     // A second viewport has no panels, dialogs or Quick Apply after its canvas: observe here,

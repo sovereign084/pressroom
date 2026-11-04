@@ -26,6 +26,8 @@ This document was reviewed on 2026-11-01 by three fresh reviewers (scope, design
 - A task pane at the right for Find and Replace, Mail Merge, Design Checker, Graphics Manager, Hyperlinks, Bookmarks, Symbols and Table Options. (KNOW)
 - Pages pane: thumbnails, facing pages together, drag a thumbnail to move a page, right-click for page commands, page names on hover. (KNOW; TLB for names)
 - Status bar: page count, the selected object's position and size (a click opens Format), view buttons, zoom slider, Fit Page to Window. (KNOW)
+- Scroll bars at the right and bottom, always showing: a thumb to drag, a click beside it for a screenful, and an arrow at each end that steps and keeps going while held. (KNOW)
+- Moving around with a mouse: the wheel goes up and down, Shift and the wheel goes sideways, as does a sideways wheel; hold the wheel down and drag to move the page; click the wheel and the view glides toward the pointer until the next click or Esc. (KNOW; Publisher itself not observed, as Excel's documented behaviour was the nearest source)
 
 ### Pointer and objects
 - One pointer and no toolbox: the text cursor inside a text box, the four-way arrow on its border and on other objects, resize arrows on handles, a cross while Draw Text Box is ready. Single letters only type. (CAP, KNOW)
