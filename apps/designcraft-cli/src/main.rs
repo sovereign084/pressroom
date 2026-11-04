@@ -120,6 +120,7 @@ fn main() -> ExitCode {
         Some("describe") => report(describe(args.get(1).map(String::as_str))),
         Some("script") => report(script(&args[1..])),
         Some("pub2pressroom") => report(pub2pressroom(&args[1..])),
+        Some("pubfinish") => report(pubfinish(&args[1..])),
         Some("app") => report(app(&args[1..])),
         Some("mcp") => report(mcp(&args[1..])),
         Some("perf") => report(perf::perf(&args[1..])),
@@ -551,6 +552,20 @@ fn script(args: &[String]) -> Result<(), String> {
         Some((i, c, e)) => Err(format!("step {i} ({c}) failed: {e}")),
         None => Ok(()),
     }
+}
+
+/// `pubfinish FILE.pressroom [NAME]`: the look the Publisher route's result gets (see
+/// `pubconvert::finish`), with what should be told kept in a notes file beside it. `NAME` is the file
+/// it came from, for that list.
+fn pubfinish(args: &[String]) -> Result<(), String> {
+    let Some(file) = args.first() else {
+        return Err("usage: designcraft-cli pubfinish FILE.pressroom [NAME]".into());
+    };
+    let path = std::path::Path::new(file);
+    let notes = designcraft_engine::pubconvert::finish(path)?;
+    designcraft_engine::pubconvert::keep_notes(args.get(1).map_or(file.as_str(), String::as_str), path, &notes);
+    outln!("{file}: {} notes", notes.len());
+    Ok(())
 }
 
 /// `pub2pressroom IN.pub OUT.pressroom`: a Publisher file with PressRoom's own reader, no Publisher.

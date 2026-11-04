@@ -983,10 +983,17 @@ try {
     $doc.Close()
 }
 finally {
-    if ($app) {
-        try { $app.Quit() } catch {}
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app)
+    # Publisher can stay behind after Quit and stop answering, and PowerShell calls into it at moments of
+    # its own choosing as it tidies up, which then holds this script for good (seen 2026-11-03, with the
+    # printer off). So what this script started is made certain to go, before anything else. A Publisher
+    # the person opened themselves is neither started for automation nor touched.
+    $ours = @(Get-CimInstance Win32_Process -Filter "Name='MSPUB.EXE'" | Where-Object { $_.CommandLine -match 'Embedding|Automation' -and $script:publishersBefore -notcontains $_.ProcessId } | ForEach-Object { $_.ProcessId })
+    if ($app) { try { $app.Quit() } catch {} }
+    if ($ours.Count -gt 0) {
+        for ($wait = 0; $wait -lt 6 -and @(Get-Process -Id $ours -ErrorAction SilentlyContinue).Count -gt 0; $wait++) { Start-Sleep -Milliseconds 500 }
+        Stop-Process -Id $ours -Force -ErrorAction SilentlyContinue
     }
+    if ($app) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($app) } catch {} }
     Restore-Printer
 }
 
@@ -1009,17 +1016,12 @@ elseif (-not $KeepWork -and (Test-Path $Out)) {
     Remove-Item $picDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item $scriptFile -Force -ErrorAction SilentlyContinue
 }
+# The look over the result PressRoom's own reader gives its work: boxes grow to show their text, and a
+# notes file beside the publication says what should be told. The publication stands if this can't run.
+if (Test-Path $Out) {
+    Say 'Checking that all the text shows'
+    try { [void](& $Cli pubfinish $Out ([IO.Path]::GetFileName($In)) 2>&1) } catch {}
+}
 "{0} -> {1}: {2} pages, {3} text boxes ({4} linked boxes), {5} pictures, {6} shapes, {7} lines, {8} tables ({9} cells of mixed formatting simplified), {10} objects kept as pictures, {11} invisible objects left out; {12} steps, {13} problems" -f `
     [IO.Path]::GetFileName($In), [IO.Path]::GetFileName($Out), $n, $stats.text, $stats.linked, $stats.pictures, $stats.shapes, $stats.lines, $stats.tables, $stats.mixedCells, $stats.flattened, $stats.skipped, $steps.Count, $failed.Count
 if ($failed.Count -gt 0) { "Problems listed in $base.import-problems.txt" }
-# The work is done. A Publisher that won't close (one waiting on a printer it can't reach) holds this
-# process: asking Windows about processes from here sticks too, and so does leaving the ordinary way, so
-# a job of its own ends what this script started and the script then ends itself.
-[Console]::Out.Flush()
-$stopping = Start-Job -ArgumentList (, $script:publishersBefore) -ScriptBlock {
-    param($before)
-    Get-CimInstance Win32_Process -Filter "Name='MSPUB.EXE'" | Where-Object { $_.CommandLine -match 'Embedding|Automation' -and $before -notcontains $_.ProcessId } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-}
-[void](Wait-Job $stopping -Timeout 15)
-Stop-Process -Id $PID -Force

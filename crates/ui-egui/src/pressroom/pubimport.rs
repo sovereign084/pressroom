@@ -5,8 +5,8 @@
 //! ([`designcraft_engine::pubconvert`]) reads it instead. It runs in the background; the window says
 //! so meanwhile. The original .pub is never changed, and an earlier conversion is never overwritten.
 //!
-//! What the reader couldn't bring across is said in a message when the file opens, and kept in a
-//! notes file beside the publication: nothing goes missing without the person being told.
+//! What didn't come across, whichever way the file was read, is said in a message when the file opens
+//! and kept in a notes file beside the publication: nothing goes missing without the person being told.
 //!
 //! A whole folder can be brought in at once (File › Open › Convert a Folder): every Publisher file
 //! in it and its folders that has no publication beside it yet, one after another.
@@ -21,6 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
+#[cfg(not(target_arch = "wasm32"))]
+use designcraft_engine::pubconvert::{keep_notes, kept_notes, notes_path};
 use designcraft_engine::{file_access, io};
 use serde_json::json;
 
@@ -168,16 +170,18 @@ const CANCELLED: &str = "Cancelled.";
 /// that has Publisher.
 const READER_SWITCH: &str = "PRESSROOM_PUB_READER";
 
-/// A converted publication's notes file: what didn't come across, beside it.
-fn notes_path(out: &Path) -> PathBuf {
-    let stem = out.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Publication".into());
-    out.with_file_name(format!("{stem} - what didn't come across.txt"))
-}
-
-/// The web build has no folder of files for a reader to work in.
+/// The web build has no folder of files for a reader to work in, and so no notes beside them.
 #[cfg(target_arch = "wasm32")]
 fn with_reader(_src: &Path, _out: &Path, _tx: &Sender<Msg>) -> Result<Vec<String>, String> {
     Err(NO_PUBLISHER.into())
+}
+#[cfg(target_arch = "wasm32")]
+fn kept_notes(_out: &Path) -> Vec<String> {
+    Vec::new()
+}
+#[cfg(target_arch = "wasm32")]
+fn notes_path(out: &Path) -> PathBuf {
+    out.to_path_buf()
 }
 
 /// PressRoom's own reader: the publication's path, and what didn't come across.
@@ -188,10 +192,7 @@ fn with_reader(src: &Path, out: &Path, tx: &Sender<Msg>) -> Result<Vec<String>, 
     })?;
     let name = file_name(src);
     save_log(&format!("{name}, read by PressRoom's own reader: {}\n{}", done.summary, done.notes.join("\n")));
-    if !done.notes.is_empty() {
-        let text = format!("What didn't come across exactly from {name}:\n\n{}\n", done.notes.join("\n"));
-        let _ = io::write_file(notes_path(out), text.as_bytes());
-    }
+    keep_notes(&name, out, &done.notes);
     Ok(done.notes)
 }
 
@@ -209,7 +210,8 @@ fn convert_any(publisher: Option<&(PathBuf, PathBuf)>, src: &Path, out: &Path, t
     let mut publisher_said = None;
     if let Some((script, cli)) = publisher {
         match convert(script, cli, src, out, tx).0 {
-            Ok(path) => return (Ok(path), false, Vec::new()),
+            // The route's script keeps these beside the publication.
+            Ok(path) => return (Ok(path), false, kept_notes(out)),
             Err(e) if e == CANCELLED => return (Err(e), true, Vec::new()),
             Err(e) => publisher_said = Some(e),
         }

@@ -26,7 +26,7 @@ your publications and settings stay as they are. What changed in each version is
 **Your old Publisher files:** in PressRoom, choose **File › Open** and pick the `.pub` file. PressRoom makes a
 `.pressroom` copy beside it and opens that; your `.pub` is never changed. For a whole folder, choose **File › Open ›
 Convert a Folder of Publisher Files**. Where Microsoft Publisher is installed, PressRoom has it read the file. Where it
-isn't, or it refuses the file, PressRoom reads the file itself and tells you anything that didn't come across exactly.
+isn't, or it refuses the file, PressRoom reads the file itself. Either way it tells you anything that didn't come across exactly.
 
 ## What's in it
 

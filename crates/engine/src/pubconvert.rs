@@ -153,6 +153,44 @@ fn publication_notes(session: &mut crate::Session) -> Vec<String> {
     notes
 }
 
+/// A publication's notes file: what didn't come across, beside it.
+pub fn notes_path(out: &Path) -> PathBuf {
+    let stem = out.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Publication".into());
+    out.with_file_name(format!("{stem} - what didn't come across.txt"))
+}
+
+/// Keeps `notes` about publication `out`, brought in from the file called `name`, in its notes file.
+/// With none, an earlier list is taken away rather than left to mislead.
+pub fn keep_notes(name: &str, out: &Path, notes: &[String]) {
+    let path = notes_path(out);
+    if notes.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    let text = format!("What didn't come across exactly from {name}:\n\n{}\n", notes.join("\n"));
+    if let Err(e) = crate::io::write_file(&path, text.as_bytes()) {
+        log::warn!("couldn't keep the notes on {name}: {e}");
+    }
+}
+
+/// The notes [`keep_notes`] kept about publication `out`.
+pub fn kept_notes(out: &Path) -> Vec<String> {
+    let Ok(bytes) = crate::io::read(notes_path(out)) else { return Vec::new() };
+    String::from_utf8_lossy(&bytes).lines().skip(2).filter(|l| !l.trim().is_empty()).map(str::to_owned).collect()
+}
+
+/// The same look over a publication the Publisher route made as this reader gives its own: boxes grow
+/// to show their text, and it is saved only if one did. What should be told comes back in words.
+pub fn finish(path: &Path) -> Result<Vec<String>, String> {
+    let mut session = crate::Session::new();
+    session.execute("file.open", &json!({"path": path.to_string_lossy()})).map_err(|e| format!("Couldn't open the publication: {e}"))?;
+    let notes = gather(publication_notes(&mut session));
+    if session.documents().iter().any(|d| d.is_dirty()) {
+        session.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).map_err(|e| format!("Couldn't save the publication: {e}"))?;
+    }
+    Ok(notes)
+}
+
 /// Reads `src` and writes the publication to `out`, saying what it is doing on `say`. An error is
 /// in words for a person; a file that can't be read leaves nothing behind.
 pub fn convert(src: &Path, out: &Path, say: &mut dyn FnMut(&str)) -> Result<Converted, String> {
@@ -274,6 +312,60 @@ mod tests {
         let notes = publication_notes(&mut s);
         assert_eq!(height(&s, id), before);
         assert!(notes.iter().any(|n| n.contains("no longer all fits")), "{notes:?}");
+    }
+
+    fn saved(rect: Value, text: &str, name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pr-pubfinish-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("made.pressroom");
+        let (mut s, _) = with_box(rect, text);
+        s.execute("file.saveAs", &json!({"path": file.to_string_lossy()})).unwrap();
+        file
+    }
+
+    /// What the Publisher route makes gets the look the reader's own does, and the box's growth stays.
+    #[test]
+    fn finishing_a_publication_brings_its_text_back_and_saves_it() {
+        let file = saved(json!([40, 40, 200, 70]), LONG, "grow");
+        let before = std::fs::read(&file).unwrap();
+        finish(&file).unwrap();
+        assert_ne!(std::fs::read(&file).unwrap(), before, "the growth is saved");
+        let mut s = crate::Session::new();
+        s.execute("file.open", &json!({"path": file.to_string_lossy()})).unwrap();
+        let state = s.doc().unwrap();
+        assert!(state.doc.stories.values().all(|t| s.cache.get(&state.doc, t.id, None).overset_at.is_none()), "all the text shows");
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    /// Nothing to do leaves the file as it was, down to the byte.
+    #[test]
+    fn finishing_a_publication_with_nothing_to_do_leaves_it_alone() {
+        let file = saved(json!([40, 40, 300, 300]), "A few words.", "alone");
+        let before = std::fs::read(&file).unwrap();
+        let notes = finish(&file).unwrap();
+        assert!(notes.iter().all(|n| !n.contains("fits") && !n.contains("taller")), "{notes:?}");
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn finishing_what_isnt_there_is_an_error_in_words() {
+        let err = finish(&std::env::temp_dir().join("pr-pubfinish-no-such.pressroom")).unwrap_err();
+        assert!(err.starts_with("Couldn't open the publication"), "{err}");
+    }
+
+    #[test]
+    fn notes_are_kept_beside_the_publication_and_read_back() {
+        let dir = std::env::temp_dir().join(format!("pr-pubnotes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("made.pressroom");
+        keep_notes("made.pub", &out, &["One thing.".to_string(), "Another \u{201c}thing\u{201d}.".to_string()]);
+        assert_eq!(kept_notes(&out), ["One thing.", "Another \u{201c}thing\u{201d}."]);
+        assert!(std::fs::read_to_string(notes_path(&out)).unwrap().starts_with("What didn't come across exactly from made.pub:"));
+        keep_notes("made.pub", &out, &[]);
+        assert!(kept_notes(&out).is_empty() && !notes_path(&out).exists(), "an earlier list goes");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
