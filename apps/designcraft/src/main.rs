@@ -107,7 +107,38 @@ impl eframe::App for App {
             eprintln!("designcraft: couldn't preserve documents on exit: {e}");
         }
         save_prefs(&self.app);
+        // Everything is saved. Closing the window can still hang inside a graphics driver.
+        end_process_within(EXIT_LIMIT, end_process_now);
     }
+}
+
+/// How long the process may take to end once everything is saved. It normally takes under a second.
+const EXIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Runs `end` after `limit`, if the process is still here. Closing the window can hang for good: on
+/// 2026-11-03 NVIDIA's OpenGL driver spun forever as the window closed, waiting for a thread that was
+/// ending at that moment and was itself waiting for the driver. The window had gone, a processor core
+/// stayed busy, and an update couldn't replace the program file.
+fn end_process_within(limit: std::time::Duration, end: impl FnOnce() + Send + 'static) {
+    let limiter = std::thread::Builder::new().name("exit-limit".into()).spawn(move || {
+        std::thread::sleep(limit);
+        end();
+    });
+    if let Err(e) = limiter {
+        log::warn!("couldn't set a limit on closing: {e}");
+    }
+}
+
+/// Ends the process at once. On Windows not through `std::process::exit` alone, which calls each DLL
+/// as it unloads, and a driver that is hanging may wait there for a lock its stopped thread holds.
+fn end_process_now() {
+    log::warn!("closing took longer than {EXIT_LIMIT:?}: ending the process");
+    log::logger().flush();
+    #[cfg(windows)]
+    if let Err(e) = winsafe::HPROCESS::GetCurrentProcess().TerminateProcess(0) {
+        log::error!("couldn't end the process: {e}");
+    }
+    std::process::exit(0);
 }
 
 /// Tell the macOS input method to drop its composition (the Type tool kept the marked text as
@@ -640,6 +671,17 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_limit_on_closing_acts_only_once_it_has_passed() {
+        use std::time::Duration;
+        let (done, ended) = std::sync::mpsc::channel();
+        super::end_process_within(Duration::from_millis(400), move || {
+            let _ = done.send(());
+        });
+        assert!(ended.recv_timeout(Duration::from_millis(50)).is_err(), "not while there is time left");
+        assert!(ended.recv_timeout(Duration::from_secs(10)).is_ok(), "and then it does");
+    }
+
     #[test]
     fn an_unreadable_ui_json_is_kept_beside_it() {
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
