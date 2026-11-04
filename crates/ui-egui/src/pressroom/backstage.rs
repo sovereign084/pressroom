@@ -314,11 +314,14 @@ fn open_page(app: &mut DesignApp, ui: &mut Ui) {
         ribbon::act(app, "app.openDialog");
     }
     ui.add_space(10.0);
-    // Her old Publisher files, all at once, while Publisher is still on this computer.
+    // Her old Publisher files, all at once.
     let busy = super::pubimport::busy().is_some();
     if ui
-        .add_enabled(!busy, egui::Button::new(egui::RichText::new("   Convert a Folder of Publisher Files\u{2026}   ").font(FontId::proportional(13.0))))
-        .on_hover_text("Turns every Publisher file in a folder (and its folders) into a PressRoom publication beside it. Publisher must still be installed on this computer.")
+        .add_enabled(
+            !busy,
+            egui::Button::new(egui::RichText::new("   Convert a Folder of Publisher Files\u{2026}   ").font(FontId::proportional(13.0))),
+        )
+        .on_hover_text("Turns every Publisher file in a folder (and its folders) into a PressRoom publication beside it.")
         .clicked()
         && let Some(folder) = app.services.pick_open.as_mut().and_then(|pick| pick("folder"))
     {

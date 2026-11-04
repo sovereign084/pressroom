@@ -111,7 +111,7 @@ Everything in Microsoft's table that applies, matched exactly (Ctrl+Shift+F is n
 - **KNOW items can be wrong.** They rest on memory of Publisher. The changes are limited to PressRoom's window, so each can be corrected without touching DesignCraft's behaviour. A person who knows Publisher well should try them.
 - **Nobody has used this on a real week's work yet.** The tests and the reviews can't replace watching a bulletin get made and printed on a real home printer, especially manual two-sided printing, whose order depends on the printer's paper path.
 - **The dictionary** comes from a hyphenation list, so it misses some short and recent words. The common ones found are added by hand; others can be added to the dictionary as they're met.
-- **Conversion needs Publisher**, which Microsoft is retiring. Old files should be converted while a copy of Publisher still runs.
+- **PressRoom's own reader is proven on only two files.** Converting no longer needs Publisher, which Microsoft is retiring: where it is missing, refuses a file or gets stuck, the reader takes over. Old files are still best converted and compared while a copy of Publisher runs.
 
 ## Design decisions and the alternatives set aside
 
