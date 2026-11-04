@@ -39,6 +39,18 @@ const ALLOWED: &[(&str, &str)] = &[
         "PressRoom's title-bar tint reads only Windows' own copy of the desktop wallpaper (`%APPDATA%/Microsoft/Windows/Themes/TranscodedWallpaper`): no command parameter or document field names a path",
     ),
     (
+        "engine/src/pubconvert.rs",
+        "the reader's pictures wait in a folder of its own in the temporary folder, named here, and it is removed afterwards. The `.pub` itself is read through `crate::io` and the publication saved by `file.saveAs`",
+    ),
+    (
+        "pubread/src/fontmap.rs",
+        "the reader measures fonts from the platform's fixed font folders and Office's own cloud font folder: no command parameter or document field names a path",
+    ),
+    (
+        "pubread/src/steps.rs",
+        "the reader writes a file's pictures into the folder `pubconvert` made for them, under names it makes from each picture's position in the file, never a name from the file",
+    ),
+    (
         "ui-egui/src/theme.rs",
         "PressRoom's window font is Segoe UI, read from the fixed Windows font folder (`%WINDIR%/Fonts`): no command parameter or document field names a path",
     ),

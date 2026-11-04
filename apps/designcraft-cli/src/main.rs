@@ -119,6 +119,7 @@ fn main() -> ExitCode {
         }
         Some("describe") => report(describe(args.get(1).map(String::as_str))),
         Some("script") => report(script(&args[1..])),
+        Some("pub2pressroom") => report(pub2pressroom(&args[1..])),
         Some("app") => report(app(&args[1..])),
         Some("mcp") => report(mcp(&args[1..])),
         Some("perf") => report(perf::perf(&args[1..])),
@@ -550,6 +551,22 @@ fn script(args: &[String]) -> Result<(), String> {
         Some((i, c, e)) => Err(format!("step {i} ({c}) failed: {e}")),
         None => Ok(()),
     }
+}
+
+/// `pub2pressroom IN.pub OUT.pressroom`: a Publisher file with PressRoom's own reader, no Publisher.
+fn pub2pressroom(args: &[String]) -> Result<(), String> {
+    let (Some(src), Some(out)) = (args.first(), args.get(1)) else {
+        return Err("usage: designcraft-cli pub2pressroom IN.pub OUT.pressroom".into());
+    };
+    if std::path::Path::new(out).exists() {
+        return Err(format!("{out} is already there, so it was left alone"));
+    }
+    let done = designcraft_engine::pubconvert::convert(std::path::Path::new(src), std::path::Path::new(out), &mut |status| outln!("{status}"))?;
+    outln!("{src} -> {out}: {}", done.summary);
+    for n in &done.notes {
+        outln!("NOTE: {n}");
+    }
+    Ok(())
 }
 
 /// `app`: one command or control-channel method in the running app.

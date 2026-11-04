@@ -1,0 +1,16 @@
+[package]
+name = "designcraft-pubread"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PressRoom's own reader of Microsoft Publisher files (.pub): no copy of Publisher needed"
+
+[lints]
+workspace = true
+
+[dependencies]
+designcraft-color = { workspace = true }
+designcraft-fonts = { workspace = true }
+miniz_oxide = "0.8"
+serde_json = { workspace = true }
+skrifa = { workspace = true }

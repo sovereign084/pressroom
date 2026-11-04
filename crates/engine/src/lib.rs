@@ -17,6 +17,8 @@ pub mod guard;
 pub mod io;
 pub mod links;
 pub mod math;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pubconvert;
 pub mod recovery;
 pub mod sample;
 pub mod script;

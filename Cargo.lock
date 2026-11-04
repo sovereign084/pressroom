@@ -1395,6 +1395,7 @@ dependencies = [
  "designcraft-images",
  "designcraft-pdf",
  "designcraft-pptx",
+ "designcraft-pubread",
  "designcraft-render",
  "designcraft-textimport",
  "designcraft-tools",
@@ -1549,6 +1550,17 @@ dependencies = [
  "skrifa 0.47.0",
  "thiserror 2.0.21",
  "zip 3.0.0",
+]
+
+[[package]]
+name = "designcraft-pubread"
+version = "0.13.0"
+dependencies = [
+ "designcraft-color",
+ "designcraft-fonts",
+ "miniz_oxide 0.8.9",
+ "serde_json",
+ "skrifa 0.47.0",
 ]
 
 [[package]]

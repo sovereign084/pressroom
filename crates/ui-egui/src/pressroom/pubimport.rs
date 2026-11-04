@@ -1,8 +1,12 @@
 //! Opening a Publisher file (.pub). On a Windows PC where Publisher is installed, the converter
 //! installed beside PressRoom (`pub2pressroom.ps1` with the command-line tool) has Publisher read
-//! the file and rebuilds it as a .pressroom publication next to the original, which then opens. It
-//! runs in the background; the window says so meanwhile. The original .pub is never changed, and an
-//! earlier conversion is never overwritten.
+//! the file and rebuilds it as a .pressroom publication next to the original, which then opens. Where
+//! Publisher is missing, refuses the file or gets stuck, PressRoom's own reader
+//! ([`designcraft_engine::pubconvert`]) reads it instead. It runs in the background; the window says
+//! so meanwhile. The original .pub is never changed, and an earlier conversion is never overwritten.
+//!
+//! What the reader couldn't bring across is said in a message when the file opens, and kept in a
+//! notes file beside the publication: nothing goes missing without the person being told.
 //!
 //! A whole folder can be brought in at once (File › Open › Convert a Folder): every Publisher file
 //! in it and its folders that has no publication beside it yet, one after another.
@@ -29,6 +33,14 @@ const FOLDER_MAX: usize = 1000;
 /// How long the converter may go without a word before it is taken as stuck.
 const STALL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
+/// How long a converter that has finished its work may take to close.
+const LINGER: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The last thing the converter says: "a.pub -> a.pressroom: 8 pages, ... 2855 steps, 0 problems".
+fn is_final_line(line: &str) -> bool {
+    line.contains(" -> ") && line.contains(" steps, ") && line.trim_end().ends_with(" problems")
+}
+
 /// Cancel, asked for from the window.
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
@@ -38,10 +50,11 @@ enum Msg {
     Next { name: String, n: usize, of: usize },
     /// What the converter is doing ("Reading page 3 of 8").
     Status(String),
-    /// One file is done: the publication's path, or why not.
-    One(Result<String, String>),
-    /// A folder is done: how many were converted, and the files that couldn't be.
-    Folder { converted: usize, failed: Vec<String>, stopped: Option<String> },
+    /// One file is done: the publication's path, or why not, and what didn't come across.
+    One(Result<String, String>, Vec<String>),
+    /// A folder is done: how many were converted, the files that couldn't be, and those where
+    /// something didn't come across.
+    Folder { converted: usize, failed: Vec<String>, stopped: Option<String>, noted: Vec<String> },
 }
 
 /// The conversion under way: the file's name, where it is in a folder, and its reports.
@@ -149,6 +162,73 @@ fn converter() -> Result<(PathBuf, PathBuf), String> {
 const NO_PUBLISHER: &str =
     "Publisher isn't installed on this computer, so its files can't be read here. Bring the file to a PC with Publisher to convert it.";
 
+const CANCELLED: &str = "Cancelled.";
+
+/// Set to `first` to try PressRoom's own reader before Publisher: for testing the reader on a PC
+/// that has Publisher.
+const READER_SWITCH: &str = "PRESSROOM_PUB_READER";
+
+/// A converted publication's notes file: what didn't come across, beside it.
+fn notes_path(out: &Path) -> PathBuf {
+    let stem = out.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Publication".into());
+    out.with_file_name(format!("{stem} - what didn't come across.txt"))
+}
+
+/// The web build has no folder of files for a reader to work in.
+#[cfg(target_arch = "wasm32")]
+fn with_reader(_src: &Path, _out: &Path, _tx: &Sender<Msg>) -> Result<Vec<String>, String> {
+    Err(NO_PUBLISHER.into())
+}
+
+/// PressRoom's own reader: the publication's path, and what didn't come across.
+#[cfg(not(target_arch = "wasm32"))]
+fn with_reader(src: &Path, out: &Path, tx: &Sender<Msg>) -> Result<Vec<String>, String> {
+    let done = designcraft_engine::pubconvert::convert(src, out, &mut |status| {
+        let _ = tx.send(Msg::Status(status.to_string()));
+    })?;
+    let name = file_name(src);
+    save_log(&format!("{name}, read by PressRoom's own reader: {}\n{}", done.summary, done.notes.join("\n")));
+    if !done.notes.is_empty() {
+        let text = format!("What didn't come across exactly from {name}:\n\n{}\n", done.notes.join("\n"));
+        let _ = io::write_file(notes_path(out), text.as_bytes());
+    }
+    Ok(done.notes)
+}
+
+/// Converts `src` into `out` whichever way works: Publisher where it is here and answers, else
+/// PressRoom's own reader. The flag is set when the files after this one should not be tried.
+fn convert_any(publisher: Option<&(PathBuf, PathBuf)>, src: &Path, out: &Path, tx: &Sender<Msg>) -> (Result<String, String>, bool, Vec<String>) {
+    let done = |notes| (Ok(out.to_string_lossy().to_string()), false, notes);
+    let reader_first = std::env::var_os(READER_SWITCH).is_some_and(|v| v == "first");
+    if reader_first {
+        match with_reader(src, out, tx) {
+            Ok(notes) => return done(notes),
+            Err(e) => log::warn!("PressRoom's own reader couldn't read {}: {e}", file_name(src)),
+        }
+    }
+    let mut publisher_said = None;
+    if let Some((script, cli)) = publisher {
+        match convert(script, cli, src, out, tx).0 {
+            Ok(path) => return (Ok(path), false, Vec::new()),
+            Err(e) if e == CANCELLED => return (Err(e), true, Vec::new()),
+            Err(e) => publisher_said = Some(e),
+        }
+    }
+    if reader_first {
+        return (Err(publisher_said.unwrap_or_else(|| NO_PUBLISHER.into())), false, Vec::new());
+    }
+    match with_reader(src, out, tx) {
+        Ok(notes) => done(notes),
+        Err(own) => {
+            let why = match publisher_said {
+                Some(p) => format!("{p}\n\nPressRoom's own reader couldn't read it either. {own}"),
+                None => own,
+            };
+            (Err(why), false, Vec::new())
+        }
+    }
+}
+
 const STUCK: &str = "Publisher stopped answering, so PressRoom stopped it. If it happens again, open the file in Publisher itself once to see whether it is asking something (about a printer or a missing font, say), answer it there, close Publisher and try again.";
 
 /// A hidden PowerShell running `args` (no console window flashing up).
@@ -228,13 +308,25 @@ fn convert(script: &Path, cli: &Path, src: &Path, out: &Path, tx: &Sender<Msg>) 
             text.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push_str(&String::from_utf8_lossy(&buf));
         }));
     }
+    let mut finished_at = None;
     let stopped: Option<&str> = loop {
         match child.try_wait() {
             Ok(Some(_)) | Err(_) => break None,
             Ok(None) => {}
         }
         if CANCEL.load(Ordering::SeqCst) {
-            break Some("Cancelled.");
+            break Some(CANCELLED);
+        }
+        // The publication is made and the converter has said so, but a Publisher that won't close
+        // (one waiting on a printer it can't reach) can hold the converter open: the work is done.
+        if io::is_file(out) && text.lock().unwrap_or_else(std::sync::PoisonError::into_inner).lines().any(is_final_line) {
+            let at = *finished_at.get_or_insert_with(web_time::Instant::now);
+            if at.elapsed() > LINGER {
+                let _ = child.kill();
+                let _ = child.wait();
+                stop_publisher(script);
+                break None;
+            }
         }
         if heard.lock().unwrap_or_else(std::sync::PoisonError::into_inner).elapsed() > STALL {
             break Some(STUCK);
@@ -295,7 +387,7 @@ fn file_name(p: &Path) -> String {
 
 fn set_job(name: String, of: Option<(usize, usize)>, rx: Receiver<Msg>) {
     CANCEL.store(false, Ordering::SeqCst);
-    let status = "Starting Publisher".to_string();
+    let status = "Opening the file".to_string();
     *JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Job { name, of, status, rx });
 }
 
@@ -305,10 +397,7 @@ pub fn start(app: &mut DesignApp, path: &str) {
         app.status("Another Publisher file is still being brought in. Please wait for it to finish.");
         return;
     }
-    let (script, cli) = match converter() {
-        Ok(c) => c,
-        Err(e) => return app.status(e),
-    };
+    let publisher = converter().ok();
     let src = PathBuf::from(path);
     // Already brought in: open that copy, with its edits, rather than make a second one.
     let existing = first_output(&src);
@@ -329,8 +418,8 @@ pub fn start(app: &mut DesignApp, path: &str) {
     let name = file_name(&src);
     let (tx, rx) = channel();
     std::thread::spawn(move || {
-        let r = convert(&script, &cli, &src, &out, &tx).0;
-        let _ = tx.send(Msg::One(r));
+        let (r, _, notes) = convert_any(publisher.as_ref(), &src, &out, &tx);
+        let _ = tx.send(Msg::One(r, notes));
     });
     set_job(name.clone(), None, rx);
     app.status(format!("Bringing in \u{201c}{name}\u{201d} from Publisher\u{2026} this can take a minute."));
@@ -342,10 +431,7 @@ pub fn start_folder(app: &mut DesignApp, folder: &str) {
         app.status("Publisher files are still being brought in. Please wait for them to finish.");
         return;
     }
-    let (script, cli) = match converter() {
-        Ok(c) => c,
-        Err(e) => return app.status(e),
-    };
+    let publisher = converter().ok();
     let dir = PathBuf::from(folder);
     if let Err(e) = file_access::check_read(&dir) {
         app.status(format!("Couldn't look in that folder: {e}"));
@@ -364,13 +450,13 @@ pub fn start_folder(app: &mut DesignApp, folder: &str) {
     let of = files.len();
     let (tx, rx) = channel();
     set_job(file_name(first), Some((1, of)), rx);
-    std::thread::spawn(move || convert_all(&script, &cli, files, &tx));
+    std::thread::spawn(move || convert_all(publisher.as_ref(), files, &tx));
     app.status(format!("Bringing in {of} Publisher files\u{2026} this takes about a minute each."));
 }
 
-fn convert_all(script: &Path, cli: &Path, files: Vec<PathBuf>, tx: &Sender<Msg>) {
+fn convert_all(publisher: Option<&(PathBuf, PathBuf)>, files: Vec<PathBuf>, tx: &Sender<Msg>) {
     let of = files.len();
-    let (mut converted, mut failed, mut stopped) = (0, Vec::new(), None);
+    let (mut converted, mut failed, mut stopped, mut noted) = (0, Vec::new(), None, Vec::new());
     for (i, src) in files.iter().enumerate() {
         let _ = tx.send(Msg::Next { name: file_name(src), n: i + 1, of });
         let out = free_output(src);
@@ -378,21 +464,38 @@ fn convert_all(script: &Path, cli: &Path, files: Vec<PathBuf>, tx: &Sender<Msg>)
             failed.push(file_name(src));
             continue;
         }
-        match convert(script, cli, src, &out, tx) {
-            (Ok(_), _) => converted += 1,
-            // Publisher is missing, stuck or cancelled: the rest would fail the same way.
-            (Err(e), true) => {
+        match convert_any(publisher, src, &out, tx) {
+            (Ok(_), _, notes) => {
+                converted += 1;
+                if !notes.is_empty() {
+                    noted.push(file_name(src));
+                }
+            }
+            // Cancelled.
+            (Err(e), true, _) => {
                 stopped = Some(e);
                 break;
             }
-            (Err(_), false) => failed.push(file_name(src)),
+            (Err(_), false, _) => failed.push(file_name(src)),
         }
     }
-    let _ = tx.send(Msg::Folder { converted, failed, stopped });
+    let _ = tx.send(Msg::Folder { converted, failed, stopped, noted });
 }
 
 fn alert(app: &mut DesignApp, file: &str, message: String) {
     app.ui.dialog = Some(crate::dialogs::Dialog::new("alert", json!({"title": "Convert Publisher Files", "file": file, "message": message})));
+}
+
+/// What opening a file says when something didn't come across exactly.
+fn reader_message(notes: &[String], out: &str) -> String {
+    let shown: Vec<&str> = notes.iter().take(8).map(String::as_str).collect();
+    let more = notes.len().saturating_sub(shown.len());
+    let mut s = format!("This publication came in, but some things didn't come across exactly:\n\n\u{2022} {}", shown.join("\n\u{2022} "));
+    if more > 0 {
+        s.push_str(&format!("\n\u{2022} and {more} more"));
+    }
+    s.push_str(&format!("\n\nThis list is also saved beside the publication: {}", file_name(&notes_path(Path::new(out)))));
+    s
 }
 
 /// What a folder conversion says when it's done.
@@ -430,7 +533,7 @@ pub fn poll(app: &mut DesignApp, ctx: &egui::Context) {
                 if let Some(j) = JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {
                     j.name = name;
                     j.of = Some((n, of));
-                    j.status = "Starting Publisher".into();
+                    j.status = "Opening the file".into();
                 }
             }
             Msg::Status(text) => {
@@ -438,7 +541,7 @@ pub fn poll(app: &mut DesignApp, ctx: &egui::Context) {
                     j.status = text;
                 }
             }
-            Msg::One(result) => {
+            Msg::One(result, notes) => {
                 let name = JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take().map(|j| j.name).unwrap_or_default();
                 match result {
                     Ok(out) => {
@@ -448,22 +551,34 @@ pub fn poll(app: &mut DesignApp, ctx: &egui::Context) {
                                 let _ = app.run("view.fitPage", json!({}));
                                 crate::canvas::go_to_page(app, 0);
                                 app.status(format!("Brought in \u{201c}{name}\u{201d} from Publisher. It's saved as {out}."));
+                                if !notes.is_empty() {
+                                    alert(app, &name, reader_message(&notes, &out));
+                                }
                             }
                             Err(e) => app.status(format!("Converted {name}, but couldn't open the result: {e}")),
                         }
                     }
                     Err(e) => {
                         app.status(e.clone());
-                        if e != "Cancelled." {
+                        if e != CANCELLED {
                             alert(app, &name, e);
                         }
                     }
                 }
             }
-            Msg::Folder { converted, failed, stopped } => {
+            Msg::Folder { converted, failed, stopped, noted } => {
                 *JOB.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                 app.status(format!("Converted {converted} Publisher files."));
-                alert(app, "", folder_message(converted, &failed, stopped.as_deref()));
+                let mut message = folder_message(converted, &failed, stopped.as_deref());
+                if !noted.is_empty() {
+                    let shown: Vec<&str> = noted.iter().take(8).map(String::as_str).collect();
+                    message.push_str(&format!(
+                        "\n\nSome things didn't come across exactly from: {}{}. A \u{201c}what didn't come across\u{201d} file beside each says what.",
+                        shown.join(", "),
+                        if noted.len() > shown.len() { format!(" and {} more", noted.len() - shown.len()) } else { String::new() }
+                    ));
+                }
+                alert(app, "", message);
             }
         }
     }
@@ -504,6 +619,22 @@ mod tests {
         assert_eq!(m, "Couldn't bring in News.pub. It stopped at \u{201c}Reading page 3 of 8\u{201d}: The RPC server is unavailable.");
         assert_eq!(failure("News.pub", "PRESSROOM-ERROR: other||Give -In.").unwrap(), "Couldn't bring in News.pub: Give -In.");
         assert!(failure("News.pub", "PRESSROOM: Reading page 1 of 8\n+ CategoryInfo : NotSpecified").is_none());
+    }
+
+    #[test]
+    fn the_converter_is_finished_when_it_says_so() {
+        assert!(is_final_line("plain.pub -> plain.pressroom: 4 pages, 8 text boxes; 206 steps, 0 problems"));
+        assert!(!is_final_line("PRESSROOM: Building the PressRoom publication"));
+        assert!(!is_final_line("a -> b"));
+    }
+
+    #[test]
+    fn what_didnt_come_across_is_said_and_where_it_is_kept() {
+        let m = reader_message(&["A bevel was left flat.".to_string()], "C:\\f\\News.pressroom");
+        assert!(m.contains("A bevel was left flat."), "{m}");
+        assert!(m.contains("News - what didn't come across.txt"), "{m}");
+        let many: Vec<String> = (0..10).map(|i| format!("n{i}")).collect();
+        assert!(reader_message(&many, "a.pressroom").contains("and 2 more"));
     }
 
     #[test]

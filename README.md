@@ -23,10 +23,10 @@
 your publications and settings stay as they are. What changed in each version is on the
 [releases page](https://github.com/sovereign084/pressroom/releases).
 
-**Your old Publisher files:** in PressRoom, choose **File › Open** and pick the `.pub` file. PressRoom
-converts it into a `.pressroom` file next to it. To do a whole folder at once, choose **File › Open ›
-Convert a Folder of Publisher Files**. Converting needs Microsoft Publisher still installed on the
-same computer, so convert your files while you have it.
+**Your old Publisher files:** in PressRoom, choose **File › Open** and pick the `.pub` file. PressRoom makes a
+`.pressroom` copy beside it and opens that; your `.pub` is never changed. For a whole folder, choose **File › Open ›
+Convert a Folder of Publisher Files**. Where Microsoft Publisher is installed, PressRoom has it read the file. Where it
+isn't, or it refuses the file, PressRoom reads the file itself and tells you anything that didn't come across exactly.
 
 ## What's in it
 
