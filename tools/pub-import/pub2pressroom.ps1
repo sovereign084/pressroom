@@ -922,6 +922,7 @@ function Export-Reference([string]$pdf) {
     } finally { Remove-Job $job -Force -ErrorAction SilentlyContinue }
 }
 
+$script:publishersBefore = @(Get-CimInstance Win32_Process -Filter "Name='MSPUB.EXE'" | ForEach-Object { $_.ProcessId })
 Use-PdfPrinter
 $app = $null
 try {
@@ -1011,3 +1012,14 @@ elseif (-not $KeepWork -and (Test-Path $Out)) {
 "{0} -> {1}: {2} pages, {3} text boxes ({4} linked boxes), {5} pictures, {6} shapes, {7} lines, {8} tables ({9} cells of mixed formatting simplified), {10} objects kept as pictures, {11} invisible objects left out; {12} steps, {13} problems" -f `
     [IO.Path]::GetFileName($In), [IO.Path]::GetFileName($Out), $n, $stats.text, $stats.linked, $stats.pictures, $stats.shapes, $stats.lines, $stats.tables, $stats.mixedCells, $stats.flattened, $stats.skipped, $steps.Count, $failed.Count
 if ($failed.Count -gt 0) { "Problems listed in $base.import-problems.txt" }
+# The work is done. A Publisher that won't close (one waiting on a printer it can't reach) holds this
+# process: asking Windows about processes from here sticks too, and so does leaving the ordinary way, so
+# a job of its own ends what this script started and the script then ends itself.
+[Console]::Out.Flush()
+$stopping = Start-Job -ArgumentList (, $script:publishersBefore) -ScriptBlock {
+    param($before)
+    Get-CimInstance Win32_Process -Filter "Name='MSPUB.EXE'" | Where-Object { $_.CommandLine -match 'Embedding|Automation' -and $before -notcontains $_.ProcessId } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+[void](Wait-Job $stopping -Timeout 15)
+Stop-Process -Id $PID -Force
