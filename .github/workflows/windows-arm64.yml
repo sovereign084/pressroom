@@ -27,7 +27,7 @@ permissions:
 jobs:
   windows-arm64:
     # Immutable supporting workflow revision until the new install contract lands upstream.
-    uses: storytold/craft-common-actions/.github/workflows/windows-arm64.yml@8bb4e5ab95443171104ad88113fe1ef9b0e5ce3f
+    uses: storytold/craft-common-actions/.github/workflows/windows-arm64.yml@bb16e4122aea92d09106f2bdea1655f06a07711f
     with:
       app-name: designcraft
       app-dir: DesignCraft
