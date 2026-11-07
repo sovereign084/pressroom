@@ -47,6 +47,14 @@ attr_set! {
         underline_offset: Option<f64> = None => "deserialize_explicit_value",
         underline_color: String = String::new(),
         underline_tint: f32 = 1.0,
+        /// The underline's look: single, double, dotted, dashed, wavy… (Publisher's Font dialog).
+        underline_type: UnderlineType = UnderlineType::Single,
+        /// Font effects, Publisher's Font dialog: a shadow down and to the right, hollow letters,
+        /// letters raised from the page (emboss) or pressed into it (engrave).
+        effect_shadow: bool = false,
+        effect_outline: bool = false,
+        effect_emboss: bool = false,
+        effect_engrave: bool = false,
         /// Strikethrough Options: offset above the baseline.
         strikethrough_weight: Option<f64> = None => "deserialize_explicit_value",
         strikethrough_offset: Option<f64> = None => "deserialize_explicit_value",

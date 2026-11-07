@@ -347,14 +347,17 @@ function Emit-Rotation($shape, [int]$step) {
     if ($rot -ne 0) { [void](Add-Step 'transform.rotate' @{ angle = -$rot; ids = @((Ref $step 'id')) }) }
 }
 
-# Text wrap: square and tight wrap around the object's box, top and bottom jumps it.
+# Text wrap: square and tight wrap around the object's box, through follows its outline, top and
+# bottom jumps it.
 function Emit-Wrap($shape, [int]$k) {
     try { $w = $shape.TextWrap; $type = [int]$w.Type; $side = [int]$w.Side } catch { return }
-    $mode = switch ($type) { 1 { 'boundingBox' } 2 { 'boundingBox' } 4 { 'jumpObject' } default { $null } }
+    $mode = switch ($type) { 1 { 'boundingBox' } 2 { 'boundingBox' } 3 { 'contour' } 4 { 'jumpObject' } default { $null } }
     if (-not $mode) { return }
     if ($side -eq 4) { $mode = 'jumpObject' }
     # Automatic distance (the usual case) is 0.04" all round, whatever distances are stored.
     $wrap = @{ mode = $mode; ids = @((Ref $k 'id')); offset = 2.88 }
+    # Through: around the outline, and into its open parts.
+    if ($type -eq 3 -and $mode -eq 'contour') { $wrap.insideEdges = $true }
     try { if ($w.DistanceAuto -ne -1) { $wrap.offset = @([double]$w.DistanceTop, [double]$w.DistanceLeft, [double]$w.DistanceBottom, [double]$w.DistanceRight) } } catch {}
     $sideName = switch ($side) { 1 { 'leftSide' } 2 { 'rightSide' } 3 { 'largestArea' } default { $null } }
     if ($sideName -and $mode -eq 'boundingBox') { $wrap.side = $sideName }

@@ -450,8 +450,33 @@ struct PrintSettings {
     backs_reverse: bool,
     /// The backs print upside down (a printer that takes the stack the other way round).
     backs_turned: bool,
+    /// Advanced Output Settings › Marks and Bleeds.
+    marks: OutputMarks,
     /// The document the defaults were chosen for.
     doc: u64,
+}
+
+/// Advanced Output Settings › Marks and Bleeds: printer's marks outside the page, for a print
+/// shop to trim and line up by, and whatever runs off the page's edge printed to the bleed.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct OutputMarks {
+    pub crop: bool,
+    pub bleed_marks: bool,
+    pub registration: bool,
+    pub job_info: bool,
+    pub allow_bleeds: bool,
+}
+
+/// Keep the dialog's Marks and Bleeds with the print page's other settings.
+pub(super) fn set_output_marks(app: &DesignApp, marks: OutputMarks) {
+    if let Some(ctx) = &app.egui_ctx {
+        ctx.data_mut(|d| {
+            if let Some(mut s) = d.get_temp::<PrintSettings>(print_settings_id()) {
+                s.marks = marks;
+                d.insert_temp(print_settings_id(), s);
+            }
+        });
+    }
 }
 
 /// The printers found: names, the default, and what each says about printing on both sides.
@@ -500,11 +525,11 @@ fn print_settings_id() -> egui::Id {
 }
 
 fn print_page(app: &mut DesignApp, ui: &mut Ui) {
-    let Some((uid, n, folded)) = app.session.active().map(|d| {
+    let Some((uid, n, folded, stock)) = app.session.active().map(|d| {
         let p = d.doc.page(0);
         // Half-letter facing pages: a folded bulletin or card.
         let folded = d.doc.settings.facing_pages && p.is_some_and(|p| (p.width - 396.0).abs() < 2.0 && (p.height - 612.0).abs() < 2.0);
-        (d.uid, d.doc.page_count(), folded)
+        (d.uid, d.doc.page_count(), folded, d.doc.settings.label_sheet.is_some())
     }) else {
         return;
     };
@@ -514,7 +539,14 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
         printer: None,
         which: 0,
         pages: String::new(),
-        layout: if folded { "booklet" } else { "pages" },
+        // Label and card stock: one label repeated over a sheet, or the labels in turn.
+        layout: if folded {
+            "booklet"
+        } else if stock {
+            if n == 1 { "copiesPerSheet" } else { "pagesPerSheet" }
+        } else {
+            "pages"
+        },
         sides: if folded { "shortEdge" } else { "one" },
         grayscale: false,
         paper: 0,
@@ -524,6 +556,7 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
         backs_waiting: false,
         backs_reverse: true,
         backs_turned: false,
+        marks: OutputMarks::default(),
         doc: uid,
     });
     if s.printers.is_none() {
@@ -668,6 +701,12 @@ fn print_page(app: &mut DesignApp, ui: &mut Ui) {
                     ui.selectable_value(&mut s.grayscale, true, "Grayscale");
                 },
             );
+            ui.add_space(6.0);
+            if ui.link("Advanced Output Settings…").on_hover_text("Crop marks, bleeds and other marks for a print shop.").clicked() {
+                // Saved first, so the dialog reads what's on the page now.
+                ctx.data_mut(|d| d.insert_temp(print_settings_id(), s.clone()));
+                super::dialogs::open_output(app, s.marks);
+            }
             if s.layout == "booklet" {
                 ui.add_space(10.0);
                 ui.label(egui::RichText::new("Each sheet holds four pages, two on each side. Fold the printed stack in half.").color(super::pal().group_label));
@@ -773,6 +812,13 @@ fn send_to_printer(app: &mut DesignApp, s: &PrintSettings, cur: usize, extra: Op
     p["copies"] = json!(s.copies);
     p["sides"] = json!(s.sides);
     p["grayscale"] = json!(s.grayscale);
+    let m = s.marks;
+    if m.crop || m.bleed_marks || m.registration || m.job_info {
+        p["marks"] = json!({"crop": m.crop, "bleed": m.bleed_marks, "registration": m.registration, "pageInfo": m.job_info});
+    }
+    if m.allow_bleeds {
+        p["bleed"] = json!(true);
+    }
     if let Some(printer) = &s.printer {
         p["printer"] = json!(printer);
     }

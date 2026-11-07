@@ -70,6 +70,8 @@ pub struct RunStyle {
     /// The underline and strikethrough bars (Underline / Strikethrough Options resolved).
     pub underline_rule: Rule,
     pub strike_rule: Rule,
+    /// A copy of the glyphs painted first, offset (the Shadow, Emboss and Engrave effects).
+    pub shadow: Option<GlyphShadow>,
     pub skew: f64,
     pub size: f64,
     /// The run's font isn't installed (shown in a substitute; highlighted on screen).
@@ -116,6 +118,109 @@ pub struct Rule {
     pub weight: f64,
     pub color: String,
     pub tint: f32,
+    /// The look (always single for a strikethrough).
+    pub style: designcraft_doc::UnderlineType,
+}
+
+/// The offset copy a run's glyphs cast: down and to the right for Shadow and Emboss, up and to
+/// the left for Engrave.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlyphShadow {
+    pub dx: f64,
+    pub dy: f64,
+    pub color: String,
+    pub tint: f32,
+}
+
+impl Rule {
+    /// Whether the bar is a plain rectangle (solid single, or single under words only).
+    pub fn is_plain(&self) -> bool {
+        matches!(
+            self.style,
+            designcraft_doc::UnderlineType::Single | designcraft_doc::UnderlineType::WordsOnly | designcraft_doc::UnderlineType::Thick
+        )
+    }
+
+    /// What a bar in `rect` (one of [`Rule::rect`]'s) draws in this rule's look, as shapes to fill.
+    pub fn shapes(&self, rect: Rect) -> designcraft_geom::BezPath {
+        use designcraft_doc::UnderlineType as U;
+        let mut bp = designcraft_geom::BezPath::new();
+        let w = rect.height().max(0.05);
+        let c = (rect.y0 + rect.y1) / 2.0;
+        let (x0, x1) = (rect.x0.min(rect.x1), rect.x0.max(rect.x1));
+        let bar = |bp: &mut designcraft_geom::BezPath, a: f64, b: f64, y0: f64, y1: f64| {
+            if b > a {
+                bp.move_to((a, y0));
+                bp.line_to((b, y0));
+                bp.line_to((b, y1));
+                bp.line_to((a, y1));
+                bp.close_path();
+            }
+        };
+        // On and off lengths in weights, repeated along the bar.
+        let pattern: &[f64] = match self.style {
+            U::Dotted | U::DottedHeavy => &[1.0, 1.0],
+            U::Dash | U::DashHeavy => &[4.0, 2.0],
+            U::DashLong | U::DashLongHeavy => &[8.0, 3.0],
+            U::DotDash | U::DotDashHeavy => &[4.0, 2.0, 1.0, 2.0],
+            U::DotDotDash | U::DotDotDashHeavy => &[4.0, 2.0, 1.0, 2.0, 1.0, 2.0],
+            _ => &[],
+        };
+        match self.style {
+            U::Double => {
+                let t = w * 0.75;
+                bar(&mut bp, x0, x1, c - w * 0.5 - t, c - w * 0.5);
+                bar(&mut bp, x0, x1, c + w * 0.5, c + w * 0.5 + t);
+            }
+            U::Wave | U::WaveHeavy => wave(&mut bp, x0, x1, c, w),
+            U::WaveDouble => {
+                wave(&mut bp, x0, x1, c - w * 0.9, w * 0.7);
+                wave(&mut bp, x0, x1, c + w * 0.9, w * 0.7);
+            }
+            _ if !pattern.is_empty() => {
+                let mut x = x0;
+                // A pattern step is never under 0.2 pt, nor so small a bar makes more than about
+                // 20,000 pieces.
+                let unit = w.max(0.2).max((x1 - x0) / 20_000.0);
+                'out: loop {
+                    for (i, len) in pattern.iter().enumerate() {
+                        let end = (x + len * unit).min(x1);
+                        if i % 2 == 0 {
+                            bar(&mut bp, x, end, rect.y0, rect.y1);
+                        }
+                        x = end;
+                        if x >= x1 {
+                            break 'out;
+                        }
+                    }
+                }
+            }
+            _ => bar(&mut bp, x0, x1, rect.y0, rect.y1),
+        }
+        bp
+    }
+}
+
+/// A wavy band `w` thick along `x0..x1`, centred on `c`.
+fn wave(bp: &mut designcraft_geom::BezPath, x0: f64, x1: f64, c: f64, w: f64) {
+    if x1 <= x0 {
+        return;
+    }
+    let amp = w * 1.1;
+    let length = (w * 6.0).max(1.5);
+    let steps = (((x1 - x0) / length * 8.0).ceil() as usize).clamp(2, 4000);
+    let y = |x: f64| c + amp * ((x - x0) / length * std::f64::consts::TAU).sin();
+    let half = w / 2.0;
+    bp.move_to((x0, y(x0) - half));
+    for i in 1..=steps {
+        let x = x0 + (x1 - x0) * i as f64 / steps as f64;
+        bp.line_to((x, y(x) - half));
+    }
+    for i in (0..=steps).rev() {
+        let x = x0 + (x1 - x0) * i as f64 / steps as f64;
+        bp.line_to((x, y(x) + half));
+    }
+    bp.close_path();
 }
 
 impl Rule {
@@ -362,6 +467,9 @@ pub struct Exclusion {
     /// An anchored object in the frame's own story: it wraps only lines that start after this
     /// story byte (its anchor).
     pub after: Option<usize>,
+    /// Include Inside Edges (Publisher's Through): on a line, text may go into the gaps of the
+    /// contour, not only beside it.
+    pub inside: bool,
 }
 
 impl Exclusion {
@@ -428,6 +536,48 @@ impl Contour {
             (lo, hi) = (lo.max(a), hi.min(b));
         }
         (lo <= hi).then_some((lo - self.offset, hi + self.offset))
+    }
+
+    /// The parts of the band between `y0` and `y1` the outline covers, left to right and
+    /// joined where they meet: what Include Inside Edges keeps text out of.
+    fn band_intervals(&self, y0: f64, y1: f64) -> Vec<(f64, f64)> {
+        let (y0, y1) = (y0 - self.offset, y1 + self.offset);
+        let mut ys = vec![y0, (y0 + y1) / 2.0, y1];
+        ys.extend(self.rings.iter().flatten().map(|p| p.y).filter(|y| *y > y0 && *y < y1));
+        ys.truncate(MAX_CONTOUR_POINTS);
+        let mut spans: Vec<(f64, f64)> = Vec::new();
+        for y in ys {
+            let mut xs: Vec<f64> = Vec::new();
+            for ring in &self.rings {
+                let Some(&last) = ring.last() else { continue };
+                let mut p = last;
+                for &q in ring {
+                    let (a, b) = (p, q);
+                    p = q;
+                    // Half-open, so a vertex on the line counts once.
+                    if (a.y <= y) != (b.y <= y) {
+                        xs.push(a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x));
+                    }
+                }
+            }
+            xs.sort_by(f64::total_cmp);
+            spans.extend(xs.chunks_exact(2).map(|c| (c[0], c[1])));
+        }
+        let clip = if self.clip.is_empty() { None } else { rings_band_extent(&self.clip, y0, y1) };
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut out: Vec<(f64, f64)> = Vec::new();
+        for (a, b) in spans {
+            let (a, b) = (a - self.offset, b + self.offset);
+            let (a, b) = clip.map_or((a, b), |(c0, c1)| (a.max(c0), b.min(c1)));
+            if a > b {
+                continue;
+            }
+            match out.last_mut() {
+                Some(last) if a <= last.1 => last.1 = last.1.max(b),
+                _ => out.push((a, b)),
+            }
+        }
+        out
     }
 }
 
@@ -529,7 +679,7 @@ fn wrap_exclusion(
     if let Some(custom) = wrap.path.as_ref().and_then(|p| Contour::of(&p.to_bezpath(), inv * xf, 0.0)) {
         let rect = custom.bounds();
         let contour = matches!(wrap.mode, WrapMode::BoundingBox | WrapMode::Contour).then_some(custom);
-        return Exclusion { rect, mode: wrap.mode, side, contour, after: None };
+        return Exclusion { rect, mode: wrap.mode, side, contour, after: None, inside: wrap.inside_edges && wrap.mode == WrapMode::Contour };
     }
     let contour = if wrap.mode == WrapMode::Contour { outline() } else { None }.and_then(|(path, frame)| {
         let c = Contour::of(&path, inv * xf, o[0])?;
@@ -539,7 +689,7 @@ fn wrap_exclusion(
         })
     });
     let rect = contour.as_ref().map_or_else(|| inv.transform_rect_bbox(r), Contour::bounds);
-    Exclusion { rect, mode: wrap.mode, side, contour, after: None }
+    Exclusion { rect, mode: wrap.mode, side, contour, after: None, inside: wrap.inside_edges && wrap.mode == WrapMode::Contour }
 }
 
 /// The outline a contour wrap of `kind` around frame `it` follows, in the frame's inner space, and
@@ -3329,15 +3479,18 @@ fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, desc: f64, size: f64, 
     for ex in f.exclusions.iter().filter(|e| e.wraps_line(line_start)) {
         let r = ex.rect;
         let overlaps_band = r.y0 < y1 && r.y1 > y0;
-        let blocked = match ex.mode {
+        let blocked: Vec<(f64, f64)> = match ex.mode {
             WrapMode::JumpToNextColumn if y1 > r.y0 && r.x0 < col.x1 && r.x1 > col.x0 => return vec![],
             WrapMode::BoundingBox | WrapMode::Contour if overlaps_band => match &ex.contour {
-                Some(c) => c.band_extent(y0, y1),
-                None => Some((r.x0, r.x1)),
+                // Through: only the parts the outline covers; text may fill its gaps.
+                Some(c) if ex.inside => c.band_intervals(y0, y1),
+                Some(c) => c.band_extent(y0, y1).into_iter().collect(),
+                None => vec![(r.x0, r.x1)],
             },
-            _ => None,
+            _ => vec![],
         };
-        let Some((a, b)) = blocked.filter(|&(a, b)| a < col.x1 && b > col.x0) else { continue };
+        let blocked: Vec<(f64, f64)> = blocked.into_iter().filter(|&(a, b)| a < col.x1 && b > col.x0).collect();
+        let (Some(a), Some(b)) = (blocked.iter().map(|s| s.0).reduce(f64::min), blocked.iter().map(|s| s.1).reduce(f64::max)) else { continue };
         cut = true;
         // One-sided wraps also block the column on the other side of the object.
         let text_left = match ex.side {
@@ -3346,25 +3499,27 @@ fn free_slots(f: &FrameSpec, col: Rect, y0: f64, y1: f64, desc: f64, size: f64, 
             WrapSide::LargestArea => Some(r.x0 - col.x0 >= col.x1 - r.x1),
             WrapSide::BothSides | WrapSide::TowardsSpine | WrapSide::AwayFromSpine => None,
         };
-        let (a, b) = match text_left {
-            Some(true) => (a, b.max(col.x1)),
-            Some(false) => (a.min(col.x0), b),
-            None => (a, b),
+        let spans = match text_left {
+            Some(true) => vec![(a, b.max(col.x1))],
+            Some(false) => vec![(a.min(col.x0), b)],
+            None => blocked,
         };
-        let mut next = Vec::with_capacity(free.len() + 1);
-        for (fa, fb) in free {
-            if b <= fa || a >= fb {
-                next.push((fa, fb));
-                continue;
+        for (a, b) in spans {
+            let mut next = Vec::with_capacity(free.len() + 1);
+            for (fa, fb) in free {
+                if b <= fa || a >= fb {
+                    next.push((fa, fb));
+                    continue;
+                }
+                if a > fa {
+                    next.push((fa, a));
+                }
+                if b < fb {
+                    next.push((b, fb));
+                }
             }
-            if a > fa {
-                next.push((fa, a));
-            }
-            if b < fb {
-                next.push((b, fb));
-            }
+            free = next;
         }
-        free = next;
     }
     if cut {
         free.retain(|(a, b)| b - a >= size * 1.5);

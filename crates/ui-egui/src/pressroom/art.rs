@@ -824,6 +824,18 @@ pub fn paint(p: &Painter, r: Rect, name: &str, enabled: bool) {
                 g.line((16.0, 21.0), (16.0, 24.0), INK, 1.0);
             }
         }
+        // A cell divided corner to corner.
+        "cell-diagonals" => {
+            g.boxed(5.0, 7.0, 27.0, 25.0, PAPER, INK);
+            g.line((5.0, 7.0), (27.0, 25.0), BLUE, 1.4);
+        }
+        // A row that grows with its text.
+        "grow-to-fit" => {
+            g.boxed(4.0, 5.0, 28.0, 21.0, PAPER, INK);
+            g.line((4.0, 13.0), (28.0, 13.0), INK, 1.0);
+            g.line((16.0, 16.0), (16.0, 28.0), BLUE, 1.6);
+            g.path(&[(12.5, 24.5), (16.0, 28.0), (19.5, 24.5)], BLUE, 1.6);
+        }
         // Text at the top, middle or bottom of a cell.
         "cell-top" | "cell-middle" | "cell-bottom" => {
             g.boxed(5.0, 5.0, 27.0, 27.0, PAPER, INK);

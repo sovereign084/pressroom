@@ -333,6 +333,18 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 pub fn month(next: bool) -> (String, u32, u32, u32) {
     let (y, m) = this_month();
     let (y, m) = if next { if m == 12 { (y + 1, 1) } else { (y, m + 1) } } else { (y, m) };
+    month_of(y, m)
+}
+
+/// Today's year and month (1–12), for a dialog to start from.
+pub fn today() -> (i64, u32) {
+    this_month()
+}
+
+/// Month `m` (1–12) of year `y`: its title, the weekday of the 1st (0 = Sunday), its length and
+/// how many week rows it needs (with the day names' row).
+pub fn month_of(y: i64, m: u32) -> (String, u32, u32, u32) {
+    let m = m.clamp(1, 12);
     let first = days_from_civil(y, m, 1);
     let following = if m == 12 { days_from_civil(y + 1, 1, 1) } else { days_from_civil(y, m + 1, 1) };
     let len = (following - first) as u32;
@@ -356,6 +368,8 @@ fn stroke_type(kind: &str, weight: f64) -> Value {
 struct Script {
     steps: Vec<Value>,
     made: Vec<usize>,
+    /// A calendar's year and month, when one was chosen instead of this month or the next.
+    month: Option<(i64, u32)>,
 }
 
 impl Script {
@@ -428,7 +442,7 @@ impl Script {
     }
 
     fn calendar(&mut self, spread: usize, r: [f64; 4], next: bool, banded: bool, k: f64) {
-        let (title, wd, len, weeks) = month(next);
+        let (title, wd, len, weeks) = self.month.map_or_else(|| month(next), |(y, m)| month_of(y, m));
         let title_h = 34.0 * k;
         let title_ink = if banded { A1 } else { MAIN };
         // The title, then the table in a box of its own.
@@ -479,6 +493,19 @@ impl Script {
 
 /// Builds `b` in the middle of the page in view, grouped, as one undo step.
 pub fn insert(app: &mut DesignApp, b: &Block) -> Result<Value, String> {
+    insert_with(app, b, None)
+}
+
+/// A calendar for month `m` of year `y`, with a coloured header row or plain.
+pub fn insert_month(app: &mut DesignApp, banded: bool, y: i64, m: u32) -> Result<Value, String> {
+    let b = CALENDARS
+        .iter()
+        .find(|b| matches!(b.parts.first(), Some(Part::Calendar { banded: c, next: false, .. }) if *c == banded))
+        .ok_or("No calendar.")?;
+    insert_with(app, b, Some((y, m)))
+}
+
+fn insert_with(app: &mut DesignApp, b: &Block, month: Option<(i64, u32)>) -> Result<Value, String> {
     let (spread, centre) = super::centre_rect(app, 0.0, 0.0).ok_or("Open a publication first.")?;
     let page_w = app
         .session
@@ -494,7 +521,7 @@ pub fn insert(app: &mut DesignApp, b: &Block) -> Result<Value, String> {
     let (w, h) = (b.size.0 * k, b.size.1 * k);
     let (x0, y0) = (centre[0] - w / 2.0, centre[1] - h / 2.0);
     let at = |r: [f64; 4]| [x0 + r[0] * k, y0 + r[1] * k, x0 + r[2] * k, y0 + r[3] * k];
-    let mut s = Script { steps: scheme::ensure_steps(app), made: Vec::new() };
+    let mut s = Script { steps: scheme::ensure_steps(app), made: Vec::new(), month };
     for part in b.parts {
         match *part {
             Part::Box { r, fill, line, round } => {
@@ -693,6 +720,13 @@ pub(super) fn gallery(app: &mut DesignApp, ui: &mut Ui, title: &str, blocks: &'s
         ui.close();
         if let Err(e) = insert(app, b) {
             app.status(format!("Couldn't insert {}: {e}", b.name));
+        }
+    }
+    if title == "Calendars" {
+        ui.separator();
+        if ui.button("Choose a Month…").on_hover_text("A calendar for any month and year.").clicked() {
+            ui.close();
+            super::dialogs::open_calendar(app);
         }
     }
 }

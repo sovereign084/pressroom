@@ -108,6 +108,47 @@ pub enum Kerning {
     Manual(f64),
 }
 
+/// The look of an underline, as Publisher's Font dialog offers them. `WordsOnly` leaves the
+/// spaces bare; the heavy kinds are twice the weight.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnderlineType {
+    #[default]
+    Single,
+    WordsOnly,
+    Double,
+    Thick,
+    Dotted,
+    DottedHeavy,
+    Dash,
+    DashHeavy,
+    DashLong,
+    DashLongHeavy,
+    DotDash,
+    DotDashHeavy,
+    DotDotDash,
+    DotDotDashHeavy,
+    Wave,
+    WaveHeavy,
+    WaveDouble,
+}
+
+impl UnderlineType {
+    /// The kinds drawn at twice the weight.
+    pub fn heavy(self) -> bool {
+        matches!(
+            self,
+            UnderlineType::Thick
+                | UnderlineType::DottedHeavy
+                | UnderlineType::DashHeavy
+                | UnderlineType::DashLongHeavy
+                | UnderlineType::DotDashHeavy
+                | UnderlineType::DotDotDashHeavy
+                | UnderlineType::WaveHeavy
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Capitalization {

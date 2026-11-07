@@ -1,5 +1,6 @@
 //! Printer's marks drawn in the slug area: crop marks at the trim corners, bleed marks at the bleed
-//! corners, and a page-information line. All marks use `[Registration]` (every plate).
+//! corners, registration targets beside each edge, and a page-information line. All marks use
+//! `[Registration]` (every plate).
 
 use craft_pdf::write::backend as krilla;
 use designcraft_geom::{BezPath, Point};
@@ -43,6 +44,20 @@ impl Exporter<'_> {
                 }
             }
         }
+        if m.registration {
+            // A circle with a cross through it, centred beside the middle of each edge.
+            let r = MARK_LEN / 4.0;
+            let d = start + MARK_LEN / 2.0;
+            let (cx, cy) = ((t.x0 + t.x1) / 2.0, (t.y0 + t.y1) / 2.0);
+            let centres = [(cx, t.y0 - d), (cx, t.y1 + d), (t.x0 - d, cy), (t.x1 + d, cy)];
+            for (x, y) in centres {
+                seg((x - r * 1.6, y), (x + r * 1.6, y));
+                seg((x, y - r * 1.6), (x, y + r * 1.6));
+            }
+            for (x, y) in centres {
+                circle(&mut bp, x, y, r);
+            }
+        }
         if let Some(p) = to_path(&bp) {
             s.set_fill(None);
             s.set_stroke(Some(Stroke {
@@ -66,4 +81,16 @@ impl Exporter<'_> {
             self.plain_text(s, &info, at, 6.0, registration(1.0, self.rgb_only));
         }
     }
+}
+
+/// A circle of radius `r` round (`x`, `y`), as four quarter arcs.
+fn circle(bp: &mut BezPath, x: f64, y: f64, r: f64) {
+    // The control-point distance that makes a cubic follow a quarter circle.
+    let k = r * 0.552_284_75;
+    bp.move_to(Point::new(x + r, y));
+    bp.curve_to(Point::new(x + r, y + k), Point::new(x + k, y + r), Point::new(x, y + r));
+    bp.curve_to(Point::new(x - k, y + r), Point::new(x - r, y + k), Point::new(x - r, y));
+    bp.curve_to(Point::new(x - r, y - k), Point::new(x - k, y - r), Point::new(x, y - r));
+    bp.curve_to(Point::new(x + k, y - r), Point::new(x + r, y - k), Point::new(x + r, y));
+    bp.close_path();
 }

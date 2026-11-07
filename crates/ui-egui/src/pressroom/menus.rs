@@ -47,9 +47,28 @@ pub(super) const OBJECT: &[Row] = &[
     Row::Cmd("Ungroup", "object.ungroup"),
     Row::Sub("Order", ORDER),
     Row::Sub("Rotate or Flip", ROTATE),
+    Row::Act("Edit Points", super::edit_points),
+    Row::Cmd("Reroute Connectors", "object.rerouteConnectors"),
     Row::Sep,
     Row::Act("Format Object…", dialogs::open_format),
     Row::Act("Hyperlink…", dialogs::open_hyperlink),
+];
+
+/// A table's commands, on the right-click menu of text in a table.
+pub(super) const TABLE: &[Row] = &[
+    Row::Cmd("Insert Rows Above", "table.insertRowAbove"),
+    Row::Cmd("Insert Rows Below", "table.insertRowBelow"),
+    Row::Cmd("Insert Columns to the Left", "table.insertColumnLeft"),
+    Row::Cmd("Insert Columns to the Right", "table.insertColumnRight"),
+    Row::Sep,
+    Row::Cmd("Delete Rows", "table.deleteRow"),
+    Row::Cmd("Delete Columns", "table.deleteColumn"),
+    Row::Sep,
+    Row::Cmd("Merge Cells", "table.merge"),
+    Row::Cmd("Split Cells", "table.unmerge"),
+    Row::Sep,
+    Row::With("Fill Down", "table.fillCells", r#"{"direction": "down"}"#),
+    Row::With("Fill Right", "table.fillCells", r#"{"direction": "right"}"#),
 ];
 
 pub(super) const TEXT: &[Row] = &[
@@ -213,6 +232,10 @@ pub(crate) fn context(app: &mut DesignApp, ui: &mut Ui, kind: ContextMenu) {
     match kind {
         ContextMenu::Text => {
             super::spelling::menu_rows(app, ui);
+            if crate::menus::menu_enabled(app, "table.deleteRow") {
+                ui.menu_button("Table", |ui| rows(app, ui, TABLE));
+                ui.separator();
+            }
             rows(app, ui, TEXT);
         }
         ContextMenu::Object => rows(app, ui, OBJECT),

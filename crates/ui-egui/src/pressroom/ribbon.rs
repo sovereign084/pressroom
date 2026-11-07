@@ -746,12 +746,27 @@ fn arrange_group(app: &mut DesignApp, ui: &mut Ui) {
     let many = app.session.active().is_some_and(|d| d.selection.items.len() > 1);
     group(ui, "Arrange", false, |ui| {
         big_menu(ui, "wrap", "Wrap\nText", sel, |ui| {
-            for (label, mode) in [("None", "none"), ("Square", "boundingBox"), ("Tight", "contour"), ("Top and Bottom", "jumpObject")] {
+            for (label, mode, inside) in [
+                ("None", "none", false),
+                ("Square", "boundingBox", false),
+                ("Tight", "contour", false),
+                ("Through", "contour", true),
+                ("Top and Bottom", "jumpObject", false),
+            ] {
                 if item(ui, label) {
-                    act_with(app, "object.textWrap", json!({"mode": mode}));
+                    act_with(app, "object.textWrap", json!({"mode": mode, "insideEdges": inside}));
                 }
             }
             ui.separator();
+            let one = app.session.active().is_some_and(|d| d.selection.items.len() == 1);
+            if ui.add_enabled(one, egui::Button::new("Edit Wrap Points")).clicked() {
+                ui.close();
+                if app.run("tool.select", json!({"tool": "wrapPoints"})).is_ok() {
+                    app.status(
+                        "Drag a point to reshape the wrap. Ctrl+click the outline adds a point, Ctrl+Shift+click a point removes it. Esc when done.",
+                    );
+                }
+            }
             if item(ui, "More Layout Options…") {
                 super::dialogs::open_format(app);
             }
@@ -994,6 +1009,46 @@ const PAGE_SIZES: &[(&str, f64, f64)] = &[
     ("A5 (5.83 x 8.27\")", 5.83, 8.27),
 ];
 
+/// Business cards, labels and envelopes in Size: (menu, [(name, width and height in inches, the
+/// sheet's side and top margins and the gaps across and down in inches)]). Label and card
+/// stock prints several to a sheet from those margins; an envelope, or stock without them, as
+/// any page does. The margins are those of common US letter-size stock: print a test on plain
+/// paper first and hold it to the sheet.
+type Stock = (&'static str, f64, f64, Option<[f64; 4]>);
+const STOCK: &[(&str, &[Stock])] = &[
+    (
+        "Business Cards",
+        &[
+            ("US business card, 10 per sheet (3.5 x 2\")", 3.5, 2.0, Some([0.75, 0.5, 0.0, 0.0])),
+            ("Europe business card (85 x 55 mm)", 3.346, 2.165, None),
+        ],
+    ),
+    (
+        "Labels",
+        &[
+            ("Address labels, 30 per sheet (2 5/8 x 1\")", 2.625, 1.0, Some([0.1875, 0.5, 0.125, 0.0])),
+            ("Address labels, 20 per sheet (4 x 1\")", 4.0, 1.0, Some([0.15625, 0.5, 0.1875, 0.0])),
+            ("Shipping labels, 10 per sheet (4 x 2\")", 4.0, 2.0, Some([0.15625, 0.5, 0.1875, 0.0])),
+            ("Shipping labels, 6 per sheet (4 x 3 1/3\")", 4.0, 3.333, Some([0.15625, 0.5, 0.1875, 0.0])),
+            ("Return address labels, 80 per sheet (1 3/4 x 1/2\")", 1.75, 0.5, Some([0.28125, 0.5, 0.3125, 0.0])),
+            ("Full-sheet label (8.5 x 11\")", 8.5, 11.0, None),
+        ],
+    ),
+    (
+        "Envelopes",
+        &[
+            ("#10 envelope (9.5 x 4.125\")", 9.5, 4.125, None),
+            ("#6 3/4 envelope (6.5 x 3.625\")", 6.5, 3.625, None),
+            ("Monarch envelope (7.5 x 3.875\")", 7.5, 3.875, None),
+            ("A2 envelope (5.75 x 4.375\")", 5.75, 4.375, None),
+            ("A7 envelope (7.25 x 5.25\")", 7.25, 5.25, None),
+            ("DL envelope (220 x 110 mm)", 8.661, 4.331, None),
+            ("C5 envelope (229 x 162 mm)", 9.016, 6.378, None),
+            ("C6 envelope (162 x 114 mm)", 6.378, 4.488, None),
+        ],
+    ),
+];
+
 fn page_design(app: &mut DesignApp, ui: &mut Ui) {
     let doc = has_doc(app);
     group(ui, "Template", false, |ui| {
@@ -1030,8 +1085,18 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
                 let landscape = size.is_some_and(|(sw, sh)| sw > sh);
                 let (w, h) = if landscape { (h, w) } else { (w, h) };
                 if item(ui, label) {
-                    act_with(app, "layout.documentSetup", json!({"width": w, "height": h}));
+                    act_with(app, "layout.documentSetup", json!({"width": w, "height": h, "labelSheet": null}));
                 }
+            }
+            for (menu, sizes) in STOCK {
+                ui.menu_button(*menu, |ui| {
+                    for (label, w, h, sheet) in sizes.iter() {
+                        if item(ui, label) {
+                            let sheet = sheet.map(|m| json!({"side": m[0] * 72.0, "top": m[1] * 72.0, "hGap": m[2] * 72.0, "vGap": m[3] * 72.0}));
+                            act_with(app, "layout.documentSetup", json!({"width": w * 72.0, "height": h * 72.0, "labelSheet": sheet}));
+                        }
+                    }
+                });
             }
             ui.separator();
             if item(ui, "Page Setup…") {
@@ -1104,6 +1169,10 @@ fn page_design(app: &mut DesignApp, ui: &mut Ui) {
     group(ui, "Page Background", false, |ui| {
         big_menu(ui, "background", "Background", doc, |ui| {
             super::colors::menu(app, ui, super::colors::Target::Background, Some("No Background"), "");
+            ui.separator();
+            if item(ui, "More Backgrounds…") {
+                super::dialogs::open_background(app);
+            }
         });
     });
 }
@@ -1402,10 +1471,55 @@ fn text_box_format(app: &mut DesignApp, ui: &mut Ui) {
                 let _ = app.run("type.char", json!({"attrs": {"capitalization": to}}));
             }
         });
+        column(ui, |ui| {
+            small_menu(ui, "fonts", "Stylistic Sets", frame, |ui| stylistic_sets_menu(app, ui));
+            for (label, tag, none) in
+                [("Stylistic Alternates", "salt", "This font has no stylistic alternates."), ("Swash", "swsh", "This font has no swash letters.")]
+            {
+                if small(ui, "fonts", label, frame).clicked() {
+                    toggle_feature(app, tag, none);
+                }
+            }
+        });
     });
     shape_styles_group(app, ui);
     arrange_group(app, ui);
     size_group(app, ui);
+}
+
+/// Stylistic Sets: the sets the selected text's fonts offer, one at a time, as Publisher's gallery
+/// has them. The font is asked only when the menu is open.
+fn stylistic_sets_menu(app: &mut DesignApp, ui: &mut Ui) {
+    let sets = app.run("type.openTypeFeatures", json!({})).ok().and_then(|v| v["stylisticSets"].as_array().cloned()).unwrap_or_default();
+    if sets.is_empty() {
+        ui.label("This font has no stylistic sets.");
+        return;
+    }
+    if item(ui, "No Stylistic Set") {
+        act_with(app, "type.openType", json!({"stylisticSets": []}));
+    }
+    for set in &sets {
+        let n = set["set"].as_u64().unwrap_or(0);
+        let label = set["name"].as_str().map_or(format!("Stylistic Set {n}"), |name| format!("Stylistic Set {n}: {name}"));
+        if ui.selectable_label(set["applied"] == "all", label).clicked() {
+            act_with(app, "type.openType", json!({"stylisticSets": [n]}));
+            ui.close();
+        }
+    }
+}
+
+/// Stylistic Alternates and Swash: on or off for the selected text, when its font has them.
+fn toggle_feature(app: &mut DesignApp, tag: &str, none: &str) {
+    let offered = app
+        .run("type.openTypeFeatures", json!({}))
+        .ok()
+        .and_then(|v| v["features"].as_array().and_then(|a| a.iter().find(|f| f["tag"] == tag).map(|f| f["available"] != "none")))
+        .unwrap_or(false);
+    if offered {
+        act_with(app, "type.openType", json!({"feature": tag}));
+    } else {
+        app.status(none.to_string());
+    }
 }
 
 /// Height and Width, as the Format tabs have them.
@@ -1802,6 +1916,13 @@ fn table_layout(app: &mut DesignApp, ui: &mut Ui) {
         if big(ui, "split-cells", "Split\nCells", on(app, "table.unmerge")).clicked() {
             act(app, "table.unmerge");
         }
+        big_menu(ui, "cell-diagonals", "Diagonals", in_table, |ui| {
+            for (label, diagonal) in [("Divide Down", "down"), ("Divide Up", "up"), ("No Division", "none")] {
+                if item(ui, label) {
+                    act_with(app, "table.setCell", json!({"diagonal": diagonal}));
+                }
+            }
+        });
     });
     group(ui, "Alignment", false, |ui| {
         column(ui, |ui| {
@@ -1814,4 +1935,24 @@ fn table_layout(app: &mut DesignApp, ui: &mut Ui) {
             }
         });
     });
+    group(ui, "Size", false, |ui| {
+        let grows = table_grows(app);
+        if big_inner(ui, "grow-to-fit", "Grow to\nFit Text", in_table, false, grows).clicked() {
+            act_with(app, "table.growToFit", json!({"on": !grows}));
+        }
+    });
+}
+
+/// Whether every row of the table holding the selection grows with its text.
+fn table_grows(app: &DesignApp) -> bool {
+    let Some(st) = app.session.active() else { return false };
+    let (story, table) = match (st.selection.cells, st.selection.text) {
+        (Some(c), _) => (c.story, c.table),
+        (None, Some(t)) => match t.cell {
+            Some(c) => (t.story, c.table),
+            None => return false,
+        },
+        _ => return false,
+    };
+    st.doc.story(story).and_then(|s| s.tables.get(&table)).is_some_and(|t| t.rows.iter().all(|r| r.mode == designcraft_doc::RowHeightMode::AtLeast))
 }

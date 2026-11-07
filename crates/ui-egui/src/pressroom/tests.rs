@@ -566,14 +566,17 @@ fn the_font_dialog_applies_only_what_changed() {
     super::dialogs::open_font(&mut h.state_mut().app);
     h.run_steps(2);
     let mut d = h.state_mut().app.ui.dialog.take().unwrap();
-    d.fields.insert("underline".into(), json!(true));
+    d.fields.insert("underline".into(), json!("double"));
     d.fields.insert("smallCaps".into(), json!(true));
+    d.fields.insert("emboss".into(), json!(true));
     super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
     h.run_steps(2);
     let chars = run(&mut h, "type.selectionAttrs", json!({}))["chars"].clone();
     assert_eq!(chars["size"], 20.0);
     assert_eq!(chars["capitalization"], "smallCaps");
     assert!(chars["underline"].as_bool().unwrap_or(false) || chars["underline"].is_object());
+    assert_eq!(chars["underlineType"], "double");
+    assert_eq!(chars["effectEmboss"], true);
     // A bad size says so and changes nothing.
     super::dialogs::open_font(&mut h.state_mut().app);
     let mut d = h.state_mut().app.ui.dialog.take().unwrap();
@@ -700,6 +703,8 @@ fn the_right_click_menus_are_publishers() {
             "Ungroup",
             "Order",
             "Rotate or Flip",
+            "Edit Points",
+            "Reroute Connectors",
             "Format Object…",
             "Hyperlink…"
         ]
@@ -721,7 +726,7 @@ fn the_right_click_menus_are_publishers() {
         }
     }
     let mut ids = Vec::new();
-    for t in [super::menus::OBJECT, super::menus::TEXT, super::menus::CANVAS] {
+    for t in [super::menus::OBJECT, super::menus::TEXT, super::menus::CANVAS, super::menus::TABLE] {
         commands(t, &mut ids);
     }
     for id in ids {
@@ -848,4 +853,76 @@ fn a_picture_on_the_clipboard_pastes_as_a_picture_and_text_doesnt() {
     // A size that doesn't match its pixels is refused.
     h.state_mut().app.services.clipboard_image = Some(Box::new(|| Some((9, 9, vec![0; 4]))));
     assert!(!super::paste_picture(&mut h.state_mut().app));
+}
+
+#[test]
+fn a_calendar_for_any_month() {
+    let mut h = window();
+    let d = crate::dialogs::Dialog::new("pr.calendar", json!({"month": "2", "year": "2027", "look": "simple"}));
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    h.run_steps(2);
+    let st = h.state().app.session.active().unwrap();
+    assert!(st.doc.stories.values().any(|s| s.text == "February 2027"));
+    let table = st.doc.stories.values().flat_map(|s| s.tables.values()).next().expect("a table");
+    // 1 February 2027 is a Monday.
+    assert_eq!(table.cell(1, 1).map(|c| c.text.text.clone()).unwrap_or_default(), "1");
+    for bad in [json!({"month": "2", "year": "twenty", "look": "simple"}), json!({"month": "13", "year": "2027", "look": "color"})] {
+        assert!(super::dialogs::apply(&mut h.state_mut().app, &crate::dialogs::Dialog::new("pr.calendar", bad)).is_err());
+    }
+}
+
+#[test]
+fn horizontal_rules_go_above_and_below_the_paragraph() {
+    let mut h = window();
+    let (_, story) = text_box(&mut h, "Announcements");
+    run(&mut h, "text.select", json!({"story": story, "anchor": 2, "focus": 2}));
+    super::dialogs::open_paragraph(&mut h.state_mut().app);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    d.fields.insert("raOn".into(), json!(true));
+    d.fields.insert("raWeight".into(), json!("2"));
+    d.fields.insert("rbOn".into(), json!(true));
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    h.run_steps(2);
+    let para = run(&mut h, "type.selectionAttrs", json!({}))["para"].clone();
+    assert_eq!((para["ruleAbove"]["on"].clone(), para["ruleAbove"]["weight"].clone()), (json!(true), json!(2.0)));
+    assert_eq!(para["ruleBelow"]["on"], true);
+    assert!(para["ruleAbove"]["offset"].as_f64().unwrap_or(0.0) > 0.0, "the rule sits above the text, not through it");
+    assert_eq!(para["ruleAbove"]["color"], designcraft_doc::attrs::TEXT_COLOR, "left as it was, the colour follows the text");
+    // A bad weight says so.
+    super::dialogs::open_paragraph(&mut h.state_mut().app);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    d.fields.insert("raWeight".into(), json!("thick"));
+    assert!(super::dialogs::apply(&mut h.state_mut().app, &d).is_err());
+}
+
+#[test]
+fn a_background_colour_lets_the_paper_show_through() {
+    let mut h = window();
+    let d = crate::dialogs::Dialog::new("pr.background", json!({"kind": "color", "color": "[Black]", "path": "", "transparency": "75"}));
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    h.run_steps(2);
+    let st = h.state().app.session.active().unwrap();
+    let parent = st.doc.parents.first().unwrap();
+    let bg: Vec<_> = parent.items.iter().filter(|it| it.label == "pressroom-background").collect();
+    assert_eq!(bg.len(), parent.pages.len());
+    assert!(bg.iter().all(|it| (it.opacity - 0.25).abs() < 1e-6), "75% transparent");
+    // A picture needs a file.
+    let d = crate::dialogs::Dialog::new("pr.background", json!({"kind": "picture", "color": "[Black]", "path": "", "transparency": "0"}));
+    assert!(super::dialogs::apply(&mut h.state_mut().app, &d).is_err());
+}
+
+#[test]
+fn page_setup_keeps_label_stock_margins() {
+    let mut h = window();
+    run(&mut h, "layout.documentSetup", json!({"width": 189, "height": 72}));
+    super::dialogs::open_setup(&mut h.state_mut().app);
+    let mut d = h.state_mut().app.ui.dialog.take().unwrap();
+    assert_eq!(d.s("sheet"), "one");
+    for (k, v) in [("sheet", "multiple"), ("sheetSide", "0.1875\""), ("sheetTop", "0.5\""), ("sheetHGap", "0.125\""), ("sheetVGap", "0\"")] {
+        d.fields.insert(k.into(), json!(v));
+    }
+    super::dialogs::apply(&mut h.state_mut().app, &d).unwrap();
+    h.run_steps(2);
+    let l = h.state().app.session.active().unwrap().doc.settings.label_sheet.expect("label stock");
+    assert!((l.side - 13.5).abs() < 0.01 && (l.top - 36.0).abs() < 0.01 && (l.h_gap - 9.0).abs() < 0.01, "{l:?}");
 }

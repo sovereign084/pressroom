@@ -8,6 +8,7 @@ mod idml;
 mod ime;
 mod linked_paths;
 mod params;
+mod publisher_survey;
 mod roots;
 mod table;
 

@@ -9,6 +9,22 @@ pub enum RowHeightMode {
     Exactly,
 }
 
+/// Cell Diagonals: a line from corner to corner that splits the cell in two, as Publisher's Divide
+/// Down (top left to bottom right) and Divide Up (bottom left to top right) do. The cell's first
+/// paragraph sits in the upper half and its last in the lower one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CellDiagonal {
+    #[default]
+    None,
+    Down,
+    Up,
+}
+
+fn is_no_diagonal(d: &CellDiagonal) -> bool {
+    *d == CellDiagonal::None
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RowKind {
@@ -207,6 +223,9 @@ pub struct Cell {
     /// content box, origin at the box's top left).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graphic: Option<crate::Graphic>,
+    /// Cell Diagonals (see [`CellDiagonal`]).
+    #[serde(default, skip_serializing_if = "is_no_diagonal")]
+    pub diagonal: CellDiagonal,
 }
 
 impl Default for Cell {
@@ -228,6 +247,7 @@ impl Default for Cell {
             stroke_defined: [false; 4],
             style: String::new(),
             graphic: None,
+            diagonal: CellDiagonal::None,
         }
     }
 }

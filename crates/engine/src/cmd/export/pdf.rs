@@ -50,6 +50,7 @@ pub(crate) fn options(p: &Value, page_count: usize) -> Result<PdfOptions> {
                 crop: b("crop"),
                 bleed: b("bleed"),
                 page_info: b("pageInfo"),
+                registration: b("registration"),
                 weight: m.get("weight").and_then(Value::as_f64).unwrap_or(0.25),
                 offset: m.get("offset").and_then(Value::as_f64).unwrap_or(6.0),
             }

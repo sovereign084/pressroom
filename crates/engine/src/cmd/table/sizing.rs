@@ -227,6 +227,45 @@ pub(super) fn distribute_cols(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Grow to Fit Text: on, every row grows with its text; off, each keeps the height it shows now.
+pub(super) fn grow_to_fit(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "table.growToFit";
+    let g = target(s, p, ID)?;
+    let (on, shown) = {
+        let st = s.doc()?;
+        let t = st.doc.story(g.story).and_then(|x| x.tables.get(&g.table)).ok_or_else(|| bad(ID, "no table"))?;
+        let on = match p.get("on") {
+            Some(v) => v.as_bool().ok_or_else(|| bad(ID, "on must be true or false"))?,
+            None => !t.rows.iter().all(|r| r.mode == RowHeightMode::AtLeast),
+        };
+        let mut shown = vec![None; t.nrows()];
+        if !on {
+            let cs = s.cache.get(&st.doc, g.story, None);
+            for c in cs.frames.iter().flat_map(|f| &f.tables).filter(|f| f.table == g.table).flat_map(|f| &f.cells) {
+                let single = t.cell(c.row, c.col).is_some_and(|cell| cell.row_span == 1);
+                let h = c.rect.height();
+                if let Some(slot) = shown.get_mut(c.row).filter(|_| single && h.is_finite() && h > 0.0) {
+                    *slot = Some(slot.map_or(h, |old: f64| old.max(h)));
+                }
+            }
+        }
+        (on, shown)
+    };
+    edit_table(s, &g, ID, |t| {
+        for (row, h) in t.rows.iter_mut().zip(shown) {
+            if on {
+                row.mode = RowHeightMode::AtLeast;
+            } else {
+                if let Some(h) = h {
+                    row.height = row.height.max(h);
+                }
+                row.mode = RowHeightMode::Exactly;
+            }
+        }
+        Ok(json!({"on": on}))
+    })
+}
+
 #[cfg(test)]
 mod resize_border_tests {
     use serde_json::json;

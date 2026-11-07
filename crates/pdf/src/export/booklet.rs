@@ -171,6 +171,32 @@ pub fn copies_per_sheet_sides(pages: &[(f64, f64)], order: &[usize], paper: (f64
         .collect()
 }
 
+/// Pages on label or card stock: set from the sheet's top left by its margins and gaps, not
+/// centred, as many across and down as fit inside the same margins on the far sides. `repeat`
+/// fills a sheet with each page (a sheet of one label); otherwise the pages run on in turn.
+pub fn label_sheet_sides(pages: &[(f64, f64)], order: &[usize], paper: (f64, f64), l: &designcraft_doc::LabelSheet, repeat: bool) -> Vec<SheetSide> {
+    let biggest = order.iter().filter_map(|&p| pages.get(p)).fold((1.0f64, 1.0f64), |(w, h), p| (w.max(p.0), h.max(p.1)));
+    let (w, h) = (biggest.0.max(1.0), biggest.1.max(1.0));
+    // Half a point of slack: stock is measured in fractions of an inch.
+    let fit = |space: f64, start: f64, size: f64, gap: f64| (((space - 2.0 * start + gap + 0.5) / (size + gap)).floor().clamp(1.0, 1000.0)) as usize;
+    let (across, down) = (fit(paper.0, l.side, w, l.h_gap), fit(paper.1, l.top, h, l.v_gap));
+    let mut slots = Vec::with_capacity(across * down);
+    for r in 0..down {
+        for c in 0..across {
+            slots.push((l.side + c as f64 * (w + l.h_gap), l.top + r as f64 * (h + l.v_gap)));
+        }
+    }
+    let side = |placed: Vec<Placed>| SheetSide { width: paper.0, height: paper.1, placed, turned: false };
+    if repeat {
+        order.iter().map(|&page| side(slots.iter().map(|&(x, y)| Placed { page, x, y, scale: 1.0 }).collect())).collect()
+    } else {
+        order
+            .chunks(slots.len().max(1))
+            .map(|chunk| side(chunk.iter().zip(&slots).map(|(&page, &(x, y))| Placed { page, x, y, scale: 1.0 }).collect()))
+            .collect()
+    }
+}
+
 /// The pages in turn, as many to a sheet as fit.
 pub fn pages_per_sheet_sides(pages: &[(f64, f64)], order: &[usize], paper: (f64, f64)) -> Vec<SheetSide> {
     let biggest = order.iter().filter_map(|&p| pages.get(p)).fold((1.0f64, 1.0f64), |(w, h), p| (w.max(p.0), h.max(p.1)));

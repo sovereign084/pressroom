@@ -19,10 +19,12 @@ mod nav;
 pub use nav::{LOCK_OFFSET_PX, PIN_OFFSET_PX};
 mod pen;
 mod pencil;
+pub mod points;
 pub mod select;
 pub mod snap;
 mod text;
 pub mod thread;
+pub mod wrap;
 mod xform;
 
 use designcraft_compose::Cache;
@@ -516,6 +518,8 @@ pub fn create(id: &str) -> Box<dyn Tool> {
         "pencil" => Box::new(pencil::PencilTool::default()),
         "smooth" => Box::new(pencil::PathDragTool::new(false)),
         "erase" => Box::new(pencil::PathDragTool::new(true)),
+        "wrapPoints" => Box::new(wrap::WrapPointsTool::default()),
+        "shapePoints" => Box::new(points::ShapePointsTool::default()),
         "addAnchor" => Box::new(anchors::AnchorTool::new(anchors::Kind::Add)),
         "deleteAnchor" => Box::new(anchors::AnchorTool::new(anchors::Kind::Delete)),
         "convertDirection" => Box::new(anchors::AnchorTool::new(anchors::Kind::Convert)),

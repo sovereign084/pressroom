@@ -164,6 +164,7 @@ impl Document {
             modified: 0,
             next_id: 0,
             font_scope: 0,
+            connectors: Vec::new(),
         };
         let lid = LayerId(d.alloc());
         d.layers.push(Layer {

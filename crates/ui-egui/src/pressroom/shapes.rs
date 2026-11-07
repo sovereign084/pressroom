@@ -14,7 +14,30 @@ struct Section {
     shapes: &'static [(&'static str, &'static str)],
 }
 
-const LINES: &[(&str, &str)] = &[("line", "Line"), ("arrow", "Arrow"), ("doubleArrow", "Double Arrow")];
+const LINES: &[(&str, &str)] = &[
+    ("line", "Line"),
+    ("arrow", "Arrow"),
+    ("doubleArrow", "Double Arrow"),
+    ("elbowConnector", "Connector: Elbow"),
+    ("elbowArrowConnector", "Connector: Elbow Arrow"),
+    ("curvedConnector", "Connector: Curved"),
+    ("curvedArrowConnector", "Connector: Curved Arrow"),
+];
+
+/// A line from the gallery: the connector it makes once drawn (every line holds on to the objects
+/// its ends are drawn on), and its arrowheads.
+pub(super) fn connector(name: &str) -> Option<(&'static str, Option<&'static str>)> {
+    match name {
+        "line" => Some(("straight", None)),
+        "arrow" => Some(("straight", Some("arrow"))),
+        "doubleArrow" => Some(("straight", Some("doubleArrow"))),
+        "elbowConnector" => Some(("elbow", None)),
+        "elbowArrowConnector" => Some(("elbow", Some("arrow"))),
+        "curvedConnector" => Some(("curved", None)),
+        "curvedArrowConnector" => Some(("curved", Some("arrow"))),
+        _ => None,
+    }
+}
 
 const SECTIONS: &[Section] = &[
     Section {
@@ -81,9 +104,10 @@ const SECTIONS: &[Section] = &[
 
 /// The drawing tool and preset for a gallery name.
 fn tool_for(name: &str) -> (&'static str, Option<&str>) {
+    if let Some((_, heads)) = connector(name) {
+        return ("line", heads);
+    }
     match name {
-        "line" => ("line", None),
-        "arrow" | "doubleArrow" => ("line", Some(name)),
         "rectangle" => ("rectangle", None),
         "ellipse" => ("ellipse", None),
         _ => ("rectangle", Some(name)),
@@ -95,6 +119,12 @@ fn start(app: &mut DesignApp, name: &str) {
     let (tool, preset) = tool_for(name);
     super::start_draw(app, tool);
     let _ = app.run("tool.shapePreset", json!({"name": preset}));
+    if let Some((kind, _)) = connector(name) {
+        super::await_connector(app, kind);
+        if kind != "straight" {
+            app.status("Drag from one object to another. The connector stays joined to them when they move.");
+        }
+    }
 }
 
 /// One square of the gallery: the shape's own outline. Returns whether it was clicked.
@@ -107,6 +137,33 @@ fn tile(ui: &mut Ui, name: &str, label: &str) -> bool {
     let ink = Stroke::new(1.1, super::pal().text);
     let rect = designcraft_geom::Rect::new(f64::from(inner.min.x), f64::from(inner.min.y), f64::from(inner.max.x), f64::from(inner.max.y));
     let path = match name {
+        "elbowConnector" | "elbowArrowConnector" | "curvedConnector" | "curvedArrowConnector" => {
+            let (a, b) = (inner.left_top() + vec2(0.0, 2.0), inner.right_bottom() - vec2(0.0, 2.0));
+            if name.starts_with("elbow") {
+                let mx = (a.x + b.x) / 2.0;
+                ui.painter().line_segment([a, pos2(mx, a.y)], ink);
+                ui.painter().line_segment([pos2(mx, a.y), pos2(mx, b.y)], ink);
+                ui.painter().line_segment([pos2(mx, b.y), b], ink);
+            } else {
+                let pts: Vec<Pos2> = (0..=12)
+                    .map(|i| {
+                        let t = i as f32 / 12.0;
+                        let u = 1.0 - t;
+                        let (c1, c2) = (pos2(b.x, a.y), pos2(a.x, b.y));
+                        pos2(
+                            u * u * u * a.x + 3.0 * u * u * t * c1.x + 3.0 * u * t * t * c2.x + t * t * t * b.x,
+                            u * u * u * a.y + 3.0 * u * u * t * c1.y + 3.0 * u * t * t * c2.y + t * t * t * b.y,
+                        )
+                    })
+                    .collect();
+                ui.painter().add(egui::Shape::line(pts, ink));
+            }
+            if name.contains("Arrow") {
+                ui.painter().line_segment([b, b + vec2(-4.0, -2.5)], ink);
+                ui.painter().line_segment([b, b + vec2(-4.0, 2.5)], ink);
+            }
+            None
+        }
         "line" | "arrow" | "doubleArrow" => {
             ui.painter().line_segment([inner.left_bottom(), inner.right_top()], ink);
             if name != "line" {
@@ -183,6 +240,15 @@ pub(super) fn gallery(app: &mut DesignApp, ui: &mut Ui, what: Use) {
             ui.add_space(4.0);
         }
     });
+    if what == Use::Change {
+        ui.separator();
+        let one = app.session.active().is_some_and(|d| d.selection.items.len() == 1);
+        if ui.add_enabled(one, egui::Button::new("Edit Points")).clicked() {
+            ui.close();
+            super::edit_points(app);
+            return;
+        }
+    }
     let Some(name) = chosen else { return };
     match what {
         Use::Draw if name == "scribble" => super::start_draw(app, "pencil"),

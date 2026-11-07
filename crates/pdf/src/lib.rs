@@ -50,7 +50,7 @@ mod pdfx1a;
 mod transitions;
 pub use export::{
     BookletKind, BookletOptions, Placed, SheetSide, booklet_pairs, booklet_sides, copies_per_sheet_sides, export_booklet, export_pdf,
-    export_pdf_with_report, export_sheets, merge_pdfs, one_up_sides, pages_per_sheet_sides, print_color, sheet_spreads,
+    export_pdf_with_report, export_sheets, label_sheet_sides, merge_pdfs, one_up_sides, pages_per_sheet_sides, print_color, sheet_spreads,
 };
 pub use pdfx::{check_pdfx4, has_rgb_groups, make_pdfx4};
 pub use pdfx1a::check_pdfx1a;
@@ -97,6 +97,8 @@ pub struct Marks {
     pub bleed: bool,
     /// Document title, page name, date — in the slug area under the page.
     pub page_info: bool,
+    /// Registration targets centred beside each edge, for lining up the plates.
+    pub registration: bool,
     /// Line weight in points (0.25 default).
     pub weight: f64,
     /// Distance of the marks from the trim edge in points (6 default). Marks never start inside
@@ -105,10 +107,10 @@ pub struct Marks {
 }
 
 impl Marks {
-    pub const NONE: Marks = Marks { crop: false, bleed: false, page_info: false, weight: 0.25, offset: 6.0 };
-    pub const ALL: Marks = Marks { crop: true, bleed: true, page_info: true, weight: 0.25, offset: 6.0 };
+    pub const NONE: Marks = Marks { crop: false, bleed: false, page_info: false, registration: false, weight: 0.25, offset: 6.0 };
+    pub const ALL: Marks = Marks { crop: true, bleed: true, page_info: true, registration: true, weight: 0.25, offset: 6.0 };
     pub fn any(&self) -> bool {
-        self.crop || self.bleed || self.page_info
+        self.crop || self.bleed || self.page_info || self.registration
     }
 }
 

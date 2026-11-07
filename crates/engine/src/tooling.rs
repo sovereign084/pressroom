@@ -210,7 +210,7 @@ impl Session {
             && ev.kind == PointerKind::Up
             && !self.tool.busy()
             && !self.tool_armed
-            && !matches!(self.tool.id(), "selection" | "type" | "directSelection")
+            && !matches!(self.tool.id(), "selection" | "type" | "directSelection" | "wrapPoints" | "shapePoints")
         {
             self.set_tool("selection");
         }

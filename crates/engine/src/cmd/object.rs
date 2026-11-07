@@ -616,7 +616,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Wrap",
             ["Window"],
             Some("Cmd+Alt+W"),
-            "{mode?: none|boundingBox|contour|jumpObject|jumpToNextColumn (boundingBox when absent, unless side or contour is given: then unchanged), offset?: number|[t,l,b,r], invert?: bool, side?: bothSides|leftSide|rightSide|towardsSpine|awayFromSpine|largestArea, contour?: boundingBox|graphicFrame|sameAsClipping, content?: bool (the placed graphic instead of its frame; default: whether the selection is the frame's content), ids?}; offset or contour drops an imported custom wrap boundary",
+            "{mode?: none|boundingBox|contour|jumpObject|jumpToNextColumn (boundingBox when absent, unless side or contour is given: then unchanged), offset?: number|[t,l,b,r], invert?: bool, side?: bothSides|leftSide|rightSide|towardsSpine|awayFromSpine|largestArea, contour?: boundingBox|graphicFrame|sameAsClipping, insideEdges?: bool (text may go into the outline's gaps: Publisher's Through), points?: [[x, y], …] (a custom wrap boundary, the object's inner space: Edit Wrap Points), content?: bool (the placed graphic instead of its frame; default: whether the selection is the frame's content), ids?}; offset or contour drops an imported custom wrap boundary",
             has_selection,
             text_wrap
         ),
@@ -2140,6 +2140,26 @@ fn text_wrap(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let invert = p.get("invert").and_then(Value::as_bool);
+    let inside = p.get("insideEdges").and_then(Value::as_bool);
+    let points: Option<designcraft_geom::PathData> = match p.get("points") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let pts: Vec<[f64; 2]> = serde_json::from_value(v.clone()).map_err(|_| bad("object.textWrap", "points: [[x, y], …]"))?;
+            if pts.len() < 3 || pts.len() > 2000 || pts.iter().flatten().any(|c| !c.is_finite() || c.abs() > 1.0e6) {
+                return Err(bad("object.textWrap", "points: 3 to 2000 points"));
+            }
+            let mut bp = designcraft_geom::BezPath::new();
+            for (i, [x, y]) in pts.iter().enumerate() {
+                if i == 0 {
+                    bp.move_to((*x, *y));
+                } else {
+                    bp.line_to((*x, *y));
+                }
+            }
+            bp.close_path();
+            Some(designcraft_geom::PathData::from_bezpath(&bp))
+        }
+    };
     let content = match p.get("content").and_then(Value::as_bool) {
         Some(c) => c,
         None => p.get("ids").is_none() && p.get("id").is_none() && s.doc()?.selection.content,
@@ -2161,6 +2181,9 @@ fn text_wrap(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = invert {
                 w.invert = v;
             }
+            if let Some(v) = inside {
+                w.inside_edges = v;
+            }
             if let Some(v) = side {
                 w.side = v;
             }
@@ -2171,6 +2194,9 @@ fn text_wrap(s: &mut Session, p: &Value) -> Result<Value> {
             // either one rebuilds the wrap from the frame.
             if off.is_some() || contour.is_some() {
                 w.path = None;
+            }
+            if let Some(path) = &points {
+                w.path = Some(path.clone());
             }
         },
         false,

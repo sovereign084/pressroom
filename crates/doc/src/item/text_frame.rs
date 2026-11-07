@@ -327,6 +327,10 @@ pub struct TextWrap {
     /// item transforms it with the path; other path edits keep it as it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<PathData>,
+    /// Contour Options › Include Inside Edges: a contour wrap lets text into the open parts of
+    /// the outline on a line (a hole, the inside of a curve), as Publisher's Through does.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub inside_edges: bool,
 }
 
 impl TextWrap {

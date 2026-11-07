@@ -164,7 +164,7 @@ fn text_rules(cs: &ComposedStory, ft: &FrameText, underline: bool) -> Vec<(desig
         for g in line.glyphs.iter().filter(|g| g.spans_rules()) {
             let style = &cs.styles[g.style as usize];
             let (on, rule) = if underline { (style.underline, &style.underline_rule) } else { (style.strikethrough, &style.strike_rule) };
-            if !on {
+            if !on || (rule.style == designcraft_doc::UnderlineType::WordsOnly && g.rendered_char.is_whitespace()) {
                 continue;
             }
             let rect = rule.rect(g.x, g.x + g.adv, designcraft_compose::rule_baseline(style, line, g));
@@ -283,7 +283,11 @@ impl Exporter<'_> {
             self.as_artifact(s, |me, s| {
                 for (rule, r) in underlines {
                     if let Some(c) = me.swatch_color(&rule.color, rule.tint) {
-                        me.fill_rect(s, r, c);
+                        if rule.is_plain() {
+                            me.fill_rect(s, r, c);
+                        } else {
+                            me.fill_path(s, &rule.shapes(r), c);
+                        }
                     }
                 }
             });
@@ -499,6 +503,13 @@ impl Exporter<'_> {
         };
         if fill.is_none() && stroke.is_none() {
             return;
+        }
+        // Shadow, Emboss and Engrave: the glyphs' offset copy first, as decoration.
+        if let Some(sh) = &st.shadow
+            && let Some(paint) = self.text_paint(&sh.color, sh.tint, false, origin, run_area)
+        {
+            let outlines = glyph_outlines(glyphs, size, tan);
+            self.as_artifact(s, |me, s| me.paint_outlines(s, &outlines, Affine::translate((sh.dx, sh.dy)) * origin, Some(paint), None, 0.0));
         }
         let fill_op = fill.is_some() && self.overprints(&st.fill, st.fill_tint, st.overprint_fill);
         let stroke_op = stroke.is_some() && self.overprints(&st.stroke, st.stroke_tint, st.overprint_stroke);

@@ -147,6 +147,55 @@ pub(super) fn sort_rows(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Fill Down and Fill Right: each column's top cell (or each row's first cell) copied into the
+/// other target cells, with its text, formatting, fill, insets, alignment and diagonal.
+pub(super) fn fill_cells(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "table.fillCells";
+    let right = match str_param(p, "direction") {
+        None | Some("down") => false,
+        Some("right") => true,
+        Some(o) => return Err(bad(ID, format!("unknown direction `{o}` (down, right)"))),
+    };
+    let g = target(s, p, ID)?;
+    edit_table(s, &g, ID, |t| {
+        let rg = g.range;
+        let nc = t.ncols();
+        let owners = t.owners();
+        let owns = |r: usize, c: usize| owners.get(r * nc + c) == Some(&(r, c));
+        // (source, targets) for each column or row.
+        let lines: Vec<((usize, usize), Vec<(usize, usize)>)> = if right {
+            (rg.r0..=rg.r1).map(|r| ((r, rg.c0), (rg.c0 + 1..=rg.c1).map(|c| (r, c)).collect())).collect()
+        } else {
+            (rg.c0..=rg.c1).map(|c| ((rg.r0, c), (rg.r0 + 1..=rg.r1).map(|r| (r, c)).collect())).collect()
+        };
+        let mut filled = 0usize;
+        for ((sr, sc), targets) in lines {
+            if !owns(sr, sc) {
+                continue;
+            }
+            let Some(src) = t.cell(sr, sc).cloned() else { continue };
+            if !src.text.objects.is_empty() {
+                return Err(bad(ID, "a cell with objects in its text can't be copied"));
+            }
+            for (r, c) in targets.into_iter().filter(|&(r, c)| owns(r, c)) {
+                let Some(dst) = t.cell_mut(r, c) else { continue };
+                let (id, rev) = (dst.text.id, dst.text.rev.max(src.text.rev));
+                dst.text = src.text.clone();
+                dst.text.id = id;
+                dst.text.rev = rev.wrapping_add(1);
+                dst.fill.clone_from(&src.fill);
+                dst.fill_tint = src.fill_tint;
+                dst.insets = src.insets;
+                dst.vj = src.vj;
+                dst.diagonal = src.diagonal;
+                dst.graphic.clone_from(&src.graphic);
+                filled += 1;
+            }
+        }
+        Ok(json!({"filled": filled}))
+    })
+}
+
 #[cfg(test)]
 mod sort_tests {
     use serde_json::json;

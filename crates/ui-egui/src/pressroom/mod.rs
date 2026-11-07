@@ -359,6 +359,9 @@ struct State {
     context: Context,
     /// Create Link is waiting for the next text box to be clicked: the box the text comes from.
     link_from: Option<u64>,
+    /// A line from the Shapes gallery is being drawn: the connector it becomes (straight, elbow
+    /// or curved) and the publication's revision when drawing began.
+    connector: Option<(&'static str, u64)>,
     /// The canvas width last frame (Page Width zoom).
     canvas_w: f32,
     /// The publication in front last frame (its session uid).
@@ -808,25 +811,55 @@ fn page_number_at(app: &mut DesignApp, top: bool, align: &str) {
 
 /// Page Background: a filled box behind everything on the master page, or none.
 fn set_background(app: &mut DesignApp, swatch: Option<String>) {
+    let fill = swatch.map(Background::Color);
+    if let Err(e) = set_background_fill(app, fill.as_ref(), 0.0) {
+        app.status(format!("Couldn't set the background: {e}"));
+    }
+}
+
+/// What fills the page background: a colour, or a picture file.
+pub(super) enum Background {
+    Color(String),
+    Picture(String),
+}
+
+/// The page background: a box filling each page of the first master page, behind everything
+/// else, in a colour or a picture (cropped to fill), `transparency` (0–1) letting the paper show
+/// through as Publisher's Format Background does. `None` takes the background away.
+pub(super) fn set_background_fill(app: &mut DesignApp, fill: Option<&Background>, transparency: f64) -> Result<(), String> {
     let label = "pressroom-background";
     let ids = app.run("object.findByLabel", json!({"label": label})).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
     if !ids.is_empty() {
         let _ = app.run("selection.set", json!({"ids": ids}));
         let _ = app.run("edit.clear", json!({}));
     }
-    let Some(swatch) = swatch else { return };
-    let Some(st) = app.session.active() else { return };
-    let Some(parent) = st.doc.parents.first() else { return };
+    let Some(fill) = fill else { return Ok(()) };
+    let Some(st) = app.session.active() else { return Ok(()) };
+    let Some(parent) = st.doc.parents.first() else { return Err("The publication has no master page.".into()) };
     let rects: Vec<[f64; 4]> = parent.pages.iter().map(|p| [p.x, 0.0, p.x + p.width, p.height]).collect();
+    let opacity = (1.0 - transparency).clamp(0.0, 1.0);
     for rect in rects {
-        if app.run("frame.create", json!({"spread": {"kind": "parent", "index": 0}, "rect": rect, "content": "unassigned"})).is_ok() {
-            let _ = app.run("object.fill", json!({"swatch": swatch}));
-            let _ = app.run("object.stroke", json!({"swatch": "[None]"}));
-            let _ = app.run("object.sendToBack", json!({}));
-            let _ = app.run("object.label", json!({"label": label}));
+        let made = app.run("frame.create", json!({"spread": {"kind": "parent", "index": 0}, "rect": rect, "content": "unassigned"}))?;
+        let Some(id) = made["id"].as_u64() else { continue };
+        match fill {
+            Background::Color(swatch) => {
+                let _ = app.run("object.fill", json!({"swatch": swatch}));
+            }
+            Background::Picture(path) => {
+                fill_box(app, path, id)?;
+                embed_selected(app);
+            }
         }
+        let _ = app.run("selection.set", json!({"ids": [id]}));
+        let _ = app.run("object.stroke", json!({"swatch": "[None]"}));
+        if opacity < 1.0 {
+            let _ = app.run("object.opacity", json!({"opacity": opacity}));
+        }
+        let _ = app.run("object.sendToBack", json!({}));
+        let _ = app.run("object.label", json!({"label": label}));
     }
     let _ = app.run("edit.deselectAll", json!({}));
+    Ok(())
 }
 
 /// Create Link: the next text box clicked continues this one's text.
@@ -840,6 +873,39 @@ fn start_link(app: &mut DesignApp) {
     }
     let _ = app.run("tool.select", json!({"tool": "selection"}));
     app.status("Click the empty text box the text should continue in (Esc cancels).");
+}
+
+/// Drawing a line from the Shapes gallery: once it's drawn it holds on to the objects its ends
+/// were drawn on (see `finish_connector`).
+pub(super) fn await_connector(app: &mut DesignApp, kind: &'static str) {
+    let revision = app.session.active().map_or(0, |d| d.revision);
+    if let Some(ctx) = app.egui_ctx.clone() {
+        update(&ctx, |s| s.connector = Some((kind, revision)));
+    }
+}
+
+/// The line drawn: made a connector of its kind, its ends joined to the objects they're on.
+fn finish_connector(app: &mut DesignApp, ctx: &egui::Context) {
+    let Some((kind, revision)) = state(ctx).connector else { return };
+    if app.session.tool_id() == "line" {
+        return;
+    }
+    update(ctx, |s| s.connector = None);
+    let line = app.session.active().filter(|d| d.revision != revision).and_then(|d| {
+        let [id] = d.selection.items.as_slice() else { return None };
+        (d.doc.item(*id)?.shape == designcraft_doc::Shape::GraphicLine).then_some(id.0)
+    });
+    let Some(line) = line else { return };
+    if let Err(e) = app.run("object.connect", json!({"id": line, "kind": kind, "auto": true})) {
+        app.status(format!("Couldn't join the connector: {e}"));
+    }
+}
+
+/// Edit Points: the selected shape's points, to drag (Change Shape › Edit Points).
+pub(super) fn edit_points(app: &mut DesignApp) {
+    if app.run("tool.select", json!({"tool": "shapePoints"})).is_ok() {
+        app.status("Drag a point to reshape. Ctrl+click the outline adds a point, Ctrl+Shift+click a point removes it. Esc when done.");
+    }
 }
 
 /// After Create Link: the first other text box selected receives the overflow.
@@ -937,6 +1003,7 @@ pub fn chrome(app: &mut DesignApp, ui: &mut Ui) {
     }
     ctx.data_mut(|d| d.insert_temp(state_id(), s.clone()));
     finish_link(app, &ctx);
+    finish_connector(app, &ctx);
     pubimport::poll(app, &ctx);
     apply_next_text(app, &ctx);
     painter::frame(app, &ctx);

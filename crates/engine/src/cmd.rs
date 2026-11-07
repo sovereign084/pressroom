@@ -10,6 +10,7 @@ pub(crate) mod changes;
 mod color_theme;
 mod colorsettings;
 mod conditions;
+pub(crate) mod connectors;
 mod datamerge;
 mod edit;
 mod editorial;
@@ -183,6 +184,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(editorial::specs());
         v.extend(object::specs());
         v.extend(anchors::specs());
+        v.extend(connectors::specs());
         v.extend(articles::specs());
         v.extend(paths::specs());
         v.extend(flex::specs());

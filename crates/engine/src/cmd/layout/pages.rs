@@ -147,7 +147,7 @@ pub(super) fn document_setup(d: &designcraft_doc::Document) -> Value {
     let start = d.sections.iter().find(|x| x.start == 0).and_then(|x| x.start_number).unwrap_or(1);
     json!({"width": st.page_width, "height": st.page_height, "pages": d.page_count(), "startPage": start, "facingPages": st.facing_pages,
         "binding": if st.right_to_left_binding { "rightToLeft" } else { "leftToRight" }, "intent": st.intent, "bleed": st.bleed, "slug": st.slug,
-        "margins": d.page(0).map(|p| p.margins), "primaryTextFrame": st.primary_text_frame})
+        "margins": d.page(0).map(|p| p.margins), "primaryTextFrame": st.primary_text_frame, "labelSheet": st.label_sheet})
 }
 
 #[cfg(test)]

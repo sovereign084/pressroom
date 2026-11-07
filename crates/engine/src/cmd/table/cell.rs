@@ -201,6 +201,13 @@ pub(super) fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
         },
         None => None,
     };
+    let diagonal = match str_param(p, "diagonal") {
+        Some("none") => Some(designcraft_doc::CellDiagonal::None),
+        Some("down") => Some(designcraft_doc::CellDiagonal::Down),
+        Some("up") => Some(designcraft_doc::CellDiagonal::Up),
+        Some(o) => return Err(bad(ID, format!("unknown diagonal `{o}` (none, down, up)"))),
+        None => None,
+    };
     let text = str_param(p, "text").map(|_| crate::cmd::text_param(p, "text"));
     let stroke = match p.get("stroke").filter(|v| !v.is_null()) {
         Some(sv) => Some((StrokeEdit::parse(doc, sv, ID)?, EdgeSel::parse(sv.get("edges"), ID)?)),
@@ -257,6 +264,15 @@ pub(super) fn set_cell(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(tx) = &text {
                 let len = cell.text.len();
                 cell.text.replace(0..len, tx);
+            }
+            // After the text, so new text in a divided cell still has its two halves.
+            if let Some(v) = diagonal {
+                cell.diagonal = v;
+                // A divided cell has a paragraph for each half.
+                if v != designcraft_doc::CellDiagonal::None && !cell.text.text.contains('\n') {
+                    let len = cell.text.len();
+                    cell.text.replace(len..len, "\n");
+                }
             }
             if let Some((edit, _)) = &stroke {
                 for i in 0..4 {

@@ -67,6 +67,8 @@ pub(crate) struct LineGlyphs {
     /// Bars below/above the glyph paint pass: colour swatch, tint, rectangle.
     pub underlines: Vec<(String, f32, Rect)>,
     pub strikes: Vec<(String, f32, Rect)>,
+    /// Underlines with a look of their own (double, dotted, dashed, wavy): the rule and its bar.
+    pub styled: Vec<(designcraft_compose::Rule, Rect)>,
     pub glyphs: usize,
 }
 
@@ -176,19 +178,32 @@ fn build_line(db: &FontDb, cs: &ComposedStory, l: &Line, vertical: bool) -> Line
     let mut runs: Vec<(u32, BezPath)> = Vec::new();
     let mut underlines: Vec<(String, f32, Rect)> = Vec::new();
     let mut strikes: Vec<(String, f32, Rect)> = Vec::new();
+    let mut styled: Vec<(designcraft_compose::Rule, Rect)> = Vec::new();
     let mut glyphs = 0;
     for g in &l.glyphs {
         if !g.spans_rules() {
             continue;
         }
         let style = &cs.styles[g.style as usize];
-        for (on, rule, bars) in [(style.underline, &style.underline_rule, &mut underlines), (style.strikethrough, &style.strike_rule, &mut strikes)] {
-            if on {
-                let r = rule.rect(g.x, g.x + g.adv, designcraft_compose::rule_baseline(style, l, g));
-                // One bar per stretch, as the PDF export draws them: a bar per glyph left
-                // anti-aliased seams between the letters.
-                push_bar(bars, &rule.color, rule.tint, r);
+        let rule = &style.underline_rule;
+        if style.underline && !(rule.style == designcraft_doc::UnderlineType::WordsOnly && g.rendered_char.is_whitespace()) {
+            let r = rule.rect(g.x, g.x + g.adv, designcraft_compose::rule_baseline(style, l, g));
+            // One bar per stretch, as the PDF export draws them: a bar per glyph left
+            // anti-aliased seams between the letters.
+            if rule.is_plain() {
+                push_bar(&mut underlines, &rule.color, rule.tint, r);
+            } else {
+                match styled.last_mut() {
+                    Some((last_rule, last)) if last_rule == rule && (last.y0 - r.y0).abs() < 1e-6 && (r.x0 - last.x1).abs() < 0.5 => {
+                        last.x1 = last.x1.max(r.x1);
+                    }
+                    _ => styled.push((rule.clone(), r)),
+                }
             }
+        }
+        if style.strikethrough {
+            let rule = &style.strike_rule;
+            push_bar(&mut strikes, &rule.color, rule.tint, rule.rect(g.x, g.x + g.adv, designcraft_compose::rule_baseline(style, l, g)));
         }
         // A tab carries the rule across its width but draws nothing itself.
         if !g.visible {
@@ -224,12 +239,19 @@ fn build_line(db: &FontDb, cs: &ComposedStory, l: &Line, vertical: bool) -> Line
     for (si, bp) in &runs {
         let st = &cs.styles[*si as usize];
         let sw = if st.stroke != designcraft_color::swatch::NONE { st.stroke_weight } else { 0.0 };
-        bounds = union(bounds, bp.bounding_box().inflate(sw, sw));
+        let b = bp.bounding_box().inflate(sw, sw);
+        bounds = union(bounds, b);
+        if let Some(sh) = &st.shadow {
+            bounds = union(bounds, b + kurbo::Vec2::new(sh.dx, sh.dy));
+        }
     }
     for (_, _, r) in underlines.iter().chain(&strikes) {
         bounds = union(bounds, *r);
     }
-    LineGlyphs { bounds, runs, underlines, strikes, glyphs }
+    for (rule, r) in &styled {
+        bounds = union(bounds, r.inflate(0.0, rule.weight * 2.0));
+    }
+    LineGlyphs { bounds, runs, underlines, strikes, styled, glyphs }
 }
 
 fn build(cs: &ComposedStory, ft: &FrameText) -> FrameGlyphs {
@@ -426,6 +448,23 @@ impl Renderer {
                     if let Some(c) = doc.resolve_color(sw, *tint) {
                         ctx.set_paint(color_of(&c, 1.0));
                         ctx.fill_rect(r);
+                    }
+                }
+                for (rule, r) in &fg.lines[i].styled {
+                    if let Some(c) = doc.resolve_color(&rule.color, rule.tint) {
+                        ctx.set_paint(color_of(&c, 1.0));
+                        ctx.fill_path(&rule.shapes(*r));
+                    }
+                }
+            }
+            // Shadow, Emboss and Engrave: the offset copies go under every glyph of the lines.
+            for &i in &shown {
+                for (si, bp) in &fg.lines[i].runs {
+                    let st = &cs.styles[*si as usize];
+                    let Some(sh) = &st.shadow else { continue };
+                    if let Some(c) = doc.resolve_color(&sh.color, sh.tint) {
+                        ctx.set_paint(color_of(&c, 1.0));
+                        ctx.fill_path(&(Affine::translate((sh.dx, sh.dy)) * bp.clone()));
                     }
                 }
             }

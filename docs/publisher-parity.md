@@ -11,6 +11,8 @@ The typical job is a weekly church bulletin or newsletter: edit text, swap pictu
 | **MS** | Microsoft's article "Keyboard shortcuts in Publisher" (support.microsoft.com, article 289f9c39), read 2026-11-01 | Strong for keys. The article may be dated. |
 | **TLB** | Names in Publisher's COM type library (`MSPUB.TLB`, on the dev PC), read without starting Publisher | Strong that a feature exists. Says nothing about its menu location or wording. |
 | **CAP** | Read-only captures of running Publisher (scripts not committed) | Strong for what was captured. |
+| **COM** | Publisher's own command bars (its menus and right-click menus, the old menu bar among them) and a newsletter's feature use, read through its automation interface with Publisher started read-only, 2026-11-07 | Strong that a command exists and what it's called. Says nothing about where today's ribbon puts it. |
+| **HELP** | Microsoft's Publisher help pages (support.microsoft.com), read 2026-11-07 | Strong for what they describe. |
 | **KNOW** | General knowledge of Publisher's interface | Weakest. Not checked on this PC, because driving Publisher's window by hand was declined. Any of these may be wrong in detail. |
 
 Nothing is copied from Publisher: no icons, templates, clip art or wording beyond feature names.
@@ -44,7 +46,9 @@ This document was reviewed on 2026-11-01 by three fresh reviewers (scope, design
 - Line spacing applies to whole paragraphs, as in Publisher. (TLB)
 - Text Fit: Best Fit, Shrink Text On Overflow, Grow Text Box to Fit, Do Not Autofit. (TLB)
 - Linked text boxes: Create Link, Break, Previous, Next; a mark on a box whose text doesn't fit, which starts a link when clicked; arrows on a linked box. Boundaries off doesn't hide the mark. (TLB, KNOW)
-- Number Style, Ligatures, Small Caps, Drop Cap, Text Fill, Text Outline, Text Effects. (MS, TLB)
+- Number Style, Ligatures, Small Caps, Drop Cap, Text Fill, Text Outline, Text Effects, Stylistic Sets, Stylistic Alternates, Swash. (MS, TLB)
+- The Font dialog's Underline list (single, words only, double, thick, dotted, dashed, long dash, dot dash, dot dot dash, wave, double wave, and the heavy kinds) and its Shadow, Outline, Emboss and Engrave, drawn the same on screen and in PDF and print. (TLB)
+- Horizontal Rules, a tab of the Paragraph dialog: a line before and after the paragraph, with weight, colour, indents and its space from the text. (COM; where Publisher's dialog keeps it is KNOW)
 - Spelling: red underlines on by default, suggestions on right-click, F7 with Ignore, Ignore All, Change, Change All and Add. Words in other alphabets, web and e-mail addresses, and words joined to numbers aren't flagged. (MS, KNOW)
 - Find and Replace in a pane, with Match whole word and Match case. (MS)
 - Format Painter: a click paints once, a double-click keeps painting, Ctrl+Shift+C and V from the keyboard. (MS)
@@ -54,8 +58,12 @@ This document was reviewed on 2026-11-01 by three fresh reviewers (scope, design
 - Colour menus: No Fill, scheme colours, the publication's colours, More Colors; arrowheads under Shape Outline. (MS)
 - Shape Effects and Picture Effects: Shadow, Glow, Soft Edges, Bevel. (MS)
 - Size group (Height, Width) on the Format tabs, and a Format dialog with Colors and Lines, Size, Layout, Text Box and Alt Text. (KNOW)
-- Wrap Text: None, Square, Tight, Top and Bottom. (TLB)
+- Wrap Text: None, Square, Tight, Through, Top and Bottom, Edit Wrap Points (drag a point; Ctrl and a click on the outline adds one, Ctrl, Shift and a click removes one; editing makes the wrap Tight). Through lets text into an outline's open parts on a line. (TLB, HELP)
 - WordArt, Page Parts, Calendars, Borders & Accents and Advertisements, all our own designs. Colour and font schemes, page background, header and footer. Page numbers by position; Date and Time with its formats. (TLB, KNOW)
+- Calendars for this month, next month or any month and year (Choose a Month). (HELP)
+- Background: a colour, or More Backgrounds (Format Background) for a picture or colour with a transparency, behind every page. (HELP)
+- Connectors: Elbow and Curved connectors, with or without an arrow, among the Lines; a line, arrow or connector drawn from one object to another stays on the middle of their sides as they move. Reroute Connectors on the right-click menu moves its ends to the nearest sides. (COM, TLB)
+- Edit Points: Change Shape › Edit Points, or the right-click menu: a shape's own points to drag; Ctrl and a click on the outline adds one, Ctrl, Shift and a click removes one. (COM, TLB)
 - Right-click menus in Publisher's shape: Cut, Copy, Paste, Delete Object, Save as Picture, Change Picture, Group, Order, Format, Hyperlink; Font and Paragraph on text; Zoom and Ruler Guides on the page. (KNOW; TLB for Save as Picture)
 
 ### Pictures
@@ -63,13 +71,16 @@ This document was reviewed on 2026-11-01 by three fresh reviewers (scope, design
 - Corrections, Recolor, Compress Pictures, Change Picture, Reset Picture, Picture Border, Picture Styles, Caption, Swap, Clear Crop, Fit, Fill. (TLB)
 
 ### Tables
-- A table is its own object. A size grid under the Table button, Insert Table, Table Tools Design (Table Formats, Fill, Line Weight, Line Color, Borders) and Layout (Select, Delete, Insert, Merge, Split, Alignment). (TLB, KNOW)
+- A table is its own object. A size grid under the Table button, Insert Table, Table Tools Design (Table Formats, Fill, Line Weight, Line Color, Borders) and Layout (Select, Delete, Insert, Merge, Split, Diagonals, Alignment, Grow to Fit Text). (TLB, KNOW)
+- Cell Diagonals: Divide Down and Divide Up draw a line corner to corner, the cell's first paragraph sits in the upper half and its last in the lower; No Division takes it away. Fill Down and Fill Right on the table's right-click menu copy the first cell, with its look. (COM, TLB)
 
 ### Pages
 - Insert Page with its options, Insert Duplicate Page, Delete, Move, Rename, master pages (Ctrl+M), Two-Page Spread, Go To Page. (MS, TLB)
 
 ### Print and files
 - Print page: printer and Printer Properties, copies, All / Current / Custom, One page per sheet, Multiple pages per sheet, Multiple copies per sheet, Booklet side-fold with blanks added to a multiple of 4, both-sided on either edge, Colour or Grayscale. (TLB)
+- Advanced Output Settings › Marks and Bleeds: crop, bleed and registration marks, job information, Allow bleeds. Density and colour bars, and separations, aren't offered. (TLB, COM, HELP)
+- Page sizes for business cards, labels and envelopes, and Page Setup's Layout type: Multiple pages per sheet sets label stock's side and top margins and gaps, from which Print places the labels (not centred). The label sizes' margins are those of common US letter-size stock, from memory: print a test on plain paper first. (TLB, COM)
 - **Manually Print on Both Sides** for printers that can't turn the paper: fronts first, then a prompt to turn the stack over, with last-sheet-first and upside-down options. It's chosen for you when the printer says it can't print both sides. (TLB)
 - Booklets can reprint one sheet. A notice names any page with text that doesn't fit, before paper is used.
 - The preview draws the same list of printed sides the job prints.

@@ -37,8 +37,8 @@ mod pipeline;
 mod walk;
 
 pub use booklet::{
-    BookletKind, BookletOptions, Placed, SheetSide, booklet_pairs, booklet_sides, copies_per_sheet_sides, export_booklet, export_sheets, merge_pdfs,
-    one_up_sides, pages_per_sheet_sides,
+    BookletKind, BookletOptions, Placed, SheetSide, booklet_pairs, booklet_sides, copies_per_sheet_sides, export_booklet, export_sheets,
+    label_sheet_sides, merge_pdfs, one_up_sides, pages_per_sheet_sides,
 };
 use common::TagEntry;
 pub(crate) use common::{norm, q, registration, regular, solid_fill, tf, to_path};

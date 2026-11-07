@@ -22,7 +22,7 @@ mod grid;
 mod merge;
 mod story;
 
-pub use cell::{AltFills, AltStrokes, Cell, CellStroke, Column, Row, RowHeightMode, RowKind, TableOptions};
+pub use cell::{AltFills, AltStrokes, Cell, CellDiagonal, CellStroke, Column, Row, RowHeightMode, RowKind, TableOptions};
 pub use grid::CellRange;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

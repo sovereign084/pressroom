@@ -317,7 +317,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Document Setup…",
             ["File"],
             Some("Cmd+Alt+P"),
-            "{width?, height?, pages?: count, startPage?: n, facingPages?, binding?: leftToRight|rightToLeft, intent?: print|web|mobile, margins?: n | {top, bottom, inside, outside} (every page and parent page), bleed?, slug?: n | [top, bottom, inside, outside], adjustLayout?: bool (objects follow the new page size and margins)} → the document setup (margins: the first page's)",
+            "{width?, height?, pages?: count, startPage?: n, facingPages?, binding?: leftToRight|rightToLeft, intent?: print|web|mobile, margins?: n | {top, bottom, inside, outside} (every page and parent page), bleed?, slug?: n | [top, bottom, inside, outside], labelSheet?: {side, top, hGap, vGap} | null (label or card stock: the pages print several to a sheet from these margins and gaps, in points; null: one page a sheet), adjustLayout?: bool (objects follow the new page size and margins)} → the document setup (margins: the first page's)",
             has_doc,
             |s, p| {
                 let p = p.clone();
@@ -352,6 +352,18 @@ pub fn specs() -> Vec<CommandSpec> {
                 if p.get("margins").is_some() && margins.is_none() {
                     return Err(bad("layout.documentSetup", "margins: a number or {top, bottom, inside, outside}"));
                 }
+                let label_sheet: Option<Option<designcraft_doc::LabelSheet>> = match p.get("labelSheet") {
+                    None => None,
+                    Some(Value::Null) => Some(None),
+                    Some(v) => {
+                        let l: designcraft_doc::LabelSheet = serde_json::from_value(v.clone())
+                            .map_err(|_| bad("layout.documentSetup", "labelSheet: {side, top, hGap, vGap} in points"))?;
+                        if ![l.side, l.top, l.h_gap, l.v_gap].iter().all(|v| v.is_finite() && (0.0..=1440.0).contains(v)) {
+                            return Err(bad("layout.documentSetup", "labelSheet: margins and gaps from 0 to 20 in"));
+                        }
+                        Some(Some(l))
+                    }
+                };
                 let intent: Option<designcraft_doc::Intent> = p.get("intent").and_then(|v| serde_json::from_value(v.clone()).ok());
                 let pages = p.get("pages").and_then(Value::as_u64).map(|n| n.clamp(1, 9999) as usize);
                 let adjust = p.get("adjustLayout").and_then(Value::as_bool).unwrap_or(false);
@@ -372,6 +384,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                     if let Some(i) = intent {
                         d.settings.intent = i;
+                    }
+                    if let Some(l) = label_sheet {
+                        d.settings.label_sheet = l;
                     }
                     if let Some(n) = p.get("startPage").map(|v| start_number("layout.documentSetup", "startPage", v)).transpose()? {
                         if !d.sections.iter().any(|x| x.start == 0) {

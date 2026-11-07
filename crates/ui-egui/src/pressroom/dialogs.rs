@@ -31,6 +31,9 @@ const NUMBER: &str = "pr.pageNumberFormat";
 const APPLY_MASTER: &str = "pr.applyMaster";
 const NEW_MASTER: &str = "pr.newMaster";
 const OPTIONS: &str = "pr.options";
+const CALENDAR: &str = "pr.calendar";
+const OUTPUT: &str = "pr.output";
+const BACKGROUND: &str = "pr.background";
 
 pub(crate) fn title(id: &str) -> &'static str {
     match id {
@@ -51,6 +54,9 @@ pub(crate) fn title(id: &str) -> &'static str {
         APPLY_MASTER => "Apply Master Page",
         NEW_MASTER => "New Master Page",
         OPTIONS => "PressRoom Options",
+        CALENDAR => "Choose a Month",
+        OUTPUT => "Advanced Output Settings",
+        BACKGROUND => "Format Background",
         super::spelling::DIALOG => "Check Spelling",
         colors::MORE => "More Colors",
         _ => "",
@@ -90,6 +96,9 @@ pub(crate) fn body(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
         APPLY_MASTER => apply_master_body(app, ui, d),
         NEW_MASTER => new_master_body(ui, d),
         OPTIONS => options_body(app, ui, d),
+        CALENDAR => calendar_body(ui, d),
+        OUTPUT => output_body(ui, d),
+        BACKGROUND => background_body(app, ui, d),
         super::spelling::DIALOG => super::spelling::body(app, ui, d),
         colors::MORE => colors::more_body(ui, d),
         _ => {}
@@ -116,6 +125,19 @@ pub(crate) fn apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
         NEW_MASTER => app.run("layout.parents.new", json!({"name": d.s("name")})),
         colors::MORE => colors::more_apply(app, d),
         OPTIONS => options_apply(app, d),
+        CALENDAR => calendar_apply(app, d),
+        BACKGROUND => background_apply(app, d),
+        OUTPUT => {
+            let marks = super::backstage::OutputMarks {
+                crop: d.b("crop"),
+                bleed_marks: d.b("bleedMarks"),
+                registration: d.b("registration"),
+                job_info: d.b("jobInfo"),
+                allow_bleeds: d.b("allowBleeds"),
+            };
+            super::backstage::set_output_marks(app, marks);
+            Ok(Value::Null)
+        }
         _ => Ok(Value::Null),
     }
 }
@@ -235,8 +257,16 @@ pub(crate) fn open_font(app: &mut DesignApp) {
         "style": weight(super::fontnames::is_bold(&style), super::fontnames::is_italic(&style)),
         "size": chars["size"].as_f64().map_or(String::new(), |v| v.to_string()),
         "fill": chars["fill"].as_str().unwrap_or("[Black]"),
-        "underline": chars["underline"].as_bool().unwrap_or(false) || chars["underline"].is_object(),
+        "underline": if chars["underline"].as_bool().unwrap_or(false) || chars["underline"].is_object() {
+            chars["underlineType"].as_str().unwrap_or("single")
+        } else {
+            "none"
+        },
         "strike": chars["strikethrough"].as_bool().unwrap_or(false),
+        "shadow": chars["effectShadow"].as_bool().unwrap_or(false),
+        "outline": chars["effectOutline"].as_bool().unwrap_or(false),
+        "emboss": chars["effectEmboss"].as_bool().unwrap_or(false),
+        "engrave": chars["effectEngrave"].as_bool().unwrap_or(false),
         "superscript": position == "superscript",
         "subscript": position == "subscript",
         "allCaps": caps == "allCaps",
@@ -263,29 +293,67 @@ fn font_body(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
             d.fields.insert("fill".into(), json!(c));
         }
         ui.end_row();
+        labelled(ui, "Underline:", |ui| combo(ui, d, "underline", &UNDERLINES, 170.0));
     });
     ui.add_space(10.0);
     ui.label(egui::RichText::new("Effects").strong());
     ui.add_space(4.0);
-    egui::Grid::new("pr_font_fx").num_columns(2).spacing([40.0, 6.0]).show(ui, |ui| {
-        check(ui, d, "underline", "Underline");
-        check(ui, d, "strike", "Strikethrough");
-        ui.end_row();
+    egui::Grid::new("pr_font_fx").num_columns(3).spacing([28.0, 6.0]).show(ui, |ui| {
         check(ui, d, "superscript", "Superscript");
-        check(ui, d, "subscript", "Subscript");
-        ui.end_row();
-        check(ui, d, "allCaps", "All caps");
+        check(ui, d, "shadow", "Shadow");
         check(ui, d, "smallCaps", "Small caps");
+        ui.end_row();
+        check(ui, d, "subscript", "Subscript");
+        check(ui, d, "outline", "Outline");
+        check(ui, d, "allCaps", "All caps");
+        ui.end_row();
+        check(ui, d, "strike", "Strikethrough");
+        check(ui, d, "emboss", "Emboss");
+        ui.label("");
+        ui.end_row();
+        ui.label("");
+        check(ui, d, "engrave", "Engrave");
         ui.end_row();
     });
     // One each way: turning one on turns its pair off.
-    for (a, b) in [("superscript", "subscript"), ("allCaps", "smallCaps")] {
+    for (a, b) in [("superscript", "subscript"), ("allCaps", "smallCaps"), ("emboss", "engrave")] {
         if d.b(a) && d.b(b) {
             let was_a = d.fields.get("init").and_then(|i| i.get(a)).and_then(Value::as_bool).unwrap_or(false);
             d.fields.insert(if was_a { a } else { b }.into(), json!(false));
         }
     }
+    // Raised or pressed-in letters can't also be shadowed or hollow, as in Publisher.
+    let carved = d.b("emboss") || d.b("engrave");
+    let was_carved = ["emboss", "engrave"].iter().any(|k| d.fields.get("init").and_then(|i| i.get(*k)).and_then(Value::as_bool).unwrap_or(false));
+    if carved && (d.b("shadow") || d.b("outline")) {
+        let keys: &[&str] = if was_carved { &["emboss", "engrave"] } else { &["shadow", "outline"] };
+        for k in keys {
+            d.fields.insert((*k).into(), json!(false));
+        }
+    }
 }
+
+/// The Font dialog's underlines: (`underlineType`, the name shown). "none" is no underline.
+const UNDERLINES: [(&str, &str); 18] = [
+    ("none", "(none)"),
+    ("single", "Single"),
+    ("wordsOnly", "Words only"),
+    ("double", "Double"),
+    ("thick", "Thick"),
+    ("dotted", "Dotted"),
+    ("dottedHeavy", "Dotted heavy"),
+    ("dash", "Dash"),
+    ("dashHeavy", "Dash heavy"),
+    ("dashLong", "Long dash"),
+    ("dashLongHeavy", "Long dash heavy"),
+    ("dotDash", "Dot dash"),
+    ("dotDashHeavy", "Dot dash heavy"),
+    ("dotDotDash", "Dot dot dash"),
+    ("dotDotDashHeavy", "Dot dot dash heavy"),
+    ("wave", "Wave"),
+    ("waveHeavy", "Wave heavy"),
+    ("waveDouble", "Double wave"),
+];
 
 fn font_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     let mut attrs = Map::new();
@@ -304,7 +372,16 @@ fn font_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
         attrs.insert("fill".into(), json!(d.s("fill")));
     }
     if changed(d, "underline") {
-        attrs.insert("underline".into(), json!(d.b("underline")));
+        let kind = d.s("underline");
+        attrs.insert("underline".into(), json!(kind != "none"));
+        if kind != "none" {
+            attrs.insert("underlineType".into(), json!(kind));
+        }
+    }
+    for (key, attr) in [("shadow", "effectShadow"), ("outline", "effectOutline"), ("emboss", "effectEmboss"), ("engrave", "effectEngrave")] {
+        if changed(d, key) {
+            attrs.insert(attr.into(), json!(d.b(key)));
+        }
     }
     if changed(d, "strike") {
         attrs.insert("strikethrough".into(), json!(d.b("strike")));
@@ -378,6 +455,140 @@ fn spacing_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     app.run("type.char", json!({"attrs": attrs}))
 }
 
+// ───────────────────────────── Choose a Month ─────────────────────────────
+
+/// A calendar for any month: Calendars › Choose a Month.
+pub(crate) fn open_calendar(app: &mut DesignApp) {
+    let (y, m) = super::blocks::today();
+    open(app, CALENDAR, json!({"month": m.to_string(), "year": y.to_string(), "look": "color"}));
+}
+
+const MONTH_NAMES: [(&str, &str); 12] = [
+    ("1", "January"),
+    ("2", "February"),
+    ("3", "March"),
+    ("4", "April"),
+    ("5", "May"),
+    ("6", "June"),
+    ("7", "July"),
+    ("8", "August"),
+    ("9", "September"),
+    ("10", "October"),
+    ("11", "November"),
+    ("12", "December"),
+];
+
+fn calendar_body(ui: &mut Ui, d: &mut Dialog) {
+    egui::Grid::new("pr_calendar").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        labelled(ui, "Month:", |ui| combo(ui, d, "month", &MONTH_NAMES, 130.0));
+        labelled(ui, "Year:", |ui| text(ui, d, "year", 60.0));
+        labelled(ui, "Look:", |ui| combo(ui, d, "look", &[("color", "Color Header"), ("simple", "Simple")], 130.0));
+    });
+}
+
+fn calendar_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
+    let year = d.n("year").filter(|y| y.is_finite() && y.fract() == 0.0 && (1600.0..=3000.0).contains(y)).ok_or("Year: type a year such as 2027.")?;
+    let month = d.n("month").filter(|m| (1.0..=12.0).contains(m)).ok_or("Month: choose a month.")?;
+    super::blocks::insert_month(app, d.s("look") != "simple", year as i64, month as u32)
+}
+
+// ───────────────────────────── Format Background ─────────────────────────────
+
+/// Page Design › Background › More Backgrounds: a colour or a picture behind every page, with
+/// the transparency that lets the paper show through.
+pub(super) fn open_background(app: &mut DesignApp) {
+    open(app, BACKGROUND, json!({"kind": "picture", "color": "[Black]", "path": "", "transparency": "80"}));
+}
+
+fn background_body(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
+    let kind = d.s("kind");
+    if ui.radio(kind == "color", "Solid color").clicked() {
+        d.fields.insert("kind".into(), json!("color"));
+    }
+    ui.add_enabled_ui(kind == "color", |ui| {
+        ui.horizontal(|ui| {
+            ui.add_space(22.0);
+            let cur = d.s("color");
+            if let Some(c) = colors::picker(app, ui, "pr_background_color", Target::Fill, None, &cur) {
+                d.fields.insert("color".into(), json!(c));
+            }
+        });
+    });
+    ui.add_space(6.0);
+    if ui.radio(kind == "picture", "Picture").clicked() {
+        d.fields.insert("kind".into(), json!("picture"));
+    }
+    ui.add_enabled_ui(kind == "picture", |ui| {
+        ui.horizontal(|ui| {
+            ui.add_space(22.0);
+            if ui.button("Choose Picture…").clicked()
+                && let Some(pick) = app.services.pick_open.as_mut()
+                && let Some(path) = pick("place")
+            {
+                d.fields.insert("path".into(), json!(path));
+            }
+            let path = d.s("path");
+            let name = std::path::Path::new(&path).file_name().map_or("No picture chosen".to_string(), |n| n.to_string_lossy().into_owned());
+            ui.label(name);
+        });
+    });
+    ui.add_space(10.0);
+    egui::Grid::new("pr_background").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        labelled(ui, "Transparency (%):", |ui| text(ui, d, "transparency", 60.0));
+    });
+}
+
+fn background_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
+    let t = d.n("transparency").filter(|v| (0.0..=100.0).contains(v)).ok_or("Transparency: type a percentage from 0 to 100.")?;
+    let fill = if d.s("kind") == "picture" {
+        let path = d.s("path");
+        if path.trim().is_empty() {
+            return Err("Choose a picture first.".into());
+        }
+        super::Background::Picture(path)
+    } else {
+        super::Background::Color(d.s("color"))
+    };
+    super::set_background_fill(app, Some(&fill), t / 100.0)?;
+    Ok(Value::Null)
+}
+
+// ───────────────────────────── Advanced Output Settings ─────────────────────────────
+
+/// File › Print › Advanced Output Settings: Marks and Bleeds.
+pub(super) fn open_output(app: &mut DesignApp, m: super::backstage::OutputMarks) {
+    let fields = json!({
+        "tab": "marks",
+        "crop": m.crop,
+        "bleedMarks": m.bleed_marks,
+        "registration": m.registration,
+        "jobInfo": m.job_info,
+        "allowBleeds": m.allow_bleeds,
+    });
+    open(app, OUTPUT, fields);
+}
+
+fn output_body(ui: &mut Ui, d: &mut Dialog) {
+    tabs(ui, d, &[("marks", "Marks and Bleeds")]);
+    ui.label(egui::RichText::new("Printer's marks").strong());
+    ui.add_space(4.0);
+    check(ui, d, "crop", "Crop marks");
+    check(ui, d, "bleedMarks", "Bleed marks");
+    check(ui, d, "registration", "Registration marks");
+    check(ui, d, "jobInfo", "Job information");
+    ui.add_space(10.0);
+    ui.label(egui::RichText::new("Bleeds").strong());
+    ui.add_space(4.0);
+    check(ui, d, "allowBleeds", "Allow bleeds");
+    ui.add_space(8.0);
+    ui.label(
+        egui::RichText::new(
+            "Marks print outside the page, so they only show on paper larger than the page. They're for a print shop to trim and line up by.",
+        )
+        .color(super::pal().group_label),
+    );
+}
+
 // ───────────────────────────── Paragraph ─────────────────────────────
 
 pub(crate) fn open_paragraph(app: &mut DesignApp) {
@@ -393,7 +604,7 @@ pub(crate) fn open_paragraph(app: &mut DesignApp) {
         Some("points") => format!("{:.2}sp", chars["leading"]["value"].as_f64().unwrap_or(size * 1.2) / (size * 1.2)),
         _ => format!("{:.2}sp", para["autoLeading"].as_f64().unwrap_or(1.2) / 1.2),
     };
-    let fields = json!({
+    let mut fields = json!({
         "tab": "indents",
         "align": para["align"].as_str().unwrap_or("left"),
         "left": measure(para["leftIndent"].as_f64().unwrap_or(0.0), u),
@@ -410,13 +621,36 @@ pub(crate) fn open_paragraph(app: &mut DesignApp) {
         "tabAt": "",
         "tabAlign": "left",
         "tabLeader": "",
+        "ruleSize": size,
     });
+    if let Some(o) = fields.as_object_mut() {
+        for (key, attr, lift) in RULES {
+            let r = &para[attr];
+            let weight = r["weight"].as_f64().unwrap_or(1.0);
+            o.insert(format!("{key}On"), json!(r["on"].as_bool().unwrap_or(false)));
+            o.insert(format!("{key}Weight"), json!(format!("{}", (weight * 100.0).round() / 100.0)));
+            // A rule in the text's colour shows that colour; left as it is, it keeps following the text.
+            let color = r["color"].as_str().unwrap_or(designcraft_doc::attrs::TEXT_COLOR);
+            let follows = color == designcraft_doc::attrs::TEXT_COLOR;
+            o.insert(format!("{key}Follows"), json!(follows));
+            o.insert(format!("{key}Color"), json!(if follows { chars["fill"].as_str().unwrap_or("[Black]") } else { color }));
+            o.insert(format!("{key}Left"), measure(r["leftIndent"].as_f64().unwrap_or(0.0), u));
+            o.insert(format!("{key}Right"), measure(r["rightIndent"].as_f64().unwrap_or(0.0), u));
+            o.insert(format!("{key}Gap"), measure((r["offset"].as_f64().unwrap_or(0.0) - size * lift).max(0.0), u));
+        }
+    }
     open(app, PARAGRAPH, with_init(fields));
 }
 
+/// Horizontal Rules: (field prefix, paragraph attribute, how far the text reaches past its
+/// baseline toward the rule, in ems). The engine measures a rule above from the first line's
+/// baseline and a rule below from the last one's; the dialog shows the space between rule and text.
+const RULES: [(&str, &str, f64); 2] = [("ra", "ruleAbove", 0.75), ("rb", "ruleBelow", 0.25)];
+
 fn paragraph_body(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
-    tabs(ui, d, &[("indents", "Indents and Spacing"), ("breaks", "Line and Paragraph Breaks"), ("tabs", "Tabs")]);
+    tabs(ui, d, &[("indents", "Indents and Spacing"), ("breaks", "Line and Paragraph Breaks"), ("tabs", "Tabs"), ("rules", "Horizontal Rules")]);
     match d.s("tab").as_str() {
+        "rules" => rules_section(app, ui, d),
         "breaks" => {
             check(ui, d, "widow", "Widow/Orphan control");
             check(ui, d, "keepNext", "Keep with next");
@@ -452,6 +686,29 @@ fn paragraph_body(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
                 labelled(ui, "Between lines:", |ui| text(ui, d, "between", 70.0));
             });
         }
+    }
+}
+
+/// Horizontal Rules: a line before the paragraph and one after it.
+fn rules_section(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
+    for ((key, _, _), title) in RULES.into_iter().zip(["Rule before paragraph", "Rule after paragraph"]) {
+        check(ui, d, &format!("{key}On"), title);
+        let on = d.b(&format!("{key}On"));
+        ui.add_enabled_ui(on, |ui| {
+            egui::Grid::new(("pr_rule", key)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                labelled(ui, "Line weight (pt):", |ui| text(ui, d, &format!("{key}Weight"), 50.0));
+                ui.label("Line color:");
+                let cur = d.s(&format!("{key}Color"));
+                if let Some(c) = colors::picker(app, ui, &format!("pr_rule_color_{key}"), Target::Line, None, &cur) {
+                    d.fields.insert(format!("{key}Color"), json!(c));
+                }
+                ui.end_row();
+                labelled(ui, "Left indent:", |ui| text(ui, d, &format!("{key}Left"), 70.0));
+                labelled(ui, "Right indent:", |ui| text(ui, d, &format!("{key}Right"), 70.0));
+                labelled(ui, "Space from text:", |ui| text(ui, d, &format!("{key}Gap"), 70.0));
+            });
+        });
+        ui.add_space(10.0);
     }
 }
 
@@ -548,6 +805,30 @@ fn paragraph_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
     }
     if changed(d, "nextBox") {
         para.insert("startParagraph".into(), json!(if d.b("nextBox") { "nextFrame" } else { "anywhere" }));
+    }
+    let size = d.n("ruleSize").filter(|v| v.is_finite() && *v > 0.0).unwrap_or(12.0);
+    for (key, attr, lift) in RULES {
+        let k = |s: &str| format!("{key}{s}");
+        if !["On", "Weight", "Color", "Left", "Right", "Gap"].iter().any(|s| changed(d, &k(s))) {
+            continue;
+        }
+        let mut rule = Map::new();
+        rule.insert("on".into(), json!(d.b(&k("On"))));
+        if d.b(&k("On")) {
+            let weight = d
+                .n(&k("Weight"))
+                .filter(|v| v.is_finite() && *v >= 0.1 && *v <= 1000.0)
+                .ok_or("Line weight: type a number of points from 0.1 to 1000.")?;
+            rule.insert("weight".into(), json!(weight));
+            let color =
+                if !changed(d, &k("Color")) && d.b(&k("Follows")) { designcraft_doc::attrs::TEXT_COLOR.to_string() } else { d.s(&k("Color")) };
+            rule.insert("color".into(), json!(color));
+            rule.insert("leftIndent".into(), json!(read(d, &k("Left"), "Left indent", u)?));
+            rule.insert("rightIndent".into(), json!(read(d, &k("Right"), "Right indent", u)?));
+            rule.insert("offset".into(), json!(read(d, &k("Gap"), "Space from text", u)?.max(0.0) + size * lift));
+            rule.insert("columnWidth".into(), json!(true));
+        }
+        para.insert(attr.into(), Value::Object(rule));
     }
     let mut steps = Vec::new();
     if !para.is_empty() {
@@ -867,6 +1148,11 @@ fn page_fields(app: &DesignApp) -> Option<Value> {
         "gutter": measure(p.columns.gutter, u),
         "width": measure(p.width, u),
         "height": measure(p.height, u),
+        "sheet": if st.doc.settings.label_sheet.is_some() { "multiple" } else { "one" },
+        "sheetSide": measure(st.doc.settings.label_sheet.map_or(0.0, |l| l.side), u),
+        "sheetTop": measure(st.doc.settings.label_sheet.map_or(0.0, |l| l.top), u),
+        "sheetHGap": measure(st.doc.settings.label_sheet.map_or(0.0, |l| l.h_gap), u),
+        "sheetVGap": measure(st.doc.settings.label_sheet.map_or(0.0, |l| l.v_gap), u),
     }))
 }
 
@@ -933,8 +1219,15 @@ pub(crate) fn open_setup(app: &mut DesignApp) {
 fn setup_body(_app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
     ui.label(egui::RichText::new("Page").strong());
     egui::Grid::new("pr_setup").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        labelled(ui, "Layout type:", |ui| combo(ui, d, "sheet", &[("one", "One page per sheet"), ("multiple", "Multiple pages per sheet")], 190.0));
         labelled(ui, "Width:", |ui| text(ui, d, "width", 70.0));
         labelled(ui, "Height:", |ui| text(ui, d, "height", 70.0));
+        if d.s("sheet") == "multiple" {
+            labelled(ui, "Side margin:", |ui| text(ui, d, "sheetSide", 70.0));
+            labelled(ui, "Top margin:", |ui| text(ui, d, "sheetTop", 70.0));
+            labelled(ui, "Horizontal gap:", |ui| text(ui, d, "sheetHGap", 70.0));
+            labelled(ui, "Vertical gap:", |ui| text(ui, d, "sheetVGap", 70.0));
+        }
     });
     ui.add_space(8.0);
     ui.label(egui::RichText::new("Margin Guides").strong());
@@ -950,6 +1243,19 @@ fn setup_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
             return Err("The page must be between 0.01 and 216 inches each way.".into());
         }
         steps.push(json!({"command": "layout.documentSetup", "params": {"width": w, "height": h}}));
+    }
+    if ["sheet", "sheetSide", "sheetTop", "sheetHGap", "sheetVGap"].iter().any(|k| changed(d, k)) {
+        let sheet = if d.s("sheet") == "multiple" {
+            json!({
+                "side": read(d, "sheetSide", "Side margin", u)?.max(0.0),
+                "top": read(d, "sheetTop", "Top margin", u)?.max(0.0),
+                "hGap": read(d, "sheetHGap", "Horizontal gap", u)?.max(0.0),
+                "vGap": read(d, "sheetVGap", "Vertical gap", u)?.max(0.0),
+            })
+        } else {
+            Value::Null
+        };
+        steps.push(json!({"command": "layout.documentSetup", "params": {"labelSheet": sheet}}));
     }
     if let Some(m) = margins_params(app, d)? {
         steps.push(json!({"command": "layout.marginsAndColumns", "params": {"margins": m}}));
@@ -994,7 +1300,13 @@ pub(crate) fn open_format(app: &mut DesignApp) {
         "x": measure(r.x0, u),
         "y": measure(r.y0, u),
         "rotation": rotation.to_string(),
-        "wrap": info.wrap,
+        "wrap": if info.wrap == "contour"
+            && app.session.active().and_then(|st| st.doc.item(*st.selection.items.first()?)).is_some_and(|it| it.wrap.inside_edges)
+        {
+            "through".to_string()
+        } else {
+            info.wrap.to_string()
+        },
         "valign": text.as_ref().map_or("top".to_string(), |o| serde_json::to_value(o.vertical_justification).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "top".to_string())),
         "insetTop": measure(inset[0], u),
         "insetLeft": measure(inset[1], u),
@@ -1031,7 +1343,13 @@ fn format_body(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog) {
                         ui,
                         d,
                         "wrap",
-                        &[("none", "None"), ("boundingBox", "Square"), ("contour", "Tight"), ("jumpObject", "Top and Bottom")],
+                        &[
+                            ("none", "None"),
+                            ("boundingBox", "Square"),
+                            ("contour", "Tight"),
+                            ("through", "Through"),
+                            ("jumpObject", "Top and Bottom"),
+                        ],
                         150.0,
                     );
                 });
@@ -1128,7 +1446,9 @@ fn format_apply(app: &mut DesignApp, d: &Dialog) -> Result<Value, String> {
         step("transform.set", Value::Object(xf));
     }
     if changed(d, "wrap") {
-        step("object.textWrap", json!({"mode": d.s("wrap")}));
+        let wrap = d.s("wrap");
+        let through = wrap == "through";
+        step("object.textWrap", json!({"mode": if through { "contour" } else { wrap.as_str() }, "insideEdges": through}));
     }
     let mut frame = Map::new();
     if changed(d, "valign") {

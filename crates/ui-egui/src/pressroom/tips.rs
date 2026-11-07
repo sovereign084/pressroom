@@ -192,6 +192,11 @@ fn describe(name: &str) -> Option<String> {
         "Align Top" => "Line the text up at the top of the cell.",
         "Align Middle" => "Centre the text between the top and bottom of the cell.",
         "Align Bottom" => "Line the text up at the bottom of the cell.",
+        "Diagonals" => "Divide the cell corner to corner, with text in each half.",
+        "Grow to Fit Text" => "Let the rows grow as you type, or keep them the height they are.",
+        "Stylistic Sets" => "Use another set of letter designs the font offers.",
+        "Stylistic Alternates" => "Use the font's other forms of some letters.",
+        "Swash" => "Use the font's decorative swash letters.",
         _ => return None,
     };
     Some(s.to_string())

@@ -1,8 +1,8 @@
 use super::cell::{get_cell_stroke, set_cell};
-use super::content::{drop_cells, place_graphic, sort_rows};
+use super::content::{drop_cells, fill_cells, place_graphic, sort_rows};
 use super::options::{get, options};
 use super::selection::{move_rc, select, step_cell};
-use super::sizing::{distribute_cols, distribute_rows, resize_border, set_col_width, set_row_height};
+use super::sizing::{distribute_cols, distribute_rows, grow_to_fit, resize_border, set_col_width, set_row_height};
 use super::structure::{
     can_convert_rows, convert_from_text, convert_rows, convert_to_text, delete_cols, delete_rows, delete_table, insert, insert_col, insert_row,
     merge, split, unmerge,
@@ -291,7 +291,7 @@ fn table_specs() -> Vec<CommandSpec> {
             "Cell Options",
             [],
             None,
-            "{fill?: swatch, tint?: 0..1, insets?: n | [t,l,b,r], vj? | verticalJustification?: top|center|bottom|justify, firstBaseline?: ascent|capHeight|leading|xHeight|fixed|emboxHeight, firstBaselineMin?: pt, rotation?: 0|90|180|270 (Cell Options › Text › Rotation; kept and written back to IDML, composed horizontally for now), text?, stroke?: {weight?, color?: swatch, tint?: 0..1, type?: solid|dashed|dotted|thickThin|thinThick|thinThin|thickThick|thinThickThin|thickThinThick|wavy|hashed | {kind:…}, gapColor?: swatch, gapTint?: 0..1, edges?: name | [names] (all|outer|inner|top|left|bottom|right|innerHorizontal|innerVertical; default all)}, story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — top/left/bottom/right are the target range's outer sides, innerHorizontal/innerVertical the lines between its rows/columns",
+            "{fill?: swatch, tint?: 0..1, insets?: n | [t,l,b,r], vj? | verticalJustification?: top|center|bottom|justify, firstBaseline?: ascent|capHeight|leading|xHeight|fixed|emboxHeight, firstBaselineMin?: pt, rotation?: 0|90|180|270 (Cell Options › Text › Rotation; kept and written back to IDML, composed horizontally for now), diagonal?: none|down|up (Cell Diagonals: a corner-to-corner line, the first paragraph in the upper half and the last in the lower), text?, stroke?: {weight?, color?: swatch, tint?: 0..1, type?: solid|dashed|dotted|thickThin|thinThick|thinThin|thickThick|thinThickThin|thickThinThick|wavy|hashed | {kind:…}, gapColor?: swatch, gapTint?: 0..1, edges?: name | [names] (all|outer|inner|top|left|bottom|right|innerHorizontal|innerVertical; default all)}, story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)} — top/left/bottom/right are the target range's outer sides, innerHorizontal/innerVertical the lines between its rows/columns",
             in_table,
             set_cell
         ),
@@ -339,6 +339,24 @@ fn table_specs() -> Vec<CommandSpec> {
             "{story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (the target cells; default: the selection)}",
             in_table,
             distribute_cols
+        ),
+        cmd!(
+            "table.growToFit",
+            "Grow to Fit Text",
+            ["Table"],
+            None,
+            "{on?: bool (default: the opposite of the table's state), story?, table?} — every row grows with its text (on), or keeps the height it shows now (off)",
+            in_table,
+            grow_to_fit
+        ),
+        cmd!(
+            "table.fillCells",
+            "Fill Down or Right",
+            ["Table"],
+            None,
+            "{direction?: down|right (default down), story?, table?, rows?: [a, b] | row?, cols?: [a, b] | col? (default: the selection)} — Fill Down copies each column's top cell into the cells below it, Fill Right each row's first cell into the cells to its right: text, formatting, fill, insets, alignment and diagonal",
+            in_table,
+            fill_cells
         ),
         cmd!(
             "table.distributeRows",

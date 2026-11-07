@@ -501,6 +501,7 @@ fn hostile_wrap_geometry_terminates() {
         side: WrapSide::BothSides,
         contour: None,
         after: None,
+        inside: false,
     };
     let f = &mut specs[0];
     f.exclusions.push(ex(f64::NAN, f64::NAN, f64::NAN, f64::NAN, WrapMode::JumpObject));
@@ -7931,4 +7932,53 @@ fn anchored_text_frames_compose_against_the_grid_where_they_are_placed() {
     let before = cache.get(&d, nsid, None);
     Arc::make_mut(&mut d.spreads[1]).pages[1].side = designcraft_doc::PageSide::Left;
     assert!(!Arc::ptr_eq(&before, &cache.get(&d, nsid, None)));
+}
+
+/// Publisher's Through (Include Inside Edges): on a line across a ring, text may go into the hole;
+/// Tight keeps it beside the whole ring.
+#[test]
+fn through_lets_text_into_the_open_parts_of_an_outline() {
+    let (d, sid) = wrap_doc(ParaAttrs::default(), &[]);
+    let mut specs = frame_specs(&d, sid);
+    let square = |x0: f64, y0: f64, x1: f64, y1: f64| vec![Point::new(x0, y0), Point::new(x1, y0), Point::new(x1, y1), Point::new(x0, y1)];
+    let ring = Contour { rings: vec![square(100.0, 100.0, 200.0, 200.0), square(120.0, 120.0, 180.0, 180.0)], clip: vec![], offset: 0.0 };
+    let ex = |inside| Exclusion {
+        rect: Rect::new(100.0, 100.0, 200.0, 200.0),
+        mode: WrapMode::Contour,
+        side: WrapSide::BothSides,
+        contour: Some(ring.clone()),
+        after: None,
+        inside,
+    };
+    let col = Rect::new(0.0, 0.0, 300.0, 800.0);
+    let f = &mut specs[0];
+    f.exclusions = vec![ex(false)];
+    let tight = free_slots(f, col, 140.0, 150.0, 2.0, 10.0, false, 0);
+    assert!(tight.iter().all(|s| s.1 <= 100.0 + 1e-6 || s.0 >= 200.0 - 1e-6), "Tight: beside the ring only {tight:?}");
+    f.exclusions = vec![ex(true)];
+    let through = free_slots(f, col, 140.0, 150.0, 2.0, 10.0, false, 0);
+    assert!(through.iter().any(|s| s.0 >= 120.0 - 1e-6 && s.1 <= 180.0 + 1e-6), "Through: the hole too {through:?}");
+    // Above the hole the ring is solid: Through blocks the whole band there too.
+    let solid = free_slots(f, col, 104.0, 112.0, 2.0, 10.0, false, 0);
+    assert!(solid.iter().all(|s| s.1 <= 100.0 + 1e-6 || s.0 >= 200.0 - 1e-6), "{solid:?}");
+}
+
+/// The underline looks: each draws shapes of its own in the bar's place.
+#[test]
+fn underline_looks_draw_their_own_shapes() {
+    use designcraft_doc::UnderlineType as U;
+    let rule = |style| Rule { offset: 1.0, weight: 1.0, color: "[Black]".into(), tint: 1.0, style };
+    let r = Rect::new(0.0, 10.0, 60.0, 11.0);
+    let pieces = |bp: &designcraft_geom::BezPath| bp.elements().iter().filter(|e| matches!(e, designcraft_geom::PathEl::MoveTo(_))).count();
+    assert_eq!(pieces(&rule(U::Single).shapes(r)), 1);
+    assert_eq!(pieces(&rule(U::Double).shapes(r)), 2);
+    assert!(pieces(&rule(U::Dotted).shapes(r)) >= 25);
+    assert!(pieces(&rule(U::Dash).shapes(r)) >= 9);
+    assert!(pieces(&rule(U::DotDotDash).shapes(r)) > pieces(&rule(U::Dash).shapes(r)));
+    assert!(designcraft_geom::Shape::bounding_box(&rule(U::Wave).shapes(r)).height() > 2.0, "a wave rises and falls");
+    assert!(rule(U::Single).is_plain() && rule(U::WordsOnly).is_plain() && !rule(U::Dotted).is_plain());
+    // A hairline over a very long bar stays bounded.
+    let thin = Rule { weight: 0.0, ..rule(U::Dotted) };
+    assert!(pieces(&thin.shapes(Rect::new(0.0, 10.0, 1.0e6, 10.0))) <= 20_001);
+    assert!(pieces(&rule(U::Wave).shapes(Rect::new(5.0, 10.0, 5.0, 11.0))) == 0, "no bar, no wave");
 }

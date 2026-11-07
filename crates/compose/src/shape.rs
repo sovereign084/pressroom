@@ -153,6 +153,11 @@ fn shaping_key(p: &CharProps) -> CharProps {
         underline_offset: d.underline_offset,
         underline_color: d.underline_color,
         underline_tint: d.underline_tint,
+        underline_type: d.underline_type,
+        effect_shadow: d.effect_shadow,
+        effect_outline: d.effect_outline,
+        effect_emboss: d.effect_emboss,
+        effect_engrave: d.effect_engrave,
         strikethrough_weight: d.strikethrough_weight,
         strikethrough_offset: d.strikethrough_offset,
         strikethrough_color: d.strikethrough_color,
@@ -254,27 +259,31 @@ impl StyleTable<'_> {
         } else {
             None
         };
+        let paint = Effects::of(p);
         let rs = RunStyle {
-            fill: p.fill.clone(),
-            fill_tint: p.fill_tint,
-            stroke: p.stroke.clone(),
-            stroke_tint: p.stroke_tint,
-            stroke_weight: p.stroke_weight,
-            stroke_behind_fill: p.stroke_behind_fill,
+            fill: paint.fill,
+            fill_tint: paint.fill_tint,
+            stroke: paint.stroke,
+            stroke_tint: paint.stroke_tint,
+            stroke_weight: paint.stroke_weight,
+            stroke_behind_fill: paint.stroke_behind_fill,
             underline: p.underline,
             strikethrough: p.strikethrough,
             underline_rule: crate::Rule {
                 offset: p.underline_offset.unwrap_or(p.size * 0.12),
-                weight: p.underline_weight.unwrap_or(p.size / 14.0),
+                weight: p.underline_weight.unwrap_or(p.size / 14.0) * if p.underline_type.heavy() { 2.0 } else { 1.0 },
                 color: if p.underline_color.is_empty() { p.fill.clone() } else { p.underline_color.clone() },
                 tint: if p.underline_color.is_empty() { p.fill_tint } else { p.underline_tint },
+                style: p.underline_type,
             },
             strike_rule: crate::Rule {
                 offset: -p.strikethrough_offset.unwrap_or(p.size * 0.3),
                 weight: p.strikethrough_weight.unwrap_or(p.size / 14.0),
                 color: if p.strikethrough_color.is_empty() { p.fill.clone() } else { p.strikethrough_color.clone() },
                 tint: if p.strikethrough_color.is_empty() { p.fill_tint } else { p.strikethrough_tint },
+                style: designcraft_doc::UnderlineType::Single,
             },
+            shadow: paint.shadow,
             skew: p.skew,
             size: p.size,
             missing_font: *self.missing.entry(p.font_family.clone()).or_insert_with(|| !p.font_family.is_empty() && !db.has_family(&p.font_family)),
@@ -1393,5 +1402,73 @@ fn digit_mode(p: &designcraft_doc::CharProps, arabic_context: Option<bool>) -> d
         Some(false) => Digits::Arabic,
         Some(true) if Digits::Native.map('0', &p.language) == '0' => Digits::Hindi,
         _ => Digits::Native,
+    }
+}
+
+/// How a run's font effects paint it. Outline makes the letters hollow: the paper inside, their
+/// colour round the edge. Emboss and Engrave set paper-coloured letters on a half-tone copy of
+/// them, below right or above left; Shadow sets a grey copy below right.
+struct Effects {
+    fill: String,
+    fill_tint: f32,
+    stroke: String,
+    stroke_tint: f32,
+    stroke_weight: f64,
+    stroke_behind_fill: bool,
+    shadow: Option<crate::GlyphShadow>,
+}
+
+impl Effects {
+    fn of(p: &CharProps) -> Effects {
+        let mut e = Effects {
+            fill: p.fill.clone(),
+            fill_tint: p.fill_tint,
+            stroke: p.stroke.clone(),
+            stroke_tint: p.stroke_tint,
+            stroke_weight: p.stroke_weight,
+            stroke_behind_fill: p.stroke_behind_fill,
+            shadow: None,
+        };
+        let d = (p.size * 0.06).clamp(0.4, 40.0);
+        let paper = designcraft_color::swatch::PAPER.to_string();
+        if p.effect_emboss || p.effect_engrave {
+            let k = if p.effect_engrave { -d } else { d };
+            e.shadow = Some(crate::GlyphShadow { dx: k, dy: k, color: p.fill.clone(), tint: p.fill_tint * 0.5 });
+            e.fill = paper;
+            e.fill_tint = 1.0;
+            return e;
+        }
+        if p.effect_shadow {
+            e.shadow = Some(crate::GlyphShadow { dx: d, dy: d, color: designcraft_color::swatch::BLACK.into(), tint: 0.4 });
+        }
+        if p.effect_outline {
+            e.stroke = p.fill.clone();
+            e.stroke_tint = p.fill_tint;
+            e.stroke_weight = (p.size / 28.0).clamp(0.3, 20.0);
+            e.stroke_behind_fill = false;
+            e.fill = paper;
+            e.fill_tint = 1.0;
+        }
+        e
+    }
+}
+
+#[cfg(test)]
+mod effect_tests {
+    use super::*;
+
+    #[test]
+    fn the_font_effects_paint_as_publisher_draws_them() {
+        let base = CharProps { fill: "Navy".into(), size: 20.0, ..CharProps::default() };
+        let plain = Effects::of(&base);
+        assert!(plain.shadow.is_none() && plain.fill == "Navy");
+        let shadow = Effects::of(&CharProps { effect_shadow: true, ..base.clone() });
+        assert!(shadow.shadow.as_ref().is_some_and(|s| s.dx > 0.0 && s.dy > 0.0) && shadow.fill == "Navy");
+        let outline = Effects::of(&CharProps { effect_outline: true, ..base.clone() });
+        assert_eq!((outline.fill.as_str(), outline.stroke.as_str()), (designcraft_color::swatch::PAPER, "Navy"), "hollow letters");
+        let emboss = Effects::of(&CharProps { effect_emboss: true, ..base.clone() });
+        let engrave = Effects::of(&CharProps { effect_engrave: true, ..base.clone() });
+        assert_eq!(emboss.fill, designcraft_color::swatch::PAPER);
+        assert!(emboss.shadow.as_ref().is_some_and(|s| s.dx > 0.0) && engrave.shadow.as_ref().is_some_and(|s| s.dx < 0.0), "raised and pressed in");
     }
 }

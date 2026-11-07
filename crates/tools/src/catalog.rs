@@ -83,5 +83,9 @@ pub const TOOL_GROUPS: &[&[ToolInfo]] = &[
 pub const SPLIT_IN_TWO_COLUMNS: &[&str] = &["contentCollector"];
 
 pub fn tool_info(id: &str) -> Option<ToolInfo> {
-    TOOL_GROUPS.iter().flat_map(|g| g.iter()).find(|t| t.id == id).copied()
+    TOOL_GROUPS.iter().flat_map(|g| g.iter()).chain(HIDDEN_TOOLS).find(|t| t.id == id).copied()
 }
+
+/// Tools a command or a menu chooses, not in the toolbox.
+pub const HIDDEN_TOOLS: &[ToolInfo] =
+    &[t("wrapPoints", "Edit Wrap Points", None, "tool-direct"), t("shapePoints", "Edit Points", None, "tool-direct")];

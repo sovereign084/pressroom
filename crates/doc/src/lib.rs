@@ -353,10 +353,58 @@ impl EpubSplit {
     }
 }
 
+/// A connector's look: a straight line, a line with right-angle bends, or a curve.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectorKind {
+    #[default]
+    Straight,
+    Elbow,
+    Curved,
+}
+
+/// Where a connector's end is held: an object and one of its connection sites, the middle of a
+/// side of its box (0 top, 1 right, 2 bottom, 3 left).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorEnd {
+    pub item: ItemId,
+    pub site: u8,
+}
+
+/// A connector (Publisher's): a line whose ends stay on two objects' connection sites and follow
+/// them when they move.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connector {
+    pub line: ItemId,
+    #[serde(default)]
+    pub kind: ConnectorKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<ConnectorEnd>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<ConnectorEnd>,
+}
+
+/// Label or card stock: where the pages go on a sheet, as Publisher's Page Setup sets it for
+/// Multiple pages per sheet. Points: the space at the sheet's left and top, and between pages
+/// across and down.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LabelSheet {
+    pub side: f64,
+    pub top: f64,
+    pub h_gap: f64,
+    pub v_gap: f64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DocSettings {
     pub intent: Intent,
+    /// Label or card stock the pages print on, several to a sheet (see [`LabelSheet`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_sheet: Option<LabelSheet>,
     pub page_width: f64,
     pub page_height: f64,
     pub facing_pages: bool,
@@ -465,6 +513,7 @@ impl Default for DocSettings {
     fn default() -> Self {
         DocSettings {
             intent: Intent::Print,
+            label_sheet: None,
             page_width: 612.0,
             page_height: 792.0,
             facing_pages: true,
@@ -764,6 +813,9 @@ pub struct Document {
     /// saved.
     #[serde(skip)]
     pub font_scope: u32,
+    /// Connectors: lines held on objects' connection sites (see [`Connector`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connectors: Vec<Connector>,
 }
 
 /// What a hyperlink is attached to.

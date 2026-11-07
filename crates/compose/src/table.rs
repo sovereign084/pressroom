@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use designcraft_doc::{Align, Cell, CellStroke, Document, ItemId, ParaProps, RowHeightMode, Table, TextFrameOptions, VerticalJustification};
+use designcraft_doc::{
+    Align, Cell, CellDiagonal, CellStroke, Document, ItemId, ParaProps, RowHeightMode, Table, TextFrameOptions, VerticalJustification,
+};
 use designcraft_geom::{Point, Rect};
 
 use crate::{ComposeOptions, ComposedStory, Cursor, FrameSpec, Line};
@@ -121,6 +123,56 @@ impl CellLineExtent {
 }
 
 /// Compose a cell story at width `w` (content space, top-left at the origin).
+/// A divided cell's text as the halves set it: Divide Down puts the first paragraph at the right
+/// of the upper half and the last at the left of the lower one, Divide Up the other way round.
+/// `None` for an undivided cell.
+fn divided_story(cell: &Cell) -> Option<designcraft_doc::Story> {
+    let (upper, lower) = match cell.diagonal {
+        CellDiagonal::None => return None,
+        CellDiagonal::Down => (Align::Right, Align::Left),
+        CellDiagonal::Up => (Align::Left, Align::Right),
+    };
+    let mut story = cell.text.clone();
+    let last = story.paras.len().checked_sub(1)?;
+    for (i, p) in story.paras.iter_mut().enumerate() {
+        p.para.align = Some(if i == last && last > 0 { lower } else { upper });
+    }
+    Some(story)
+}
+
+/// Moves a cell's lines down so the first stays at the top and the last ends `space` lower;
+/// pieces of one line (beside an object) share a row and move together.
+fn spread_lines(text: &mut ComposedStory, space: f64) {
+    let Some(f) = text.frames.first_mut() else { return };
+    let mut row = 0usize;
+    let mut prev = f64::NAN;
+    let mut rows = Vec::with_capacity(f.lines.len());
+    for l in &f.lines {
+        if !prev.is_nan() && (l.baseline - prev).abs() > 1e-9 {
+            row += 1;
+        }
+        prev = l.baseline;
+        rows.push(row);
+    }
+    if row == 0 {
+        return;
+    }
+    let per = space / row as f64;
+    for (l, k) in f.lines.iter_mut().zip(rows) {
+        l.baseline += per * k as f64;
+    }
+}
+
+/// The line a divided cell is drawn with: its top edge's when that was set, else a thin black one.
+fn diagonal_stroke(cell: &Cell) -> CellStroke {
+    let top = &cell.strokes[0];
+    if cell.stroke_defined[0] && top.weight > 0.0 && top.color != designcraft_color::swatch::NONE {
+        top.clone()
+    } else {
+        CellStroke { weight: 0.75, ..CellStroke::default() }
+    }
+}
+
 fn compose_cell(doc: &Document, cell: &Cell, w: f64, opts: &ComposeOptions, (left_page, right_page): (bool, bool)) -> CellLayout {
     let spec = FrameSpec {
         id: ItemId(0),
@@ -137,7 +189,8 @@ fn compose_cell(doc: &Document, cell: &Cell, w: f64, opts: &ComposeOptions, (lef
         right_page,
         page_rect: None,
     };
-    let cs = crate::compose(doc, &cell.text, std::slice::from_ref(&spec), opts);
+    let halves = divided_story(cell);
+    let cs = crate::compose(doc, halves.as_ref().unwrap_or(&cell.text), std::slice::from_ref(&spec), opts);
     let line_heights: Vec<f64> = cs
         .frames
         .first()
@@ -389,6 +442,7 @@ fn emit(
     let body = table.body_rows();
     let nbody = body.len();
     let mut cells = Vec::new();
+    let mut diagonals: Vec<StrokeSeg> = Vec::new();
     let o = &table.options;
     let right = x0 + colx[nc];
     for &(r, y, repeated) in rows {
@@ -427,7 +481,19 @@ fn emit(
                 _ => 0.0,
             };
             let overset = space < -0.01 || lay.text.is_overset();
-            let text = if overset { clip_overset(lay, clip.height()) } else { lay.text.clone() };
+            let mut text = if overset { clip_overset(lay, clip.height()) } else { lay.text.clone() };
+            // Justified, and a divided cell's two halves: the first line stays at the top, the
+            // last goes to the bottom and the others share the space between.
+            if !overset && space > 0.0 && (cell.vj == VerticalJustification::Justify || cell.diagonal != CellDiagonal::None) {
+                spread_lines(Arc::make_mut(&mut text), space);
+            }
+            if cell.diagonal != CellDiagonal::None {
+                let (a, b) = match cell.diagonal {
+                    CellDiagonal::Up => (Point::new(rect.x0, rect.y1), Point::new(rect.x1, rect.y0)),
+                    _ => (Point::new(rect.x0, rect.y0), Point::new(rect.x1, rect.y1)),
+                };
+                diagonals.push(StrokeSeg { a, b, stroke: diagonal_stroke(cell) });
+            }
             cells.push(PlacedCell {
                 row: r,
                 col: c,
@@ -443,7 +509,8 @@ fn emit(
             });
         }
     }
-    let strokes = fragment_strokes(table, rows, heights, colx, x0, bottom, owners);
+    let mut strokes = fragment_strokes(table, rows, heights, colx, x0, bottom, owners);
+    strokes.extend(diagonals);
     let ft = &mut out.frames[cur.fi];
     let line = ft.lines.len();
     let h = bottom - top;

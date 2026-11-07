@@ -41,7 +41,7 @@ fn printers() -> Value {
 
 /// The physical sides these settings print, or None for plain pages (the path Export PDF shares).
 fn plan_sides(s: &Session, p: &Value) -> Result<Option<Vec<designcraft_pdf::SheetSide>>> {
-    use designcraft_pdf::{BookletKind, booklet_sides, copies_per_sheet_sides, one_up_sides, pages_per_sheet_sides};
+    use designcraft_pdf::{BookletKind, booklet_sides, copies_per_sheet_sides, label_sheet_sides, one_up_sides, pages_per_sheet_sides};
     const ID: &str = "file.print";
     let d = &s.doc()?.doc;
     let manual = p.get("sheetSides").is_some() || p.get("sheets").is_some();
@@ -59,7 +59,10 @@ fn plan_sides(s: &Session, p: &Value) -> Result<Option<Vec<designcraft_pdf::Shee
         },
         Some(_) => return Err(bad(ID, "`paper` must be [width, height]")),
     };
+    // Label or card stock places several to a sheet by its own margins and gaps.
+    let stock = d.settings.label_sheet.filter(|_| matches!(layout, "copiesPerSheet" | "pagesPerSheet"));
     let mut sides = match layout {
+        _ if stock.is_some() => stock.as_ref().map(|l| label_sheet_sides(&sizes, &order, paper, l, layout == "copiesPerSheet")).unwrap_or_default(),
         "booklet" => booklet_sides(&sizes, BookletKind::SaddleStitch, 0.0),
         "copiesPerSheet" => copies_per_sheet_sides(&sizes, &order, paper),
         "pagesPerSheet" => pages_per_sheet_sides(&sizes, &order, paper),
