@@ -156,8 +156,7 @@ pub(super) fn picker(app: &mut DesignApp, ui: &mut Ui, salt: &str, target: Targe
     ui.push_id(salt, |ui| {
         let (r, resp) = ui.allocate_exact_size(vec2(64.0, 20.0), Sense::click());
         let chip = Rect::from_min_size(r.min + vec2(2.0, 2.0), vec2(40.0, 16.0));
-        crate::widgets::paint_chip(ui.painter(), chip, color, gradient);
-        ui.painter().rect_stroke(chip, 1.0, Stroke::new(1.0, super::pal().group_label), egui::StrokeKind::Outside);
+        paint_picker_chip(ui.painter(), chip, color, gradient, super::pal().card, super::pal().group_label);
         ui.painter().text(
             chip.right_center() + vec2(10.0, 0.0),
             egui::Align2::CENTER_CENTER,
@@ -170,6 +169,49 @@ pub(super) fn picker(app: &mut DesignApp, ui: &mut Ui, salt: &str, target: Targe
         });
     });
     picked
+}
+
+/// A dialog's colour chip on `card`, the dialog behind it, outlined in `edge`. A colour that a dark
+/// dialog swallows (Black in the Black theme) sits in a white mat: drawn edge to edge, it looked
+/// like an empty box.
+pub(super) fn paint_picker_chip(
+    p: &egui::Painter,
+    chip: Rect,
+    color: Option<Color32>,
+    gradient: Option<(Color32, Color32)>,
+    card: Color32,
+    edge: Color32,
+) {
+    let shown: Vec<Color32> = match (color, gradient) {
+        (_, Some((a, b))) => vec![a, b],
+        (Some(c), None) => vec![c],
+        (None, None) => Vec::new(),
+    };
+    let swallowed = luminance(card) < 0.18 && !shown.is_empty() && shown.iter().all(|&c| contrast(c, card) < 3.0);
+    let swatch = if swallowed {
+        p.rect_filled(chip, 0.0, Color32::WHITE);
+        chip.shrink(2.0)
+    } else {
+        chip
+    };
+    crate::widgets::paint_chip(p, swatch, color, gradient);
+    p.rect_stroke(chip, 1.0, Stroke::new(1.0, edge), egui::StrokeKind::Outside);
+}
+
+/// Relative luminance (WCAG 2), 0 for black to 1 for white.
+fn luminance(c: Color32) -> f32 {
+    let linear = |v: u8| {
+        let v = f32::from(v) / 255.0;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+}
+
+/// Contrast ratio (WCAG 2), 1 for the same colour to 21 for black on white; 3 is the least a part
+/// of the interface needs against what is next to it.
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 fn open_more(app: &mut DesignApp, target: Target, current: &str) {

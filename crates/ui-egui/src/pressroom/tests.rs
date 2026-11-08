@@ -926,3 +926,44 @@ fn page_setup_keeps_label_stock_margins() {
     let l = h.state().app.session.active().unwrap().doc.settings.label_sheet.expect("label stock");
     assert!((l.side - 13.5).abs() < 0.01 && (l.top - 36.0).abs() < 0.01 && (l.h_gap - 9.0).abs() < 0.01, "{l:?}");
 }
+
+/// The colour the filled rectangles among `shapes` leave at `p`, the last painted on top.
+fn painted_at(shapes: &[egui::epaint::ClippedShape], p: egui::Pos2) -> Option<egui::Color32> {
+    shapes.iter().rev().find_map(|s| match &s.shape {
+        egui::Shape::Rect(r) if r.fill.a() > 0 && r.rect.contains(p) => Some(r.fill),
+        _ => None,
+    })
+}
+
+/// A dialog's colour chip for `color`, painted on a card of `theme`'s.
+fn picker_chip(color: egui::Color32, theme: &super::Pal) -> (egui::Rect, Vec<egui::epaint::ClippedShape>) {
+    let chip = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), vec2(40.0, 16.0));
+    let ctx = egui::Context::default();
+    let mut out = ctx.run_ui(Default::default(), |ui| {
+        ui.painter().rect_filled(chip.expand(10.0), 0.0, theme.card);
+        super::colors::paint_picker_chip(ui.painter(), chip, Some(color), None, theme.card, theme.group_label);
+    });
+    // The font atlas a frame uploads is the renderer's to take.
+    out.textures_delta.clear();
+    (chip, std::mem::take(&mut out.shapes))
+}
+
+#[test]
+fn a_black_chip_stands_out_in_a_dark_dialog() {
+    // [Black] shows on screen as Coated FOGRA39's black, #1C1C1B, and the Black theme's dialogs are
+    // #292929: painted edge to edge inside the light outline, it looked like an empty box.
+    let black = egui::Color32::from_rgb(28, 28, 27);
+    let light = |c: egui::Color32| c.r().min(c.g()).min(c.b()) >= 200;
+    for theme in [&super::BLACK, &super::DARK_GRAY] {
+        let (chip, shapes) = picker_chip(black, theme);
+        assert_eq!(painted_at(&shapes, chip.center()), Some(black), "the chip still shows black");
+        let rim = painted_at(&shapes, chip.min + vec2(1.0, 1.0));
+        assert!(rim.is_some_and(light), "a light mat sets black off from a {:?} dialog, found {rim:?}", theme.card);
+    }
+    // A colour that stands out from the dialog, and black in a light dialog, fill the chip as before.
+    let blue = egui::Color32::from_rgb(91, 155, 213);
+    let (chip, shapes) = picker_chip(blue, &super::BLACK);
+    assert_eq!(painted_at(&shapes, chip.min + vec2(1.0, 1.0)), Some(blue));
+    let (chip, shapes) = picker_chip(black, &super::WHITE);
+    assert_eq!(painted_at(&shapes, chip.min + vec2(1.0, 1.0)), Some(black));
+}
